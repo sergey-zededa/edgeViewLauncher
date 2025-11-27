@@ -1,0 +1,50 @@
++ no device list is available at application start
++ connect option should not be available for offline nodes
++ need to disable OS integrated autocorrect in the search field
++ Enable SSH does not work
++ "No apps found" - "Error: failed to query device: failed to read response: read tcp 192.168.0.97:62706->104.18.3.204:443: i/o timeout"
++ change SSH Terminal to EVE-OS SSH terminal (use icon from eve)
++ align terminal options left
++ edgeView active sessions and limits to be displayed
++ align SSH ACCESS and Running services in terms of styling and alignment
++ support multiple cluster configs (URL/Token pairs) and switching between them
++ make sure there is a way to navigate back from config page without saving, now the only option to close cluster config is to "Save configuration"
++ update device list after config save/switching to another cluster
++ limit recent devices list to top 10 recent devices
++ make device to recent not on SSH activation but on going to the details page
+
+- app need to live in the tray
+- settings to be stored securely (use keyring or other relevant OS features)
+- show currently active peers/instances?
++ auto day/night scheme in line with OS ??? Need to test
+- need an option to select preferred terminal app
+- icon need to be updated
+- display cluster access token validity time (if available/readable from token or API) and mark it red if expired - can we fetch this info from API? -check https://zedcontrol.zededa.net/api/v1/docs/?urls.primaryName=ZEDEDA%20IAM%20Service#/IdentityAccessManagement/IdentityAccessManagement_GetUserSession /v1/sessions/token/{sessionToken.base64}
+
+- add status message on failing to connect to the controller/cluster when receiving the list of devices
+
+
+- Indicate VNC session status (running, data is transferring)
+- collect info
+- Closing the sessions using UI results in following errors:
+DEBUG: Sending 695 bytes to EdgeView via WebSocket (tcpData JSON: 977 bytes)
+
+API call error: Error: missing tunnel ID
+    at /Users/sseper/Desktop/Projects/edgeViewLauncher/dist-electron/mac-arm64/EdgeView Launcher.app/Contents/Resources/app.asar/electron-main.js:129:19
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async Session.<anonymous> (node:electron/js2c/browser_init:2:107270)
+Error occurred in handler for 'api-call': Error: missing tunnel ID
+    at /Users/sseper/Desktop/Projects/edgeViewLauncher/dist-electron/mac-arm64/EdgeView Launcher.app/Contents/Resources/app.asar/electron-main.js:129:19
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async Session.<anonymous> (node:electron/js2c/browser_init:2:107270)
+(electron) 'console-message' arguments are deprecated and will be removed. Please use Event<WebContentsConsoleMessageEventParams> object instead.
+Renderer: Error: Error invoking remote method 'api-call': Error: missing tunnel ID
+API call error: Error: missing tunnel ID
+    at /Users/sseper/Desktop/Projects/edgeViewLauncher/dist-electron/mac-arm64/EdgeView Launcher.app/Contents/Resources/app.asar/electron-main.js:129:19
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async Session.<anonymous> (node:electron/js2c/browser_init:2:107270)
+Error occurred in handler for 'api-call': Error: missing tunnel ID
+    at /Users/sseper/Desktop/Projects/edgeViewLauncher/dist-electron/mac-arm64/EdgeView Launcher.app/Contents/Resources/app.asar/electron-main.js:129:19
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async Session.<anonymous> (node:electron/js2c/browser_init:2:107270)
+Renderer: Error: Error invoking remote method 'api-call': Error: missing tunnel ID

@@ -1,0 +1,30 @@
+{
+    "name": "edgeview-launcher",
+    "version": "1.0.0",
+    "description": "EdgeView Launcher - Electron Edition",
+    "main": "electron-main.js",
+    "scripts": {
+        "start": "electron .",
+        "build": "electron-builder"
+    },
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "devDependencies": {
+        "electron": "^28.0.0",
+        "electron-builder": "^24.9.1"
+    },
+    "build": {
+        "appId": "com.edgeview.launcher",
+        "productName": "EdgeView Launcher",
+        "mac": {
+            "category": "public.app-category.developer-tools",
+            "target": "dmg"
+        },
+        "files": [
+            "electron-main.js",
+            "electron-preload.js",
+            "frontend/dist/**/*"
+        ]
+    }
+}

@@ -1,0 +1,122 @@
+{
+    "HealthPort": {{MICROSERVICE_HEALTH_PORT.edgeview-client}},
+    "HealthCheckFrequency": 5,
+    "Level": {{MICROSERVICE_LOG_LEVEL.edgeview-client}},
+    "TrustCertDetails": {
+        "CertPath": "/opt/zededa/etc/",
+        "SigningKeyName": "zedcloud.signing.key.pem"
+    },
+    "DefaultDispatcherURL": "{{ZEDCLOUD_HOST}}/api/v1/edge-view",
+    "ClientMinVersion": "6.7.0",
+     "Postgres": {
+        "Name": "postgres",
+        "ConnectionStrings": [
+           "{{POSTGRES_CONNECTION_STRING}}"
+        ],
+        "ConnPoolSize": 7,
+        "LogSlowQuery": 100
+    },
+    "KafkaProducer": {
+        "Name": "kafka-producer",
+        "Port": {{KAFKA_LEADERS[0].port}},
+        "Server": "{{#KAFKA_LEADERS}}{{name}}{{#unless @last}},{{/unless}}{{/KAFKA_LEADERS}}",
+        {{#if TLS_COMMUNICATION_DISABLED}}
+        "TLSDisable": true,
+        {{/if}}
+        "User": "zedcloud",
+        "Password": "{{{KAFKA_ZEDCLOUD_PASSWORD}}}",
+        {{#if KAFKA_LEADERS[2]}}
+        "ResponseTopicReplication": 3,
+        {{else}}
+        "ResponseTopicReplication": 1,
+        {{/if}}
+        "ResponseTopicPartitions": 1
+    },
+    "KafkaConsumer": {
+        "Name": "kafka-consumer",
+        "Port": {{KAFKA_LEADERS[0].port}},
+        "Server": "{{#KAFKA_LEADERS}}{{name}}{{#unless @last}},{{/unless}}{{/KAFKA_LEADERS}}",
+        {{#if TLS_COMMUNICATION_DISABLED}}
+        "TLSDisable": true,
+        {{/if}}
+        "User": "zedcloud",
+        "Password": "{{{KAFKA_ZEDCLOUD_PASSWORD}}}"
+    },
+    "KafkaConsumerTopics": [
+        "notificationTopic"
+    ],
+    "Zvault": {
+        "VaultDetails": {
+            "RoleId": "{{{ZVAULT_RW_ROLE_ID}}}",
+            "SecretId": "{{{ZVAULT_RW_ROLE_SECRET}}}",
+            "CommonCryptoKey": "aes256_seine"
+        },
+        "ConnectionStrings": [
+            {{#VAULT_LEADERS}}
+            "{{.}}"{{#unless @last}},{{/unless}}
+            {{/VAULT_LEADERS}}
+        ]
+    },
+    "Redis": {
+        "Name": "redis",
+        {{#if REDIS_LEADERS[1]}}
+        {{#if TLS_COMMUNICATION_DISABLED}}
+        "TLSDisable": true,
+        {{/if}}
+        "User": "zedcloud",
+        "Password": "{{{REDIS_ZEDCLOUD_PASSWORD}}}",
+        "SentinelServer": "{{#REDIS_LEADERS}}{{name}}:{{sentinel_port}}{{#unless @last}},{{/unless}}{{/REDIS_LEADERS}}",
+        "SentinelUser": "zedcloud",
+        "SentinelPassword": "{{{REDIS_SENTINEL_ZEDCLOUD_PASSWORD}}}",
+        "SentinelMaster": "sentinel-{{ENVIRONMENT_NAME}}"
+        {{else}}
+        "ConnectionStrings": [
+            "{{REDIS_CONNECTION_STRING}}"
+        ]
+        {{/if}}
+    },
+    "RedisJwt": {
+        "Name": "redis-jwt",
+        {{#if REDIS_LEADERS[1]}}
+        {{#if TLS_COMMUNICATION_DISABLED}}
+        "TLSDisable": true,
+        {{/if}}
+        "User": "zedcloud",
+        "Password": "{{{REDIS_ZEDCLOUD_PASSWORD}}}",
+        "SentinelServer": "{{#REDIS_LEADERS}}{{name}}:{{sentinel_port}}{{#unless @last}},{{/unless}}{{/REDIS_LEADERS}}",
+        "SentinelUser": "zedcloud",
+        "SentinelPassword": "{{{REDIS_SENTINEL_ZEDCLOUD_PASSWORD}}}",
+        "SentinelMaster": "sentinel-{{ENVIRONMENT_NAME}}"
+        {{else}}
+        "ConnectionStrings": [
+            "{{REDIS_CONNECTION_STRING}}"
+        ]
+        {{/if}}
+    },
+    "RedisEdgeView": {
+        "Name": "redis-edgeview",
+        {{#if REDIS_LEADERS[1]}}
+        {{#if TLS_COMMUNICATION_DISABLED}}
+        "TLSDisable": true,
+        {{/if}}
+        "User": "zedcloud",
+        "Password": "{{{REDIS_ZEDCLOUD_PASSWORD}}}",
+        "SentinelServer": "{{#REDIS_LEADERS}}{{name}}:{{sentinel_port}}{{#unless @last}},{{/unless}}{{/REDIS_LEADERS}}",
+        "SentinelUser": "zedcloud",
+        "SentinelPassword": "{{{REDIS_SENTINEL_ZEDCLOUD_PASSWORD}}}",
+        "SentinelMaster": "sentinel-{{ENVIRONMENT_NAME}}"
+        {{else}}
+        "ConnectionStrings": [
+            "{{REDIS_CONNECTION_STRING}}"
+        ]
+        {{/if}}
+    },
+    "Web": {
+        "Name": "web",
+        "Port": 8904,
+        "Server": "0.0.0.0"
+    },
+    "ZIAMService": {
+        "BaseURL": "{{#if ZIAM_SERVICE_BASE_URL}}{{ZIAM_SERVICE_BASE_URL}}{{else}}http://ziam.zedcloud.svc.cluster.local{{/if}}"
+    }
+}
