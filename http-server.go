@@ -389,6 +389,20 @@ func (s *HTTPServer) handleCloseTunnel(w http.ResponseWriter, r *http.Request) {
 	s.sendSuccess(w, map[string]bool{"closed": true})
 }
 
+// TunnelInfo is the JSON shape returned by /api/tunnels.
+// NOTE: Field names are capitalized to match the existing
+// frontend expectations (t.ID, t.NodeID, t.TargetIP, etc.).
+type TunnelInfo struct {
+	ID        string    `json:"ID"`
+	NodeID    string    `json:"NodeID"`
+	NodeName  string    `json:"NodeName,omitempty"`
+	ProjectID string    `json:"ProjectID,omitempty"`
+	Type      string    `json:"Type"`
+	TargetIP  string    `json:"TargetIP"`
+	LocalPort int       `json:"LocalPort"`
+	CreatedAt time.Time `json:"CreatedAt"`
+}
+
 func (s *HTTPServer) handleListTunnels(w http.ResponseWriter, r *http.Request) {
 	nodeID := r.URL.Query().Get("nodeId")
 	tunnels := s.app.ListTunnels(nodeID)
@@ -396,8 +410,24 @@ func (s *HTTPServer) handleListTunnels(w http.ResponseWriter, r *http.Request) {
 		// Always return [] instead of null for easier frontend handling
 		tunnels = []*session.Tunnel{}
 	}
-	log.Printf("DEBUG: handleListTunnels nodeId=%s tunnels=%d\n", nodeID, len(tunnels))
-	s.sendSuccess(w, tunnels)
+
+	infos := make([]TunnelInfo, 0, len(tunnels))
+	for _, t := range tunnels {
+		name, projectID := s.app.GetNodeMeta(t.NodeID)
+		infos = append(infos, TunnelInfo{
+			ID:        t.ID,
+			NodeID:    t.NodeID,
+			NodeName:  name,
+			ProjectID: projectID,
+			Type:      t.Type,
+			TargetIP:  t.TargetIP,
+			LocalPort: t.LocalPort,
+			CreatedAt: t.CreatedAt,
+		})
+	}
+
+	log.Printf("DEBUG: handleListTunnels nodeId=%s tunnels=%d\n", nodeID, len(infos))
+	s.sendSuccess(w, infos)
 }
 
 // handleSSHTerminal upgrades the connection to WebSocket and proxies it to the local SSH port

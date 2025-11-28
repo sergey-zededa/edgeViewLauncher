@@ -83,6 +83,13 @@ func (f *fakeZededaClient) GetAppInstanceDetails(id string) (*zededa.AppInstance
 	return f.appDetails[id], nil
 }
 
+func (f *fakeZededaClient) GetDevice(nodeID string) (map[string]interface{}, error) {
+	// Minimal stub used by App.GetNodeMeta; tests that rely on metadata
+	// can configure behavior later if needed. For now, return a basic
+	// device with no name/project to avoid impacting existing tests.
+	return map[string]interface{}{}, nil
+}
+
 type fakeSessionManager struct {
 	cached map[string]*session.CachedSession
 

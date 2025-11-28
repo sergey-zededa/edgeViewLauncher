@@ -28,7 +28,8 @@ function App() {
   const [expandedServiceId, setExpandedServiceId] = useState(null);
   const [highlightTunnels, setHighlightTunnels] = useState(false);
   const [activeVncSession, setActiveVncSession] = useState(null); // { url, port }
-  const [activeTunnels, setActiveTunnels] = useState([]); // Track active tunnels
+  const [activeTunnels, setActiveTunnels] = useState([]); // Track active tunnels across all devices
+  const [showGlobalTunnels, setShowGlobalTunnels] = useState(false);
   const [tunnelConnected, setTunnelConnected] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
   const [logs, setLogs] = useState([]);
@@ -96,7 +97,8 @@ function App() {
         const mapped = tunnels.map(t => ({
           id: t.ID,
           nodeId: t.NodeID,
-          nodeName: selectedNode.name,
+          nodeName: t.NodeName || selectedNode.name,
+          projectId: t.ProjectID || selectedNode.project,
           type: t.Type,
           targetIP: (t.TargetIP || '').split(':')[0],
           targetPort: parseInt(((t.TargetIP || '').split(':')[1] || '0'), 10),
@@ -186,6 +188,7 @@ function App() {
       id: tunnelId,
       nodeId: selectedNode?.id,
       nodeName: selectedNode?.name,
+      projectId: selectedNode?.project,
       type,
       targetIP,
       targetPort,
@@ -763,6 +766,78 @@ function App() {
               </div>
             )}
 
+            {/* Global tunnels view (all devices) */}
+            {showGlobalTunnels && activeTunnels.length > 0 && (
+              <div className="active-tunnels-section global">
+                <div className="section-title">Global Active Tunnels</div>
+                <div className="tunnel-list">
+                  {activeTunnels.map(tunnel => (
+                    <div key={tunnel.id} className="tunnel-item">
+                      <div className="tunnel-info">
+                        <div className="tunnel-type">
+                          {tunnel.type === 'VNC' && <Monitor size={14} className="tunnel-icon" />}
+                          {tunnel.type === 'SSH' && <Terminal size={14} className="tunnel-icon" />}
+                          {tunnel.type === 'TCP' && <Activity size={14} className="tunnel-icon" />}
+                          <span>{tunnel.type}</span>
+                        </div>
+                        <div className="tunnel-target">
+                          <span>{tunnel.targetIP}:{tunnel.targetPort}</span>
+                          <ArrowRight size={12} className="tunnel-arrow" />
+                        </div>
+                        <div className="tunnel-local">
+                          <code>localhost:{tunnel.localPort}</code>
+                        </div>
+                        <div className="tunnel-meta">
+                          <span className="tunnel-device">{tunnel.nodeName || tunnel.nodeId}</span>
+                          {tunnel.projectId && (
+                            <span className="tunnel-project">
+                              • {projects[tunnel.projectId] || tunnel.projectId}
+                            </span>
+                          )}
+                        </div>
+                        <button
+                          className="icon-btn copy-btn"
+                          title="Copy address"
+                          onClick={() => {
+                            navigator.clipboard.writeText(`localhost:${tunnel.localPort}`);
+                          }}
+                        >
+                          <Copy size={12} />
+                        </button>
+                      </div>
+                      <div className="tunnel-actions">
+                        {tunnel.type === 'VNC' && (
+                          <button
+                            className="icon-btn"
+                            title="Open VNC Viewer"
+                            onClick={() => window.electronAPI.openExternal(`vnc://localhost:${tunnel.localPort}`)}
+                          >
+                            <ExternalLink size={14} />
+                          </button>
+                        )}
+                        {tunnel.type === 'SSH' && (
+                          <button
+                            className="icon-btn"
+                            title="Open Terminal"
+                            onClick={() => window.electronAPI.openTerminalWindow(tunnel.localPort)}
+                          >
+                            <Terminal size={14} />
+                          </button>
+                        )}
+                        <button
+                          className="icon-btn danger"
+                          title="Stop Tunnel"
+                          onClick={() => StopTunnel(tunnel.id)}
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {selectedNode && (
               <div className="ssh-status-section">
                 <div className="section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1147,6 +1222,14 @@ function App() {
           <div className="status-item">
             <Monitor size={14} />
             <span>{config.apiToken || (config.clusters && config.clusters.some(c => c.name === config.activeCluster && c.apiToken)) ? "Ready" : "Setup Required"}</span>
+          </div>
+          <div className="status-item">
+            <button
+              className="link-button"
+              onClick={() => setShowGlobalTunnels(prev => !prev)}
+            >
+              {showGlobalTunnels ? 'Hide Global Tunnels' : 'Global Tunnels'}
+            </button>
           </div>
           <div className="status-item right">
             <span>{showSettings ? "Configuration" : selectedNode ? "Device Details" : `${nodes.length} results`}</span>

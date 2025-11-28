@@ -28,6 +28,7 @@ type zededaAPI interface {
 	StartEdgeView(nodeID string) error
 	GetDeviceAppInstances(deviceID string) ([]zededa.AppInstance, error)
 	GetAppInstanceDetails(appInstanceID string) (*zededa.AppInstanceDetails, error)
+	GetDevice(nodeID string) (map[string]interface{}, error)
 }
 
 // sessionAPI defines the subset of session.Manager used by App.
@@ -53,6 +54,11 @@ type App struct {
 	// Cache for app enrichments (IPs, VNC ports)
 	enrichmentCache map[string]AppEnrichment // Key: App UUID
 	enrichmentMu    sync.RWMutex
+
+	// Cache for node metadata (device name, project ID) used to enrich
+	// tunnel listings without repeatedly calling the Cloud API.
+	nodeMetaCache map[string]NodeMeta // Key: device/node UUID
+	nodeMetaMu    sync.RWMutex
 }
 
 // NewApp creates a new App application struct
@@ -76,6 +82,7 @@ func NewApp() *App {
 		zededaClient:    zededa.NewClient(baseURL, apiToken),
 		sessionManager:  session.NewManager(),
 		enrichmentCache: make(map[string]AppEnrichment),
+		nodeMetaCache:   make(map[string]NodeMeta),
 	}
 }
 
@@ -373,8 +380,55 @@ func (a *App) GetAppInfo(nodeID string) (string, error) {
 	return a.sessionManager.ExecuteCommand(nodeID, "app")
 }
 
+// GetNodeMeta returns device name and project ID for the given nodeID,
+// using a small in-memory cache backed by the ZEDEDA Cloud API.
+func (a *App) GetNodeMeta(nodeID string) (string, string) {
+	if nodeID == "" {
+		return "", ""
+	}
+
+	// Fast path: cache hit
+	a.nodeMetaMu.RLock()
+	if meta, ok := a.nodeMetaCache[nodeID]; ok {
+		// Keep metadata reasonably fresh but avoid hammering the API.
+		if time.Since(meta.UpdatedAt) < 10*time.Minute {
+			a.nodeMetaMu.RUnlock()
+			return meta.Name, meta.ProjectID
+		}
+	}
+	a.nodeMetaMu.RUnlock()
+
+	// Slow path: fetch from Cloud API
+	device, err := a.zededaClient.GetDevice(nodeID)
+	if err != nil {
+		fmt.Printf("DEBUG: GetNodeMeta failed for %s: %v\n", nodeID, err)
+		return "", ""
+	}
+
+	name, _ := device["name"].(string)
+	projectID, _ := device["projectId"].(string)
+
+	// Update cache
+	a.nodeMetaMu.Lock()
+	a.nodeMetaCache[nodeID] = NodeMeta{
+		Name:      name,
+		ProjectID: projectID,
+		UpdatedAt: time.Now(),
+	}
+	a.nodeMetaMu.Unlock()
+
+	return name, projectID
+}
+
+// NodeMeta holds cached device metadata for enriching tunnels/UI.
+type NodeMeta struct {
+	Name      string
+	ProjectID string
+	UpdatedAt time.Time
+}
+
 // AppEnrichment contains enriched app data from EdgeView
-type AppEnrichment struct {
+ type AppEnrichment struct {
 	UUID           string   `json:"uuid"`
 	IPs            []string `json:"ips"`
 	VNCPort        int      `json:"vncPort"`
