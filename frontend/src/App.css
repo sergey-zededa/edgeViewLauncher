@@ -233,6 +233,7 @@ body {
     border-bottom: 1px solid var(--border-color);
 }
 
+/* Unified header text styling */
 .section-header,
 .section-title,
 .details-header h3,
@@ -240,8 +241,34 @@ body {
     font-size: 14px;
     font-weight: 600;
     color: var(--text-primary);
-    margin: 0;
+    margin: 0 0 12px 0;
     text-align: left;
+}
+
+/* Section-specific spacing */
+.details-header {
+    padding: 16px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.details-header h3 {
+    margin: 0;
+}
+
+.ssh-status-section {
+    padding: 16px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.active-tunnels-section .section-title {
+    margin-bottom: 12px;
+}
+
+.activity-log .log-header {
+    padding: 12px 16px;
+    background: transparent;
+    border-bottom: none;
+    margin-bottom: 8px;
 }
 
 
