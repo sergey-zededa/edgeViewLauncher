@@ -1,3 +1,11 @@
+# Build outputs
 build/bin
-node_modules
 frontend/dist
+dist-electron/
+
+# Dependencies
+node_modules
+
+# System files
+.DS_Store
+*.log
