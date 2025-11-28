@@ -296,7 +296,7 @@ function App() {
         try {
           await VerifyTunnel(nodeId);
           setTunnelConnected(true);
-          addLog("Tunnel verified: Connected", 'success');
+          addLog("EdgeView session verified: Connected", 'success');
         } catch (err) {
           setTunnelConnected(false);
           addLog(`Tunnel check failed: ${err} `, 'warning');
@@ -771,10 +771,13 @@ function App() {
                         </div>
                       </div>
                       <div className="status-item">
-                        <span className="status-label">Tunnel</span>
-                        <div className={`status-value ${tunnelConnected ? 'enabled' : 'disabled'}`}>
-                          {tunnelConnected ? <Check size={14} /> : <X size={14} />}
-                          {tunnelConnected ? 'Connected' : 'Disconnected'}
+                        <div className="status-label">SESSION</div>
+                        <div className={`status-value ${tunnelConnected ? 'success' : 'error'}`}>
+                          {tunnelConnected ? (
+                            <><Check size={14} /> Connected</>
+                          ) : (
+                            <><X size={14} /> Disconnected</>
+                          )}
                         </div>
                       </div>
                       <div className="status-item">
@@ -852,7 +855,7 @@ function App() {
             {loadingServices ? (
               <div className="loading-state">
                 <Activity className="loading-icon animate-spin" size={24} />
-                <p>Scanning device services...</p>
+                <p>Scanning services...</p>
               </div>
             ) : error ? (
               <div className={`error-message ${error.type === 'success' ? 'success-message' : ''}`}>

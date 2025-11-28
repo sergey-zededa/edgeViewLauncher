@@ -714,6 +714,9 @@ body {
     font-family: monospace;
     font-size: 11px;
     text-align: left;
+    user-select: text;
+    -webkit-user-select: text;
+    cursor: text;
 }
 
 .log-entry {
@@ -943,4 +946,18 @@ body {
 
 .copy-btn:hover {
     opacity: 1;
+}
+
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.animate-spin {
+    animation: spin 1s linear infinite;
 }
