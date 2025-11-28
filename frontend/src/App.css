@@ -255,8 +255,7 @@ body {
     padding: 16px;
 }
 
-.active-tunnels-section .section-title,
-.activity-log-section .section-title {
+.active-tunnels-section .section-title {
     margin-bottom: 12px;
 }
 
@@ -692,11 +691,11 @@ body {
 
 /* Activity Log Section */
 .activity-log-section {
-    padding: 16px 16px 16px 16px;
+    padding: 0 16px 16px 16px;
 }
 
 .activity-log-section .section-title {
-    margin-bottom: 12px;
+    margin: 16px 0 12px 0;
     padding: 0;
 }
 

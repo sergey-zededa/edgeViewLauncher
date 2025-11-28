@@ -998,9 +998,12 @@ function App() {
                     </>
                   );
                 })()}
-                {selectedNode && <ActivityLog logs={logs} />}
               </div>
-            ) : (
+            ) : null}
+
+            {selectedNode && <ActivityLog logs={logs} />}
+
+            {!selectedNode && (
               <div className="results-list">
                 {loading && (
                   <div className="loading-state">
