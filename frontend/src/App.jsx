@@ -467,16 +467,22 @@ function App() {
 
   const saveSettings = async () => {
     try {
-      let clustersToSave = config.clusters;
+      let clustersToSave = [...config.clusters];
       let activeToSave = config.activeCluster;
-      if (!clustersToSave || clustersToSave.length === 0) {
-        clustersToSave = [{
-          name: 'Default Cluster',
-          baseUrl: config.baseUrl,
-          apiToken: config.apiToken
-        }];
-        activeToSave = 'Default Cluster';
+
+      // Update the currently active cluster with the edited values
+      if (clustersToSave.length > 0) {
+        const activeIndex = clustersToSave.findIndex(c => c.name === config.activeCluster);
+        if (activeIndex !== -1) {
+          clustersToSave[activeIndex] = editingCluster;
+          activeToSave = editingCluster.name;
+        }
+      } else {
+        // If no clusters exist, create one from editingCluster
+        clustersToSave = [editingCluster];
+        activeToSave = editingCluster.name;
       }
+
       await SaveSettings(clustersToSave, activeToSave);
       setShowSettings(false);
       setNodes([]);
