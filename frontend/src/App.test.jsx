@@ -2,6 +2,16 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { vi, describe, it, beforeEach } from 'vitest';
 
+vi.mock('./components/VncViewer', () => ({
+  __esModule: true,
+  default: () => <div data-testid="vnc-viewer-mock" />,
+}));
+
+vi.mock('./components/Tooltip', () => ({
+  __esModule: true,
+  default: ({ children }) => <span>{children}</span>,
+}));
+
 vi.mock('./electronAPI', () => {
   const fn = () => Promise.resolve();
   return {
@@ -11,7 +21,7 @@ vi.mock('./electronAPI', () => {
     SaveSettings: vi.fn().mockResolvedValue({ saved: true }),
     GetDeviceServices: vi.fn(),
     SetupSSH: vi.fn(fn),
-    GetSSHStatus: vi.fn().mockResolvedValue(null),
+    GetSSHStatus: vi.fn().mockResolvedValue({ status: 'disabled' }),
     DisableSSH: vi.fn(fn),
     ResetEdgeView: vi.fn(fn),
     VerifyTunnel: vi.fn(fn),
@@ -28,7 +38,7 @@ vi.mock('./electronAPI', () => {
 });
 
 import * as electronAPI from './electronAPI';
-import App from './App';
+import App, { ActivityLog } from './App';
 
 describe('App configuration and tunnels', () => {
   beforeEach(() => {
@@ -50,7 +60,7 @@ describe('App configuration and tunnels', () => {
     render(<App />);
 
     // Settings panel should open automatically
-    await screen.findByText('Configuration');
+    await screen.findByRole('heading', { name: 'Configuration' });
 
     const addButton = screen.getByRole('button', { name: /add/i });
     fireEvent.click(addButton);
@@ -77,7 +87,7 @@ describe('App configuration and tunnels', () => {
 
     render(<App />);
 
-    await screen.findByText('Configuration');
+    await screen.findByRole('heading', { name: 'Configuration' });
 
     const firstCluster = await screen.findByText('Cluster 1');
     expect(firstCluster).toBeInTheDocument();
@@ -92,13 +102,13 @@ describe('App configuration and tunnels', () => {
     const remaining = screen.getByText('Cluster 2');
     const item = remaining.closest('.cluster-item');
     expect(item).not.toBeNull();
-    expect(within(item!).getByText('Active')).toBeInTheDocument();
+    expect(within(item).getByText('Active')).toBeInTheDocument();
   });
 
   it('validateToken marks valid and invalid API tokens appropriately', async () => {
     render(<App />);
 
-    await screen.findByText('Configuration');
+    await screen.findByRole('heading', { name: 'Configuration' });
 
     const tokenTextarea = screen.getByPlaceholderText(/paste token from zededa cloud/i);
 
@@ -143,7 +153,7 @@ describe('App configuration and tunnels', () => {
 
     render(<App />);
 
-    await screen.findByText('Configuration');
+    await screen.findByRole('heading', { name: 'Configuration' });
 
     // Add a new cluster so we have something to save
     const addButton = screen.getByRole('button', { name: /add/i });
@@ -233,7 +243,7 @@ describe('App configuration and tunnels', () => {
     const launchVncButton = launchVncLabel.closest('.option-btn');
     expect(launchVncButton).not.toBeNull();
 
-    fireEvent.click(launchVncButton!);
+    fireEvent.click(launchVncButton);
 
     await waitFor(() => {
       expect(electronAPI.StartTunnel).toHaveBeenCalledWith('node-1', 'localhost', 5900);
@@ -243,9 +253,103 @@ describe('App configuration and tunnels', () => {
       expect(openExternal).toHaveBeenCalledWith('vnc://localhost:6000');
     });
 
-    // Active tunnel should be rendered in the UI
-    await screen.findByText('Active Tunnels');
-    expect(screen.getByText('VNC')).toBeInTheDocument();
-    expect(screen.getByText(/localhost:6000/)).toBeInTheDocument();
+    // Active tunnel should be rendered in the UI (scope queries to the Active Tunnels section)
+    const activeTunnelsHeading = await screen.findByText('Active Tunnels');
+    const activeTunnelsSection = activeTunnelsHeading.closest('.active-tunnels-section');
+    expect(activeTunnelsSection).not.toBeNull();
+
+    const withinSection = within(activeTunnelsSection);
+    expect(withinSection.getByText('VNC')).toBeInTheDocument();
+    expect(withinSection.getByText(/localhost:6000/)).toBeInTheDocument();
+  });
+
+  it('renders Activity Log section when a node is selected', async () => {
+    const validKey = 'A'.repeat(171);
+    const validToken = `ENT1234:${validKey}`;
+
+    electronAPI.GetSettings.mockResolvedValue({
+      baseUrl: 'https://cluster.example',
+      apiToken: validToken,
+      clusters: [
+        { name: 'Prod', baseUrl: 'https://cluster.example', apiToken: validToken },
+      ],
+      activeCluster: 'Prod',
+      recentDevices: [],
+    });
+
+    const node = {
+      id: 'node-1',
+      name: 'Node 1',
+      status: 'online',
+      project: 'proj-1',
+      edgeView: true,
+    };
+
+    electronAPI.SearchNodes.mockResolvedValue([node]);
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
+
+    render(<App />);
+
+    const nodeItem = await screen.findByText('Node 1');
+    fireEvent.click(nodeItem);
+
+    await screen.findByText('Running Applications');
+
+    expect(screen.getByText('Activity Log')).toBeInTheDocument();
+  });
+
+  it('does not render Activity Log when no node is selected', async () => {
+    const validKey = 'A'.repeat(171);
+    const validToken = `ENT1234:${validKey}`;
+
+    electronAPI.GetSettings.mockResolvedValue({
+      baseUrl: 'https://cluster.example',
+      apiToken: validToken,
+      clusters: [
+        { name: 'Prod', baseUrl: 'https://cluster.example', apiToken: validToken },
+      ],
+      activeCluster: 'Prod',
+      recentDevices: [],
+    });
+
+    const node = {
+      id: 'node-1',
+      name: 'Node 1',
+      status: 'online',
+      project: 'proj-1',
+      edgeView: true,
+    };
+
+    electronAPI.SearchNodes.mockResolvedValue([node]);
+
+    render(<App />);
+
+    await screen.findByText('Node 1');
+
+    expect(screen.queryByText('Activity Log')).not.toBeInTheDocument();
+  });
+});
+
+describe('ActivityLog component', () => {
+  it('displays "No activity recorded" when logs is empty', () => {
+    render(<ActivityLog logs={[]} />);
+
+    expect(screen.getByText('Activity Log')).toBeInTheDocument();
+    expect(screen.getByText('No activity recorded')).toBeInTheDocument();
+  });
+
+  it('displays the correct log entries when logs is not empty', () => {
+    const logs = [
+      { timestamp: '10:00:00', message: 'First log', type: 'info' },
+      { timestamp: '10:01:00', message: 'Second log', type: 'error' },
+    ];
+
+    const { container } = render(<ActivityLog logs={logs} />);
+
+    expect(screen.getByText('First log')).toBeInTheDocument();
+    expect(screen.getByText('Second log')).toBeInTheDocument();
+
+    const entries = container.querySelectorAll('.log-entry');
+    expect(entries.length).toBe(2);
   });
 });

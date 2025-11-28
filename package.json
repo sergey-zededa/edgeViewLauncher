@@ -7,7 +7,8 @@
     "start": "electron .",
     "build": "npm run build:frontend && npm run build:backend && electron-builder",
     "build:frontend": "cd frontend && npm run build",
-    "build:backend": "go build -o edgeview-backend http-server.go app.go"
+    "build:backend": "go build -o edgeview-backend http-server.go app.go",
+    "test": "cd frontend && npm test"
   },
   "keywords": [],
   "author": "",
