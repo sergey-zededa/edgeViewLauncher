@@ -183,6 +183,49 @@ describe('App configuration and tunnels', () => {
     });
   });
 
+  it('saveSettings persists edits to an existing cluster', async () => {
+    // Initial settings with one cluster
+    electronAPI.GetSettings.mockResolvedValue({
+      baseUrl: 'https://original.example',
+      apiToken: 'original-token',
+      clusters: [
+        { name: 'Cluster 1', baseUrl: 'https://original.example', apiToken: 'original-token' },
+      ],
+      activeCluster: 'Cluster 1',
+      recentDevices: [],
+    });
+
+    render(<App />);
+
+    // Use keyboard shortcut to open settings
+    // We need to focus the app container first or just dispatch to it
+    const appContainer = document.querySelector('.app-container');
+    fireEvent.keyDown(appContainer, { key: ',', metaKey: true });
+
+    await screen.findByRole('heading', { name: 'Configuration' });
+
+    // Find the token input
+    const tokenInput = screen.getByPlaceholderText(/paste token from zededa cloud/i);
+
+    // Change the token
+    const newToken = 'new-token-value';
+    fireEvent.change(tokenInput, { target: { value: newToken } });
+
+    // Click save
+    const saveButton = screen.getByRole('button', { name: /save changes/i });
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(electronAPI.SaveSettings).toHaveBeenCalledTimes(1);
+    });
+
+    // Verify the saved data contains the NEW token
+    const [clustersArg, activeClusterArg] = electronAPI.SaveSettings.mock.calls[0];
+    expect(clustersArg).toHaveLength(1);
+    expect(clustersArg[0].apiToken).toBe(newToken);
+    expect(activeClusterArg).toBe('Cluster 1');
+  });
+
   it('starting a VNC tunnel calls StartTunnel and adds an active tunnel', async () => {
     // Settings with token so main view shows directly
     const validKey = 'A'.repeat(171);
