@@ -998,28 +998,16 @@ function App() {
                     </>
                   );
                 })()}
-                {selectedNode && (
-                  <div className="activity-log-section">
-                    <div className="section-title">Activity Log</div>
-                    <div className="activity-log">
-                      <div className="log-content">
-                        {logs.length === 0 ? (
-                          <div className="log-entry muted">No activity recorded</div>
-                        ) : (
-                          logs.map((log, i) => (
-                            <div key={i} className={`log-entry ${log.type}`}>
-                              <span className="log-time">[{log.timestamp}]</span>
-                              <span className="log-message">{log.message}</span>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
+                {selectedNode && <ActivityLog logs={logs} />}
               </div>
             ) : (
               <div className="results-list">
+                {loading && (
+                  <div className="loading-state">
+                    <Activity className="loading-icon animate-spin" size={24} />
+                    <p>Loading nodes...</p>
+                  </div>
+                )}
                 {displayNodes.length === 0 && !loading && (
                   <div className="empty-state">No results found</div>
                 )}
@@ -1037,9 +1025,11 @@ function App() {
                       {node.edgeView ? <Server size={18} /> : <Server size={18} />}
                     </div>
                     <div className="node-info">
-                      <div className="node-name">{node.name}</div>
-                      <div className="node-project" title={node.project}>
-                        {projects[node.project] || node.project}
+                      <div className="node-name">
+                        {node.name}
+                        <span className="node-project" title={node.project}>
+                          {' '}• {projects[node.project] || node.project}
+                        </span>
                       </div>
                     </div>
                     <div className="node-status">
@@ -1069,9 +1059,11 @@ function App() {
                         {node.edgeView ? <Server size={18} /> : <Server size={18} />}
                       </div>
                       <div className="node-info">
-                        <div className="node-name">{node.name}</div>
-                        <div className="node-project" title={node.project}>
-                          {projects[node.project] || node.project}
+                        <div className="node-name">
+                          {node.name}
+                          <span className="node-project" title={node.project}>
+                            {' '}• {projects[node.project] || node.project}
+                          </span>
                         </div>
                       </div>
                       <div className="node-status">
@@ -1098,6 +1090,28 @@ function App() {
           <div className="status-item right">
             <span>{showSettings ? "Configuration" : selectedNode ? "Device Details" : `${nodes.length} results`}</span>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function ActivityLog({ logs }) {
+  return (
+    <div className="activity-log-section">
+      <div className="section-title">Activity Log</div>
+      <div className="activity-log">
+        <div className="log-content">
+          {logs.length === 0 ? (
+            <div className="log-entry muted">No activity recorded</div>
+          ) : (
+            logs.map((log, i) => (
+              <div key={i} className={`log-entry ${log.type}`}>
+                <span className="log-time">[{log.timestamp}]</span>
+                <span className="log-message">{log.message}</span>
+              </div>
+            ))
+          )}
         </div>
       </div>
     </div>
