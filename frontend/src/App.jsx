@@ -998,21 +998,25 @@ function App() {
                     </>
                   );
                 })()}
-                <div className="activity-log">
-                  <div className="log-header">Activity Log</div>
-                  <div className="log-content">
-                    {logs.length === 0 ? (
-                      <div className="log-entry muted">No activity recorded</div>
-                    ) : (
-                      logs.map((log, i) => (
-                        <div key={i} className={`log-entry ${log.type}`}>
-                          <span className="log-time">[{log.timestamp}]</span>
-                          <span className="log-message">{log.message}</span>
-                        </div>
-                      ))
-                    )}
+                {selectedNode && (
+                  <div className="activity-log-section">
+                    <div className="section-title">Activity Log</div>
+                    <div className="activity-log">
+                      <div className="log-content">
+                        {logs.length === 0 ? (
+                          <div className="log-entry muted">No activity recorded</div>
+                        ) : (
+                          logs.map((log, i) => (
+                            <div key={i} className={`log-entry ${log.type}`}>
+                              <span className="log-time">[{log.timestamp}]</span>
+                              <span className="log-message">{log.message}</span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             ) : (
               <div className="results-list">

@@ -247,28 +247,20 @@ body {
 
 /* Section-specific spacing */
 .details-header {
-    padding: 16px;
-    border-bottom: 1px solid var(--border-color);
+    padding: 16px 16px 0 16px;
 }
 
 .details-header h3 {
-    margin: 0;
+    margin: 0 0 16px 0;
 }
 
 .ssh-status-section {
     padding: 16px;
-    border-bottom: 1px solid var(--border-color);
 }
 
-.active-tunnels-section .section-title {
+.active-tunnels-section .section-title,
+.activity-log-section .section-title {
     margin-bottom: 12px;
-}
-
-.activity-log .log-header {
-    padding: 12px 16px;
-    background: transparent;
-    border-bottom: none;
-    margin-bottom: 8px;
 }
 
 
@@ -583,7 +575,7 @@ body {
 
 /* Services List */
 .services-list {
-    padding: 16px;
+    padding: 0 16px 16px 16px;
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -701,9 +693,17 @@ body {
     font-weight: 500;
 }
 
-/* Activity Log */
+/* Activity Log Section */
+.activity-log-section {
+    padding: 16px 16px 16px 16px;
+}
+
+.activity-log-section .section-title {
+    margin-bottom: 12px;
+    padding: 0;
+}
+
 .activity-log {
-    margin-top: 20px;
     background: #000;
     border: 1px solid var(--border-color);
     border-radius: 6px;
