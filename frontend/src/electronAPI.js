@@ -87,5 +87,11 @@ export const CloseTunnel = (tunnelId) => {
 };
 
 export const ListTunnels = (nodeId) => {
-    return window.electronAPI.listTunnels(nodeId).then(res => res.data);
+    return window.electronAPI.listTunnels(nodeId).then(res => {
+        const data = res && res.data;
+        if (Array.isArray(data)) return data;
+        if (data == null) return [];
+        // In case backend ever returns a single tunnel object, normalize to array
+        return Array.isArray(data) ? data : [];
+    });
 };

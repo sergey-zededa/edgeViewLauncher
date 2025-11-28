@@ -12,6 +12,7 @@ import (
 
 	"edgeViewLauncher/internal/config"
 	sshInternal "edgeViewLauncher/internal/ssh"
+	"edgeViewLauncher/internal/session"
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
@@ -391,6 +392,11 @@ func (s *HTTPServer) handleCloseTunnel(w http.ResponseWriter, r *http.Request) {
 func (s *HTTPServer) handleListTunnels(w http.ResponseWriter, r *http.Request) {
 	nodeID := r.URL.Query().Get("nodeId")
 	tunnels := s.app.ListTunnels(nodeID)
+	if tunnels == nil {
+		// Always return [] instead of null for easier frontend handling
+		tunnels = []*session.Tunnel{}
+	}
+	log.Printf("DEBUG: handleListTunnels nodeId=%s tunnels=%d\n", nodeID, len(tunnels))
 	s.sendSuccess(w, tunnels)
 }
 

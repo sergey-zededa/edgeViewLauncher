@@ -108,7 +108,7 @@ func (m *fakeSessionManager) StoreCachedSession(nodeID string, cfg *zededa.Sessi
 	m.cached[nodeID] = &session.CachedSession{Config: cfg, Port: port, ExpiresAt: expiresAt}
 }
 
-func (m *fakeSessionManager) StartProxy(ctx context.Context, cfg *zededa.SessionConfig, target string) (int, string, error) {
+func (m *fakeSessionManager) StartProxy(ctx context.Context, cfg *zededa.SessionConfig, nodeID string, target string) (int, string, error) {
 	return m.startProxyPort, m.startProxyID, m.startProxyErr
 }
 

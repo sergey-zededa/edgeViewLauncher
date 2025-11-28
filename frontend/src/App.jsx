@@ -73,27 +73,76 @@ function App() {
     setTokenStatus(status.valid ? { valid: true, message: "Valid token format" } : { valid: false, message: status.error });
   };
 
-  // Sync tunnels on node selection
+  // Sync tunnels on node selection (polling + diff-based logging)
   useEffect(() => {
-    if (selectedNode) {
-      ListTunnels(selectedNode.id).then(tunnels => {
-        if (tunnels) {
-          const mapped = tunnels.map(t => ({
-            id: t.ID,
-            nodeId: t.NodeID,
-            nodeName: selectedNode.name,
-            type: t.Type,
-            targetIP: t.TargetIP.split(':')[0],
-            targetPort: parseInt(t.TargetIP.split(':')[1] || '0'),
-            localPort: t.LocalPort,
-            createdAt: t.CreatedAt
-          }));
-          setActiveTunnels(mapped);
-        }
-      }).catch(err => console.error("Failed to list tunnels:", err));
-    } else {
-      setActiveTunnels([]);
+    if (!selectedNode) {
+      // Keep activeTunnels as a global list across navigation.
+      return;
     }
+
+    let cancelled = false;
+
+    const fetchTunnels = async () => {
+      if (!selectedNode || cancelled) return;
+      console.log('[UI] Fetching tunnels for node', selectedNode.id, selectedNode.name);
+      try {
+        const tunnels = await ListTunnels(selectedNode.id);
+        console.log('[UI] ListTunnels result for', selectedNode.id, tunnels);
+        if (!Array.isArray(tunnels)) {
+          console.log('[UI] No tunnels array returned for', selectedNode.id);
+          return;
+        }
+
+        const mapped = tunnels.map(t => ({
+          id: t.ID,
+          nodeId: t.NodeID,
+          nodeName: selectedNode.name,
+          type: t.Type,
+          targetIP: (t.TargetIP || '').split(':')[0],
+          targetPort: parseInt(((t.TargetIP || '').split(':')[1] || '0'), 10),
+          localPort: t.LocalPort,
+          createdAt: t.CreatedAt,
+        }));
+        console.log('[UI] Mapped tunnels for', selectedNode.id, mapped);
+
+        setActiveTunnels(prev => {
+          // Compute diffs for activity logging (per-node)
+          const prevForNode = prev.filter(t => t.nodeId === selectedNode.id);
+          const prevIds = new Set(prevForNode.map(t => t.id));
+          const newIds = new Set(mapped.map(t => t.id));
+
+          // New tunnels detected by polling
+          mapped.forEach(t => {
+            if (!prevIds.has(t.id)) {
+              addLog(`Tunnel active: ${t.type} localhost:${t.localPort} -> ${t.targetIP}:${t.targetPort}`, 'info');
+            }
+          });
+
+          // Closed tunnels detected by polling
+          prevForNode.forEach(t => {
+            if (!newIds.has(t.id)) {
+              addLog(`Tunnel closed: ${t.type} localhost:${t.localPort} -> ${t.targetIP}:${t.targetPort}`, 'info');
+            }
+          });
+
+          // Merge: keep tunnels for other nodes + updated list for this node
+          const others = prev.filter(t => t.nodeId !== selectedNode.id);
+          return [...others, ...mapped];
+        });
+      } catch (err) {
+        console.error('Failed to list tunnels:', err);
+      }
+    };
+
+    // Initial fetch
+    fetchTunnels();
+    // Poll every 5 seconds while this node is selected
+    const intervalId = setInterval(fetchTunnels, 5000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
   }, [selectedNode]);
 
   // Sync editingCluster with activeCluster when settings open

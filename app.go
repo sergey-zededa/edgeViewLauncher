@@ -34,7 +34,8 @@ type zededaAPI interface {
 type sessionAPI interface {
 	GetCachedSession(nodeID string) (*session.CachedSession, bool)
 	StoreCachedSession(nodeID string, config *zededa.SessionConfig, port int, expiresAt time.Time)
-	StartProxy(ctx context.Context, config *zededa.SessionConfig, target string) (int, string, error)
+	// StartProxy starts a persistent EdgeView proxy for the given device nodeID and target.
+	StartProxy(ctx context.Context, config *zededa.SessionConfig, nodeID string, target string) (int, string, error)
 	LaunchTerminal(port int, keyPath string) error
 	ExecuteCommand(nodeID string, command string) (string, error)
 	CloseTunnel(tunnelID string) error
@@ -229,7 +230,7 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (string, error
 		var err error
 		var tunnelID string
 		// Default to SSH (tcp/localhost:22)
-		port, tunnelID, err = a.sessionManager.StartProxy(a.ctx, sessionConfig, "localhost:22")
+		port, tunnelID, err = a.sessionManager.StartProxy(a.ctx, sessionConfig, nodeID, "localhost:22")
 		if err != nil {
 			fmt.Printf("StartProxy failed: %v\n", err)
 			return "", fmt.Errorf("failed to start proxy: %w", err)
@@ -312,7 +313,7 @@ func (a *App) StartTunnel(nodeID string, targetIP string, targetPort int) (int, 
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		fmt.Printf("DEBUG: Starting tunnel (attempt %d/%d)...\n", attempt, maxRetries)
-		port, tunnelID, err = a.sessionManager.StartProxy(a.ctx, cached.Config, target)
+		port, tunnelID, err = a.sessionManager.StartProxy(a.ctx, cached.Config, nodeID, target)
 
 		if err == nil {
 			fmt.Printf("Tunnel started on localhost:%d -> %s (ID: %s)\n", port, target, tunnelID)
