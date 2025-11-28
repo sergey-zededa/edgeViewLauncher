@@ -13,12 +13,41 @@ import (
 	"time"
 )
 
+// zededaAPI defines the subset of zededa.Client used by App.
+type zededaAPI interface {
+	GetEnterprise() (*zededa.Enterprise, error)
+	GetProjects() ([]zededa.Project, error)
+	SearchNodes(query string) ([]zededa.Node, error)
+	UpdateConfig(baseURL, token string)
+	InitSession(targetID string) (string, error)
+	ParseEdgeViewScript(script string) (*zededa.SessionConfig, error)
+	AddSSHKeyToDevice(nodeID, pubKey string) error
+	GetEdgeViewStatus(nodeID string) (*zededa.EdgeViewStatus, error)
+	DisableSSH(nodeID string) error
+	StopEdgeView(nodeID string) error
+	StartEdgeView(nodeID string) error
+	GetDeviceAppInstances(deviceID string) ([]zededa.AppInstance, error)
+	GetAppInstanceDetails(appInstanceID string) (*zededa.AppInstanceDetails, error)
+}
+
+// sessionAPI defines the subset of session.Manager used by App.
+type sessionAPI interface {
+	GetCachedSession(nodeID string) (*session.CachedSession, bool)
+	StoreCachedSession(nodeID string, config *zededa.SessionConfig, port int, expiresAt time.Time)
+	StartProxy(ctx context.Context, config *zededa.SessionConfig, target string) (int, string, error)
+	LaunchTerminal(port int, keyPath string) error
+	ExecuteCommand(nodeID string, command string) (string, error)
+	CloseTunnel(tunnelID string) error
+	ListTunnels(nodeID string) []*session.Tunnel
+	GetAllTunnels() []*session.Tunnel
+}
+
 // App struct
 type App struct {
 	ctx            context.Context
 	config         *config.Config
-	zededaClient   *zededa.Client
-	sessionManager *session.Manager
+	zededaClient   zededaAPI
+	sessionManager sessionAPI
 
 	// Cache for app enrichments (IPs, VNC ports)
 	enrichmentCache map[string]AppEnrichment // Key: App UUID
@@ -450,15 +479,16 @@ func ParseAppInfo(output string) map[string]AppEnrichment {
 						var displayNum int
 						if _, err := fmt.Sscanf(displayStr, "%d", &displayNum); err == nil {
 							currentApp.VNCPort = 5900 + displayNum
-							fmt.Printf("DEBUG: Found VNC for %s: %d\n", currentApp.UUID, currentApp.VNCPort)
+							fmt.Printf("DEBUG: Found VNC for %s: %d\\n", currentApp.UUID, currentApp.VNCPort)
 						}
 					}
 				}
 			}
-			// Parse applog disabled
-			if strings.Contains(line, "Applog disabled:") {
-				currentApp.AppLogDisabled = strings.Contains(line, "Applog disabled: true")
-			}
+		}
+
+		// Parse applog disabled (can appear on separate line)
+		if currentApp != nil && strings.Contains(line, "Applog disabled:") {
+			currentApp.AppLogDisabled = strings.Contains(line, "Applog disabled: true")
 		}
 
 		// When we hit the next app or end, save current app

@@ -1,3 +1,6 @@
+//go:build edgeviewclient
+// +build edgeviewclient
+
 //nolint:gosec,govet,lll,ineffassign,errcheck,gochecknoglobals
 package main
 
