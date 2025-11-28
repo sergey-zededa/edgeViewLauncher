@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
+const { callJSON } = require('./backendClient');
 
 let mainWindow;
 let goBackend;
@@ -110,25 +111,10 @@ app.on('before-quit', () => {
 ipcMain.handle('api-call', async (event, endpoint, method, body) => {
     const url = `http://localhost:${BACKEND_PORT}${endpoint}`;
 
-    const options = {
-        method: method || 'GET',
-        headers: {
-            'Content-Type': 'application/json',
-        }
-    };
-
-    if (body) {
-        options.body = JSON.stringify(body);
-    }
-
     try {
-        const response = await fetch(url, options);
-        const data = await response.json();
-
-        if (!response.ok) {
-            throw new Error(data.error || 'API call failed');
-        }
-
+        // Use shared helper with tolerant JSON parsing so that
+        // empty/whitespace-only bodies do not cause SyntaxError.
+        const data = await callJSON(url, method || 'GET', body);
         return data;
     } catch (error) {
         console.error('API call error:', error);

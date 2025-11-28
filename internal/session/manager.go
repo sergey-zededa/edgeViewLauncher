@@ -180,8 +180,9 @@ type cmdOpt struct {
 }
 
 // StartProxy starts a local TCP listener that proxies to the EdgeView WebSocket
-// Returns the local port number and tunnel ID
-func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, target string) (int, string, error) {
+// Returns the local port number and tunnel ID. Tunnels are keyed by the
+// ZEDEDA device node ID so they can be listed per-device from the UI.
+func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, nodeID string, target string) (int, string, error) {
 	// Start local TCP listener on random port
 	listener, err := net.Listen("tcp", "localhost:0")
 	if err != nil {
@@ -198,17 +199,21 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 	// Create a background context for the tunnel (independent of the request context)
 	tunnelCtx, cancel := context.WithCancel(context.Background())
 
+	// IMPORTANT: key the tunnel by the ZEDEDA device nodeID, not the
+	// session UUID, so that /api/tunnels?nodeId=<deviceId> returns the
+	// expected per-device tunnel list in the UI.
 	tunnel := &Tunnel{
 		ID:        tunnelID,
-		NodeID:    config.UUID, // Using session UUID as NodeID
-		TargetIP:  target,      // Storing full target string for now
+		NodeID:    nodeID,
+		TargetIP:  target, // Storing full target string for now (ip:port)
 		LocalPort: localPort,
-		Type:      "TCP", // Default type
+		Type:      "TCP", // Default type for generic tunnels
 		CreatedAt: time.Now(),
 		Cancel:    cancel,
 	}
 
 	// Register Tunnel
+	fmt.Printf("DEBUG: Registering tunnel %s for nodeID %s target %s on localhost:%d\n", tunnelID, nodeID, target, localPort)
 	m.RegisterTunnel(tunnel)
 
 	// Start Accept Loop in background
