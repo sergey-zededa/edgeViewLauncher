@@ -1,3 +1,6 @@
+//go:build edgeviewclient
+// +build edgeviewclient
+
 package config
 
 import (
