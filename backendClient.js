@@ -27,12 +27,6 @@ async function callJSON(url, method = 'GET', body) {
   const response = await fetch(url, options);
   const raw = await response.text();
 
-  // Debug for tunnel listing issue: log body length and a small prefix
-  if (url.includes('/api/tunnels')) {
-    const preview = raw && raw.length > 200 ? raw.slice(0, 200) + '...' : raw;
-    console.log('[main] callJSON /api/tunnels status', response.status, 'len', raw ? raw.length : 0, 'body preview:', preview);
-  }
-
   let data = null;
   if (raw && raw.trim().length > 0) {
     try {

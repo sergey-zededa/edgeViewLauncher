@@ -32,6 +32,8 @@ function App() {
   const [showGlobalTunnels, setShowGlobalTunnels] = useState(false);
   const [tunnelConnected, setTunnelConnected] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
+  const [tunnelLoading, setTunnelLoading] = useState(false);
+  const [tunnelLoadingMessage, setTunnelLoadingMessage] = useState('');
   const [logs, setLogs] = useState([]);
   const [showTerminal, setShowTerminal] = useState(false);
   const [localPort, setLocalPort] = useState(null);
@@ -85,12 +87,16 @@ function App() {
 
     const fetchTunnels = async () => {
       if (!selectedNode || cancelled) return;
-      console.log('[UI] Fetching tunnels for node', selectedNode.id, selectedNode.name);
       try {
         const tunnels = await ListTunnels(selectedNode.id);
-        console.log('[UI] ListTunnels result for', selectedNode.id, tunnels);
+
+        if (tunnels === null) {
+          // Special case: transport-level oddity (empty body). We keep the
+          // current activeTunnels state and avoid treating this as a closure.
+          return;
+        }
+
         if (!Array.isArray(tunnels)) {
-          console.log('[UI] No tunnels array returned for', selectedNode.id);
           return;
         }
 
@@ -104,8 +110,9 @@ function App() {
           targetPort: parseInt(((t.TargetIP || '').split(':')[1] || '0'), 10),
           localPort: t.LocalPort,
           createdAt: t.CreatedAt,
+          status: t.Status || 'active',
+          error: t.Error || '',
         }));
-        console.log('[UI] Mapped tunnels for', selectedNode.id, mapped);
 
         setActiveTunnels(prev => {
           // Compute diffs for activity logging (per-node)
@@ -120,7 +127,22 @@ function App() {
             }
           });
 
-          // Closed tunnels detected by polling
+          // Tunnels that transitioned to failed state
+          const prevById = new Map(prevForNode.map(t => [t.id, t]));
+          mapped
+            .filter(t => t.status === 'failed')
+            .forEach(t => {
+              const prevT = prevById.get(t.id);
+              if (!prevT || prevT.status !== 'failed') {
+                const reason = t.error || 'device is not connected to EdgeView (no device online)';
+                addLog(
+                  `Tunnel failed: ${t.type} localhost:${t.localPort} -> ${t.targetIP}:${t.targetPort} — ${reason}`,
+                  'error'
+                );
+              }
+            });
+
+          // Closed tunnels detected by polling (IDs no longer present)
           prevForNode.forEach(t => {
             if (!newIds.has(t.id)) {
               addLog(`Tunnel closed: ${t.type} localhost:${t.localPort} -> ${t.targetIP}:${t.targetPort}`, 'info');
@@ -176,6 +198,33 @@ function App() {
     if (hours > 0) return `${hours}h ${minutes}m`;
     return `${minutes}m`;
   };
+
+  // Derive a unified EdgeView expiry timestamp (ms since epoch) from
+  // either sessionStatus or sshStatus, and whether it is already expired.
+  const getExpiryInfo = () => {
+    let ts = null;
+    if (sessionStatus && sessionStatus.expiresAt) {
+      ts = new Date(sessionStatus.expiresAt).getTime();
+    } else if (sshStatus && sshStatus.expiry) {
+      const parsed = parseInt(sshStatus.expiry, 10);
+      if (!Number.isNaN(parsed)) {
+        ts = parsed * 1000;
+      }
+    }
+    if (!ts) {
+      return { timestamp: null, expired: false, label: '-' };
+    }
+    const expired = ts <= Date.now();
+    return {
+      timestamp: ts,
+      expired,
+      label: expired ? 'Expired' : getRelativeTime(ts),
+    };
+  };
+
+  const expiryInfo = getExpiryInfo();
+  const sessionExpired = expiryInfo.expired;
+  const isSessionConnected = tunnelConnected && !sessionExpired;
 
   const addLog = (message, type = 'info') => {
     const timestamp = new Date().toLocaleTimeString();
@@ -703,11 +752,11 @@ function App() {
           </div>
         ) : (
           <div className="content-area">
-            {selectedNode && activeTunnels.filter(t => t.nodeId === selectedNode.id).length > 0 && (
+            {selectedNode && activeTunnels.filter(t => t.nodeId === selectedNode.id && t.status !== 'failed').length > 0 && (
               <div className={`active-tunnels-section ${highlightTunnels ? 'highlight' : ''}`}>
                 <div className="section-title">Active Tunnels</div>
                 <div className="tunnel-list">
-                  {activeTunnels.filter(t => t.nodeId === selectedNode.id).map(tunnel => (
+                  {activeTunnels.filter(t => t.nodeId === selectedNode.id && t.status !== 'failed').map(tunnel => (
                     <div key={tunnel.id} className="tunnel-item">
                       <div className="tunnel-info">
                         <div className="tunnel-type">
@@ -767,11 +816,11 @@ function App() {
             )}
 
             {/* Global tunnels view (all devices) */}
-            {showGlobalTunnels && activeTunnels.length > 0 && (
+            {showGlobalTunnels && activeTunnels.filter(t => t.status !== 'failed').length > 0 && (
               <div className="active-tunnels-section global">
                 <div className="section-title">Global Active Tunnels</div>
                 <div className="tunnel-list">
-                  {activeTunnels.map(tunnel => (
+                  {activeTunnels.filter(t => t.status !== 'failed').map(tunnel => (
                     <div key={tunnel.id} className="tunnel-item">
                       <div className="tunnel-info">
                         <div className="tunnel-type">
@@ -846,8 +895,12 @@ function App() {
                     <button
                       className={`connect-btn primary split-main`}
                       onClick={() => setShowTerminalMenu(!showTerminalMenu)}
-                      disabled={!sshStatus || sshStatus.status !== 'enabled' || !tunnelConnected}
-                      title={(!sshStatus || sshStatus.status !== 'enabled') ? "SSH must be enabled first" : !tunnelConnected ? "Tunnel is disconnected" : "Open SSH Terminal"}
+                      disabled={!sshStatus || sshStatus.status !== 'enabled' || !isSessionConnected}
+                      title={(!sshStatus || sshStatus.status !== 'enabled')
+                        ? "SSH must be enabled first"
+                        : !isSessionConnected
+                          ? "Session is not connected"
+                          : "Open SSH Terminal"}
                       style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', fontSize: '12px' }}
                     >
                       <Terminal size={16} />
@@ -857,7 +910,7 @@ function App() {
                     <button
                       className={`connect-btn primary split-arrow`}
                       onClick={() => setShowTerminalMenu(!showTerminalMenu)}
-                      disabled={!sshStatus || sshStatus.status !== 'enabled' || !tunnelConnected}
+                      disabled={!sshStatus || sshStatus.status !== 'enabled' || !isSessionConnected}
                       style={{ padding: '6px 8px' }}
                     >
                       <ChevronDown size={14} />
@@ -896,8 +949,8 @@ function App() {
                       </div>
                       <div className="status-item">
                         <div className="status-label">SESSION</div>
-                        <div className={`status-value ${tunnelConnected ? 'success' : 'error'}`}>
-                          {tunnelConnected ? (
+                        <div className={`status-value ${isSessionConnected ? 'success' : 'error'}`}>
+                          {isSessionConnected ? (
                             <><Check size={14} /> Connected</>
                           ) : (
                             <><X size={14} /> Disconnected</>
@@ -906,16 +959,22 @@ function App() {
                       </div>
                       <div className="status-item">
                         <span className="status-label">Expires</span>
-                        <span className="value">
-                          {sessionStatus && sessionStatus.expiresAt ? (
-                            <span title={new Date(sessionStatus.expiresAt).toLocaleString()}>
-                              {getRelativeTime(new Date(sessionStatus.expiresAt).getTime())}
-                            </span>
-                          ) : sshStatus.expiry ? (
-                            <span title={new Date(parseInt(sshStatus.expiry) * 1000).toLocaleString()}>
-                              {getRelativeTime(parseInt(sshStatus.expiry) * 1000)}
+                        <span className={`value ${sessionExpired ? 'error' : ''}`}>
+                          {expiryInfo.timestamp ? (
+                            <span title={new Date(expiryInfo.timestamp).toLocaleString()}>
+                              {expiryInfo.label}
                             </span>
                           ) : '-'}
+                          {sessionExpired && (
+                            <button
+                              className="icon-btn refresh-btn"
+                              title="Restart EdgeView session"
+                              onClick={handleResetEdgeView}
+                              style={{ marginLeft: '6px' }}
+                            >
+                              <RefreshCw size={14} />
+                            </button>
+                          )}
                         </span>
                       </div>
                     </div>
@@ -987,6 +1046,14 @@ function App() {
               </div>
             ) : services ? (
               <div className="services-list">
+                {tunnelLoading && (
+                  <div className="tunnel-loading-banner">
+                    <Activity className="loading-icon animate-spin" size={16} />
+                    <span className="loading-text">
+                      {tunnelLoadingMessage || 'Connecting tunnel...'}
+                    </span>
+                  </div>
+                )}
                 {(() => {
                   const servicesList = Array.isArray(services) ? services : (services.services || []);
                   const globalError = !Array.isArray(services) ? services.error : null;
@@ -1028,48 +1095,59 @@ function App() {
                               <div className="service-options">
                                 {app.vncPort && (
                                   <div
-                                    className={`option-btn ${loadingServices ? 'loading' : ''}`}
+                                    className={`option-btn ${tunnelLoading ? 'loading' : ''}`}
                                     onClick={async () => {
-                                      if (loadingServices) return;
+                                      if (sessionExpired) {
+                                        addLog('Cannot start VNC tunnel: EdgeView session has expired. Restart the session first.', 'warning');
+                                        return;
+                                      }
+                                      if (tunnelLoading) return;
                                       try {
-                                        setLoadingServices(true);
+                                        setTunnelLoading(true);
+                                        setTunnelLoadingMessage(`Starting VNC tunnel to localhost:${app.vncPort}...`);
                                         const vncTarget = 'localhost';
                                         addLog(`Starting VNC tunnel to ${vncTarget}:${app.vncPort}...`, 'info');
                                         const result = await StartTunnel(selectedNode.id, vncTarget, app.vncPort);
                                         const port = result.port || result;
                                         const tunnelId = result.tunnelId;
-                                        addLog(`VNC Tunnel active on localhost:${port}`, 'success');
+                                        addLog(`VNC tunnel active on localhost:${port}`, 'success');
                                         addTunnel('VNC', vncTarget, app.vncPort, port, tunnelId);
                                         setHighlightTunnels(true);
                                         setTimeout(() => setHighlightTunnels(false), 2000);
-                                        const vncUrl = `vnc://localhost:${port}`;
-                                        window.electronAPI.openExternal(vncUrl);
-                                        addLog(`Launching VNC viewer with ${vncUrl}`, 'info');
-                                        addLog(`Note: macOS Screen Sharing may ask for a password. Try pressing Enter.`, 'warning');
+                                        addLog(
+                                          `Connect a VNC client to localhost:${port} (or use 'Open VNC Viewer' from Active Tunnels).`,
+                                          'info'
+                                        );
                                         setExpandedServiceId(null);
                                       } catch (err) {
                                         console.error(err);
                                         addLog(`Failed to start VNC tunnel: ${err.message}`, 'error');
                                       } finally {
-                                        setLoadingServices(false);
+                                        setTunnelLoading(false);
+                                        setTunnelLoadingMessage('');
                                       }
                                     }}>
-                                    {loadingServices ? <Activity size={20} className="option-icon animate-spin" /> : <Monitor size={20} className="option-icon" />}
+                                    {tunnelLoading ? <Activity size={20} className="option-icon animate-spin" /> : <Monitor size={20} className="option-icon" />}
                                     <span className="option-label">Launch VNC</span>
                                   </div>
                                 )}
                                 <div
-                                  className={`option-btn ${loadingServices ? 'loading' : ''}`}
+                                  className={`option-btn ${tunnelLoading ? 'loading' : ''}`}
                                   onClick={async () => {
-                                    if (loadingServices) return;
+                                    if (sessionExpired) {
+                                      addLog('Cannot start SSH tunnel: EdgeView session has expired. Restart the session first.', 'warning');
+                                      return;
+                                    }
+                                    if (tunnelLoading) return;
                                     try {
-                                      setLoadingServices(true);
+                                      setTunnelLoading(true);
+                                      setTunnelLoadingMessage('Starting SSH tunnel to 10.2.255.254:22...');
                                       const sshTarget = '10.2.255.254';
                                       addLog(`Starting SSH tunnel to ${sshTarget}:22...`, 'info');
                                       const result = await StartTunnel(selectedNode.id, sshTarget, 22);
                                       const localPort = result.port || result;
                                       const tunnelId = result.tunnelId;
-                                      addLog(`SSH Tunnel active on localhost:${localPort}`, 'success');
+                                      addLog(`SSH tunnel active on localhost:${localPort}`, 'success');
                                       addTunnel('SSH', sshTarget, 22, localPort, tunnelId);
                                       setHighlightTunnels(true);
                                       setTimeout(() => setHighlightTunnels(false), 2000);
@@ -1078,13 +1156,18 @@ function App() {
                                       console.error(err);
                                       addLog(`Failed to start SSH tunnel: ${err.message}`, 'error');
                                     } finally {
-                                      setLoadingServices(false);
+                                      setTunnelLoading(false);
+                                      setTunnelLoadingMessage('');
                                     }
                                   }}>
-                                  {loadingServices ? <Activity size={20} className="option-icon animate-spin" /> : <Terminal size={20} className="option-icon" />}
+                                  {tunnelLoading ? <Activity size={20} className="option-icon animate-spin" /> : <Terminal size={20} className="option-icon" />}
                                   <span className="option-label">SSH Terminal</span>
                                 </div>
                                 <div className="option-btn" onClick={async () => {
+                                  if (sessionExpired) {
+                                    addLog('Cannot start TCP tunnel: EdgeView session has expired. Restart the session first.', 'warning');
+                                    return;
+                                  }
                                   try {
                                     const portInput = prompt("Enter target port (e.g. 80, 8080):", "80");
                                     if (!portInput) return;
@@ -1094,11 +1177,13 @@ function App() {
                                       return;
                                     }
                                     const ip = app.ips && app.ips.length > 0 ? app.ips[0] : '127.0.0.1';
+                                    setTunnelLoading(true);
+                                    setTunnelLoadingMessage(`Starting TCP tunnel to ${ip}:${port}...`);
                                     addLog(`Starting TCP tunnel to ${ip}:${port}...`, 'info');
                                     const result = await StartTunnel(selectedNode.id, ip, port);
                                     const localPort = result.port || result;
                                     const tunnelId = result.tunnelId;
-                                    addLog(`TCP Tunnel active: localhost:${localPort} -> ${ip}:${port}`, 'success');
+                                    addLog(`TCP tunnel active: localhost:${localPort} -> ${ip}:${port}`, 'success');
                                     addTunnel('TCP', ip, port, localPort, tunnelId);
                                     setHighlightTunnels(true);
                                     setTimeout(() => setHighlightTunnels(false), 2000);
@@ -1107,6 +1192,9 @@ function App() {
                                   } catch (err) {
                                     console.error(err);
                                     addLog(`Failed to start TCP tunnel: ${err.message}`, 'error');
+                                  } finally {
+                                    setTunnelLoading(false);
+                                    setTunnelLoadingMessage('');
                                   }
                                 }}>
                                   <Activity size={20} className="option-icon" />

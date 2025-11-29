@@ -401,6 +401,8 @@ type TunnelInfo struct {
 	TargetIP  string    `json:"TargetIP"`
 	LocalPort int       `json:"LocalPort"`
 	CreatedAt time.Time `json:"CreatedAt"`
+	Status    string    `json:"Status,omitempty"`
+	Error     string    `json:"Error,omitempty"`
 }
 
 func (s *HTTPServer) handleListTunnels(w http.ResponseWriter, r *http.Request) {
@@ -423,10 +425,11 @@ func (s *HTTPServer) handleListTunnels(w http.ResponseWriter, r *http.Request) {
 			TargetIP:  t.TargetIP,
 			LocalPort: t.LocalPort,
 			CreatedAt: t.CreatedAt,
+			Status:    t.Status,
+			Error:     t.Error,
 		})
 	}
 
-	log.Printf("DEBUG: handleListTunnels nodeId=%s tunnels=%d\n", nodeID, len(infos))
 	s.sendSuccess(w, infos)
 }
 

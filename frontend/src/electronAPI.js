@@ -88,7 +88,17 @@ export const CloseTunnel = (tunnelId) => {
 
 export const ListTunnels = (nodeId) => {
     return window.electronAPI.listTunnels(nodeId).then(res => {
-        const data = res && res.data;
+        // Distinguish between "no data field at all" (empty body / transport
+        // issue) and an explicit null/[] coming from the backend.
+        const hasDataField = res && Object.prototype.hasOwnProperty.call(res, 'data');
+        const data = hasDataField ? res.data : undefined;
+
+        if (!hasDataField) {
+            // Signal to the caller that we should keep the previous
+            // state instead of treating this as "no tunnels".
+            return null;
+        }
+
         if (Array.isArray(data)) return data;
         if (data == null) return [];
         // In case backend ever returns a single tunnel object, normalize to array

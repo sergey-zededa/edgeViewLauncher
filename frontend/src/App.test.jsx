@@ -226,7 +226,7 @@ describe('App configuration and tunnels', () => {
     expect(activeClusterArg).toBe('Cluster 1');
   });
 
-  it('starting a VNC tunnel calls StartTunnel and adds an active tunnel', async () => {
+  it('starting a VNC tunnel calls StartTunnel and adds an active tunnel without auto-launching VNC client', async () => {
     // Settings with token so main view shows directly
     const validKey = 'A'.repeat(171);
     const validToken = `ENT1234:${validKey}`;
@@ -292,9 +292,8 @@ describe('App configuration and tunnels', () => {
       expect(electronAPI.StartTunnel).toHaveBeenCalledWith('node-1', 'localhost', 5900);
     });
 
-    await waitFor(() => {
-      expect(openExternal).toHaveBeenCalledWith('vnc://localhost:6000');
-    });
+    // We no longer auto-launch the native VNC client; openExternal should not be called here.
+    expect(openExternal).not.toHaveBeenCalled();
 
     // Active tunnel should be rendered in the UI (scope queries to the Active Tunnels section)
     const activeTunnelsHeading = await screen.findByText('Active Tunnels');
