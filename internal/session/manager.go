@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -15,6 +16,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"edgeViewLauncher/internal/zededa"
@@ -30,7 +32,9 @@ type CachedSession struct {
 }
 
 // Tunnel represents an active persistent tunnel
-type Tunnel struct {
+// Status is a simple lifecycle indicator ("active", "failed", etc.).
+// Error holds the last error message when Status == "failed".
+ type Tunnel struct {
 	ID         string
 	NodeID     string
 	TargetIP   string
@@ -39,7 +43,9 @@ type Tunnel struct {
 	Type       string // "SSH", "VNC", "TCP"
 	CreatedAt  time.Time
 	Cancel     context.CancelFunc
-}
+	Status     string
+	Error      string
+ }
 
 type Manager struct {
 	sessions map[string]*CachedSession // key is nodeID
@@ -86,10 +92,25 @@ func (m *Manager) StoreCachedSession(nodeID string, config *zededa.SessionConfig
 }
 
 // RegisterTunnel stores a new tunnel in the registry
-func (m *Manager) RegisterTunnel(tunnel *Tunnel) {
+ func (m *Manager) RegisterTunnel(tunnel *Tunnel) {
 	m.tunnelMu.Lock()
 	defer m.tunnelMu.Unlock()
 	m.tunnels[tunnel.ID] = tunnel
+ }
+
+// FailTunnel marks an existing tunnel as failed and records the error message.
+func (m *Manager) FailTunnel(tunnelID string, err error) {
+	m.tunnelMu.Lock()
+	defer m.tunnelMu.Unlock()
+
+	if tunnel, exists := m.tunnels[tunnelID]; exists {
+		tunnel.Status = "failed"
+		if err != nil {
+			tunnel.Error = err.Error()
+		} else {
+			tunnel.Error = ""
+		}
+	}
 }
 
 // GetTunnel retrieves a tunnel by ID
@@ -151,6 +172,12 @@ const (
 	clientIPMsg     = "YourEndPointIPAddr:"
 )
 
+var (
+	// ErrNoDeviceOnline is returned when EdgeView reports that the
+	// device is not currently connected ("no device online").
+	ErrNoDeviceOnline = errors.New("device is not connected to EdgeView (no device online)")
+)
+
 // envelopeMsg matches original EdgeView crypto.go:30-33
 type envelopeMsg struct {
 	Message    []byte   `json:"message"`
@@ -210,6 +237,8 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 		Type:      "TCP", // Default type for generic tunnels
 		CreatedAt: time.Now(),
 		Cancel:    cancel,
+		Status:    "active",
+		Error:     "",
 	}
 
 	// Register Tunnel
@@ -614,8 +643,25 @@ func sendWrappedMessage(conn *websocket.Conn, payload []byte, key string, messag
 }
 
 func unwrapMessage(data []byte, key string) ([]byte, error) {
+	// First, check for known plain-text error responses that are not
+	// wrapped in the usual JSON+HMAC envelope.
+	raw := string(data)
+	if strings.Contains(raw, "no device online") {
+		trimmed := strings.TrimSpace(raw)
+		if len(trimmed) > 4096 {
+			trimmed = trimmed[:4096] + "... (truncated)"
+		}
+		fmt.Printf("DEBUG: unwrapMessage detected 'no device online' plain-text response: %s\n", trimmed)
+		return nil, ErrNoDeviceOnline
+	}
+
 	var envelope envelopeMsg
 	if err := json.Unmarshal(data, &envelope); err != nil {
+		// Log the full raw message (or a large prefix if extremely long)
+		if len(raw) > 4096 {
+			raw = raw[:4096] + "... (truncated)"
+		}
+		fmt.Printf("DEBUG: unwrapMessage failed to unmarshal envelope. Raw data (len=%d): %s\n", len(data), raw)
 		return nil, fmt.Errorf("failed to unmarshal envelope: %w", err)
 	}
 
@@ -626,6 +672,10 @@ func unwrapMessage(data []byte, key string) ([]byte, error) {
 
 	// Compare using array slice
 	if !hmac.Equal(envelope.Sha256Hash[:], expectedHash) {
+		if len(raw) > 4096 {
+			raw = raw[:4096] + "... (truncated)"
+		}
+		fmt.Printf("DEBUG: unwrapMessage HMAC verification failed. Raw data (len=%d): %s\n", len(data), raw)
 		return nil, fmt.Errorf("HMAC verification failed")
 	}
 
@@ -692,15 +742,21 @@ func (m *Manager) connectToEdgeView(config *zededa.SessionConfig) (*websocket.Co
 }
 
 // handleTunnelConnection handles a single TCP client connection for a persistent tunnel
-func (m *Manager) handleTunnelConnection(ctx context.Context, conn net.Conn, config *zededa.SessionConfig, target string) {
+func (m *Manager) handleTunnelConnection(ctx context.Context, conn net.Conn, config *zededa.SessionConfig, target string, tunnelID string) {
 	defer conn.Close()
 
-	fmt.Printf("DEBUG: Handling TCP client connection from %s\n", conn.RemoteAddr())
+	remoteAddr := conn.RemoteAddr()
+	fmt.Printf("TUNNEL[%s] New TCP client from %s -> target %s (InstID=%d)\\n", tunnelID, remoteAddr, target, config.InstID)
+
+	var bytesTCPToWS int64
+	var bytesWSToTCP int64
 
 	// 1. Connect to EdgeView (On-Demand)
+	fmt.Printf("TUNNEL[%s] Connecting to EdgeView URL=%s (InstID=%d)\\n", tunnelID, config.URL, config.InstID)
 	wsConn, err := m.connectToEdgeView(config)
 	if err != nil {
-		fmt.Printf("ERROR: Failed to connect to EdgeView: %v\n", err)
+		fmt.Printf("TUNNEL[%s] ERROR: Failed to connect to EdgeView: %v\\n", tunnelID, err)
+		m.FailTunnel(tunnelID, err)
 		return
 	}
 	defer wsConn.Close()
@@ -715,15 +771,18 @@ func (m *Manager) handleTunnelConnection(ctx context.Context, conn net.Conn, con
 
 	queryBytes, err := json.Marshal(query)
 	if err != nil {
-		fmt.Printf("ERROR: Failed to marshal query: %v\n", err)
+		fmt.Printf("TUNNEL[%s] ERROR: Failed to marshal query: %v\\n", tunnelID, err)
+		m.FailTunnel(tunnelID, err)
 		return
 	}
 
+	fmt.Printf("TUNNEL[%s] Sending EdgeView tcp query: %s\\n", tunnelID, query.Network)
 	if err := sendWrappedMessage(wsConn, queryBytes, config.Key, websocket.TextMessage); err != nil {
-		fmt.Printf("ERROR: Failed to send query: %v\n", err)
+		fmt.Printf("TUNNEL[%s] ERROR: Failed to send query: %v\\n", tunnelID, err)
+		m.FailTunnel(tunnelID, err)
 		return
 	}
-	fmt.Println("DEBUG: Sent initial query command - proxy ready")
+	fmt.Printf("TUNNEL[%s] Initial tcp query sent - starting proxy loops\\n", tunnelID)
 
 	// 3. Start Bidirectional Proxy
 	errChan := make(chan error, 2)
@@ -734,11 +793,12 @@ func (m *Manager) handleTunnelConnection(ctx context.Context, conn net.Conn, con
 		for {
 			select {
 			case <-ctx.Done():
+				fmt.Printf("TUNNEL[%s] TCP->WS loop exiting due to context cancel\\n", tunnelID)
 				return
 			default:
 				n, err := conn.Read(buf)
 				if n > 0 {
-					fmt.Printf("DEBUG: Read %d bytes from browser TCP connection\n", n)
+					atomic.AddInt64(&bytesTCPToWS, int64(n))
 
 					// Wrap in tcpData
 					td := tcpData{
@@ -748,16 +808,18 @@ func (m *Manager) handleTunnelConnection(ctx context.Context, conn net.Conn, con
 						Data:      buf[:n],
 					}
 					tdBytes, _ := json.Marshal(td)
-					fmt.Printf("DEBUG: Sending %d bytes to EdgeView via WebSocket (tcpData JSON: %d bytes)\n", n, len(tdBytes))
 					if err := sendWrappedMessage(wsConn, tdBytes, config.Key, websocket.TextMessage); err != nil {
+						fmt.Printf("TUNNEL[%s] ERROR: ws write error after sending %d bytes TCP->WS: %v\\n", tunnelID, atomic.LoadInt64(&bytesTCPToWS), err)
 						errChan <- fmt.Errorf("ws write error: %w", err)
 						return
 					}
 				}
 				if err != nil {
 					if err != io.EOF {
+						fmt.Printf("TUNNEL[%s] ERROR: tcp read error after %d bytes TCP->WS: %v\\n", tunnelID, atomic.LoadInt64(&bytesTCPToWS), err)
 						errChan <- fmt.Errorf("tcp read error: %w", err)
 					} else {
+						fmt.Printf("TUNNEL[%s] TCP client closed connection (EOF) after %d bytes TCP->WS\\n", tunnelID, atomic.LoadInt64(&bytesTCPToWS))
 						errChan <- fmt.Errorf("EOF")
 					}
 					return
@@ -771,10 +833,12 @@ func (m *Manager) handleTunnelConnection(ctx context.Context, conn net.Conn, con
 		for {
 			select {
 			case <-ctx.Done():
+				fmt.Printf("TUNNEL[%s] WS->TCP loop exiting due to context cancel\\n", tunnelID)
 				return
 			default:
 				_, message, err := wsConn.ReadMessage()
 				if err != nil {
+					fmt.Printf("TUNNEL[%s] ERROR: ws read error after WS->TCP=%d, TCP->WS=%d bytes: %v\\n", tunnelID, atomic.LoadInt64(&bytesWSToTCP), atomic.LoadInt64(&bytesTCPToWS), err)
 					errChan <- fmt.Errorf("ws read error: %w", err)
 					return
 				}
@@ -782,32 +846,49 @@ func (m *Manager) handleTunnelConnection(ctx context.Context, conn net.Conn, con
 				// Unwrap
 				payload, err := unwrapMessage(message, config.Key)
 				if err != nil {
-					fmt.Printf("DEBUG: unwrapMessage failed: %v\n", err)
+					// Treat explicit "no device online" as a fatal error for this tunnel
+					if errors.Is(err, ErrNoDeviceOnline) || strings.Contains(string(message), "no device online") {
+						fmt.Printf("TUNNEL[%s] DEBUG: EdgeView reported 'no device online' for tunnel\\n", tunnelID)
+						errChan <- ErrNoDeviceOnline
+						return
+					}
+
+					fmt.Printf("TUNNEL[%s] DEBUG: unwrapMessage failed (non-enveloped or corrupt frame): %v\\n", tunnelID, err)
 					continue
 				}
 
-				// Check for errors
-				if strings.Contains(string(payload), "no device online") {
-					errChan <- fmt.Errorf("device offline")
+				// Detect control messages such as +++Done+++ that are not tcpData
+				trimmed := strings.TrimSpace(string(payload))
+				if trimmed == "+++Done+++" {
+					fmt.Printf("TUNNEL[%s] DEBUG: Received EdgeView close marker '+++Done+++'; stopping WS->TCP loop\\n", tunnelID)
+					errChan <- io.EOF
 					return
+				}
+				if strings.Contains(trimmed, "+++tcpSetupOK+++") {
+					// This is the original EdgeView tcp-setup-ok banner. We don't need it for
+					// our direct tunnel implementation, but log it once for troubleshooting.
+					fmt.Printf("TUNNEL[%s] DEBUG: Received tcpSetupOK banner from EdgeView\\n", tunnelID)
+					continue
 				}
 
 				// Parse tcpData
 				var td tcpData
 				if err := json.Unmarshal(payload, &td); err != nil {
 					// Log non-JSON messages to see what we're getting (e.g. status updates)
-					prefix := string(payload)
-					if len(prefix) > 100 {
-						prefix = prefix[:100] + "..."
+					prefix := trimmed
+					if len(prefix) > 200 {
+						prefix = prefix[:200] + "..."
 					}
-					fmt.Printf("DEBUG: Received non-JSON payload: %s\n", prefix)
+					fmt.Printf("TUNNEL[%s] DEBUG: Received non-JSON payload from EdgeView: %s\\n", tunnelID, prefix)
 					continue
 				}
 
 				if len(td.Data) > 0 {
-					// fmt.Printf("DEBUG: Writing %d bytes to TCP\n", len(td.Data))
+					atomic.AddInt64(&bytesWSToTCP, int64(len(td.Data)))
+
 					_, err := conn.Write(td.Data)
 					if err != nil {
+						fmt.Printf("TUNNEL[%s] ERROR: tcp write error after WS->TCP=%d bytes: %v\\n", tunnelID, atomic.LoadInt64(&bytesWSToTCP), err)
 						errChan <- err
 						return
 					}
@@ -818,10 +899,15 @@ func (m *Manager) handleTunnelConnection(ctx context.Context, conn net.Conn, con
 
 	// Wait for error or context cancel
 	select {
-	case <-errChan:
-		// Connection closed, no logging needed (normal operation)
+	case err := <-errChan:
+		if errors.Is(err, ErrNoDeviceOnline) {
+			m.FailTunnel(tunnelID, err)
+		}
+		fmt.Printf("TUNNEL[%s] DEBUG: connection ended (%v); totals: TCP->WS=%d bytes, WS->TCP=%d bytes\\n",
+			tunnelID, err, atomic.LoadInt64(&bytesTCPToWS), atomic.LoadInt64(&bytesWSToTCP))
 	case <-ctx.Done():
-		fmt.Println("DEBUG: Tunnel context cancelled")
+		fmt.Printf("TUNNEL[%s] DEBUG: context cancelled; totals: TCP->WS=%d bytes, WS->TCP=%d bytes\\n",
+			tunnelID, atomic.LoadInt64(&bytesTCPToWS), atomic.LoadInt64(&bytesWSToTCP))
 	}
 }
 
@@ -851,7 +937,7 @@ func (m *Manager) tunnelAcceptLoop(ctx context.Context, listener net.Listener, c
 			}
 
 			// Handle connection in background
-			go m.handleTunnelConnection(ctx, conn, config, target)
+			go m.handleTunnelConnection(ctx, conn, config, target, tunnelID)
 		}
 	}
 }
