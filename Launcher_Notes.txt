@@ -33,7 +33,7 @@
 - 
 
 
-- Indicate VNC session status (running, data is transferring)
+- Indicate VNC session status (running, data is transferring, etc)
 - collect info
 - Closing the sessions using UI results in following errors:
 DEBUG: Sending 695 bytes to EdgeView via WebSocket (tcpData JSON: 977 bytes)

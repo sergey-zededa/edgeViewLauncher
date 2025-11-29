@@ -34,7 +34,7 @@ type CachedSession struct {
 // Tunnel represents an active persistent tunnel
 // Status is a simple lifecycle indicator ("active", "failed", etc.).
 // Error holds the last error message when Status == "failed".
- type Tunnel struct {
+type Tunnel struct {
 	ID         string
 	NodeID     string
 	TargetIP   string
@@ -45,7 +45,7 @@ type CachedSession struct {
 	Cancel     context.CancelFunc
 	Status     string
 	Error      string
- }
+}
 
 type Manager struct {
 	sessions map[string]*CachedSession // key is nodeID
@@ -92,11 +92,11 @@ func (m *Manager) StoreCachedSession(nodeID string, config *zededa.SessionConfig
 }
 
 // RegisterTunnel stores a new tunnel in the registry
- func (m *Manager) RegisterTunnel(tunnel *Tunnel) {
+func (m *Manager) RegisterTunnel(tunnel *Tunnel) {
 	m.tunnelMu.Lock()
 	defer m.tunnelMu.Unlock()
 	m.tunnels[tunnel.ID] = tunnel
- }
+}
 
 // FailTunnel marks an existing tunnel as failed and records the error message.
 func (m *Manager) FailTunnel(tunnelID string, err error) {
@@ -746,168 +746,260 @@ func (m *Manager) handleTunnelConnection(ctx context.Context, conn net.Conn, con
 	defer conn.Close()
 
 	remoteAddr := conn.RemoteAddr()
-	fmt.Printf("TUNNEL[%s] New TCP client from %s -> target %s (InstID=%d)\\n", tunnelID, remoteAddr, target, config.InstID)
+	fmt.Printf("TUNNEL[%s] New TCP client from %s -> target %s (InstID=%d)\n", tunnelID, remoteAddr, target, config.InstID)
 
 	var bytesTCPToWS int64
 	var bytesWSToTCP int64
 
-	// 1. Connect to EdgeView (On-Demand)
-	fmt.Printf("TUNNEL[%s] Connecting to EdgeView URL=%s (InstID=%d)\\n", tunnelID, config.URL, config.InstID)
-	wsConn, err := m.connectToEdgeView(config)
-	if err != nil {
-		fmt.Printf("TUNNEL[%s] ERROR: Failed to connect to EdgeView: %v\\n", tunnelID, err)
-		m.FailTunnel(tunnelID, err)
-		return
-	}
-	defer wsConn.Close()
+	maxRetries := 3
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		// Create a cancellable context for this attempt's proxy loops
+		proxyCtx, proxyCancel := context.WithCancel(ctx)
 
-	// 2. Send Initial Query
-	query := cmdOpt{
-		Version:  edgeViewVersion,
-		Network:  "tcp/" + target, // TCP is a network command, not system command
-		IsJSON:   false,
-		UserInfo: "edgeViewLauncher",
-	}
-
-	queryBytes, err := json.Marshal(query)
-	if err != nil {
-		fmt.Printf("TUNNEL[%s] ERROR: Failed to marshal query: %v\\n", tunnelID, err)
-		m.FailTunnel(tunnelID, err)
-		return
-	}
-
-	fmt.Printf("TUNNEL[%s] Sending EdgeView tcp query: %s\\n", tunnelID, query.Network)
-	if err := sendWrappedMessage(wsConn, queryBytes, config.Key, websocket.TextMessage); err != nil {
-		fmt.Printf("TUNNEL[%s] ERROR: Failed to send query: %v\\n", tunnelID, err)
-		m.FailTunnel(tunnelID, err)
-		return
-	}
-	fmt.Printf("TUNNEL[%s] Initial tcp query sent - starting proxy loops\\n", tunnelID)
-
-	// 3. Start Bidirectional Proxy
-	errChan := make(chan error, 2)
-
-	// TCP -> WebSocket
-	go func() {
-		buf := make([]byte, 64*1024) // Larger buffer for better performance
-		for {
-			select {
-			case <-ctx.Done():
-				fmt.Printf("TUNNEL[%s] TCP->WS loop exiting due to context cancel\\n", tunnelID)
-				return
-			default:
-				n, err := conn.Read(buf)
-				if n > 0 {
-					atomic.AddInt64(&bytesTCPToWS, int64(n))
-
-					// Wrap in tcpData
-					td := tcpData{
-						Version:   1,
-						MappingID: 0,
-						ChanNum:   0,
-						Data:      buf[:n],
-					}
-					tdBytes, _ := json.Marshal(td)
-					if err := sendWrappedMessage(wsConn, tdBytes, config.Key, websocket.TextMessage); err != nil {
-						fmt.Printf("TUNNEL[%s] ERROR: ws write error after sending %d bytes TCP->WS: %v\\n", tunnelID, atomic.LoadInt64(&bytesTCPToWS), err)
-						errChan <- fmt.Errorf("ws write error: %w", err)
-						return
-					}
-				}
-				if err != nil {
-					if err != io.EOF {
-						fmt.Printf("TUNNEL[%s] ERROR: tcp read error after %d bytes TCP->WS: %v\\n", tunnelID, atomic.LoadInt64(&bytesTCPToWS), err)
-						errChan <- fmt.Errorf("tcp read error: %w", err)
-					} else {
-						fmt.Printf("TUNNEL[%s] TCP client closed connection (EOF) after %d bytes TCP->WS\\n", tunnelID, atomic.LoadInt64(&bytesTCPToWS))
-						errChan <- fmt.Errorf("EOF")
-					}
-					return
-				}
+		// 1. Connect to EdgeView
+		fmt.Printf("TUNNEL[%s] Connecting to EdgeView URL=%s (InstID=%d) (Attempt %d/%d)\n", tunnelID, config.URL, config.InstID, attempt, maxRetries)
+		wsConn, err := m.connectToEdgeView(config)
+		if err != nil {
+			fmt.Printf("TUNNEL[%s] ERROR: Failed to connect to EdgeView: %v\n", tunnelID, err)
+			proxyCancel()
+			if attempt < maxRetries {
+				time.Sleep(1 * time.Second)
+				continue
 			}
-		}
-	}()
-
-	// WebSocket -> TCP
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				fmt.Printf("TUNNEL[%s] WS->TCP loop exiting due to context cancel\\n", tunnelID)
-				return
-			default:
-				_, message, err := wsConn.ReadMessage()
-				if err != nil {
-					fmt.Printf("TUNNEL[%s] ERROR: ws read error after WS->TCP=%d, TCP->WS=%d bytes: %v\\n", tunnelID, atomic.LoadInt64(&bytesWSToTCP), atomic.LoadInt64(&bytesTCPToWS), err)
-					errChan <- fmt.Errorf("ws read error: %w", err)
-					return
-				}
-
-				// Unwrap
-				payload, err := unwrapMessage(message, config.Key)
-				if err != nil {
-					// Treat explicit "no device online" as a fatal error for this tunnel
-					if errors.Is(err, ErrNoDeviceOnline) || strings.Contains(string(message), "no device online") {
-						fmt.Printf("TUNNEL[%s] DEBUG: EdgeView reported 'no device online' for tunnel\\n", tunnelID)
-						errChan <- ErrNoDeviceOnline
-						return
-					}
-
-					fmt.Printf("TUNNEL[%s] DEBUG: unwrapMessage failed (non-enveloped or corrupt frame): %v\\n", tunnelID, err)
-					continue
-				}
-
-				// Detect control messages such as +++Done+++ that are not tcpData
-				trimmed := strings.TrimSpace(string(payload))
-				if trimmed == "+++Done+++" {
-					fmt.Printf("TUNNEL[%s] DEBUG: Received EdgeView close marker '+++Done+++'; stopping WS->TCP loop\\n", tunnelID)
-					errChan <- io.EOF
-					return
-				}
-				if strings.Contains(trimmed, "+++tcpSetupOK+++") {
-					// This is the original EdgeView tcp-setup-ok banner. We don't need it for
-					// our direct tunnel implementation, but log it once for troubleshooting.
-					fmt.Printf("TUNNEL[%s] DEBUG: Received tcpSetupOK banner from EdgeView\\n", tunnelID)
-					continue
-				}
-
-				// Parse tcpData
-				var td tcpData
-				if err := json.Unmarshal(payload, &td); err != nil {
-					// Log non-JSON messages to see what we're getting (e.g. status updates)
-					prefix := trimmed
-					if len(prefix) > 200 {
-						prefix = prefix[:200] + "..."
-					}
-					fmt.Printf("TUNNEL[%s] DEBUG: Received non-JSON payload from EdgeView: %s\\n", tunnelID, prefix)
-					continue
-				}
-
-				if len(td.Data) > 0 {
-					atomic.AddInt64(&bytesWSToTCP, int64(len(td.Data)))
-
-					_, err := conn.Write(td.Data)
-					if err != nil {
-						fmt.Printf("TUNNEL[%s] ERROR: tcp write error after WS->TCP=%d bytes: %v\\n", tunnelID, atomic.LoadInt64(&bytesWSToTCP), err)
-						errChan <- err
-						return
-					}
-				}
-			}
-		}
-	}()
-
-	// Wait for error or context cancel
-	select {
-	case err := <-errChan:
-		if errors.Is(err, ErrNoDeviceOnline) {
 			m.FailTunnel(tunnelID, err)
+			return
 		}
-		fmt.Printf("TUNNEL[%s] DEBUG: connection ended (%v); totals: TCP->WS=%d bytes, WS->TCP=%d bytes\\n",
-			tunnelID, err, atomic.LoadInt64(&bytesTCPToWS), atomic.LoadInt64(&bytesWSToTCP))
-	case <-ctx.Done():
-		fmt.Printf("TUNNEL[%s] DEBUG: context cancelled; totals: TCP->WS=%d bytes, WS->TCP=%d bytes\\n",
-			tunnelID, atomic.LoadInt64(&bytesTCPToWS), atomic.LoadInt64(&bytesWSToTCP))
+
+		// 2. Send Initial Query
+		query := cmdOpt{
+			Version:  edgeViewVersion,
+			Network:  "tcp/" + target,
+			IsJSON:   false,
+			UserInfo: "edgeViewLauncher",
+		}
+
+		queryBytes, err := json.Marshal(query)
+		if err != nil {
+			fmt.Printf("TUNNEL[%s] ERROR: Failed to marshal query: %v\n", tunnelID, err)
+			wsConn.Close()
+			proxyCancel()
+			m.FailTunnel(tunnelID, err)
+			return
+		}
+
+		fmt.Printf("TUNNEL[%s] Sending EdgeView tcp query: %s\n", tunnelID, query.Network)
+		if err := sendWrappedMessage(wsConn, queryBytes, config.Key, websocket.TextMessage); err != nil {
+			fmt.Printf("TUNNEL[%s] ERROR: Failed to send query: %v\n", tunnelID, err)
+			wsConn.Close()
+			proxyCancel()
+			if attempt < maxRetries {
+				time.Sleep(1 * time.Second)
+				continue
+			}
+			m.FailTunnel(tunnelID, err)
+			return
+		}
+		fmt.Printf("TUNNEL[%s] Initial tcp query sent - starting proxy loops\n", tunnelID)
+
+		// 3. Start Bidirectional Proxy
+		errChan := make(chan error, 2)
+
+		// TCP -> WebSocket
+		go func() {
+			defer proxyCancel() // Ensure cleanup if this loop exits
+			buf := make([]byte, 64*1024)
+			for {
+				select {
+				case <-proxyCtx.Done():
+					return
+				default:
+					// Use deadline to make Read interruptible
+					conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+					n, err := conn.Read(buf)
+					if n > 0 {
+						fmt.Printf("TUNNEL[%s] DEBUG: TCP->WS Read %d bytes\n", tunnelID, n)
+						atomic.AddInt64(&bytesTCPToWS, int64(n))
+
+						// Wrap in tcpData
+						td := tcpData{
+							Version:   1,
+							MappingID: 0,
+							ChanNum:   0,
+							Data:      buf[:n],
+						}
+						tdBytes, _ := json.Marshal(td)
+						if err := sendWrappedMessage(wsConn, tdBytes, config.Key, websocket.TextMessage); err != nil {
+							fmt.Printf("TUNNEL[%s] ERROR: ws write error after sending %d bytes TCP->WS: %v\n", tunnelID, atomic.LoadInt64(&bytesTCPToWS), err)
+							errChan <- fmt.Errorf("ws write error: %w", err)
+							return
+						}
+					}
+					if err != nil {
+						if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+							// Timeout is expected, check context and continue
+							if proxyCtx.Err() != nil {
+								return
+							}
+							continue
+						}
+						if err != io.EOF {
+							fmt.Printf("TUNNEL[%s] ERROR: tcp read error after %d bytes TCP->WS: %v\n", tunnelID, atomic.LoadInt64(&bytesTCPToWS), err)
+							errChan <- fmt.Errorf("tcp read error: %w", err)
+						} else {
+							fmt.Printf("TUNNEL[%s] TCP client closed connection (EOF) after %d bytes TCP->WS\n", tunnelID, atomic.LoadInt64(&bytesTCPToWS))
+							errChan <- fmt.Errorf("EOF")
+						}
+						return
+					}
+				}
+			}
+		}()
+
+		// WebSocket -> TCP
+		go func() {
+			defer proxyCancel()
+			for {
+				select {
+				case <-proxyCtx.Done():
+					return
+				default:
+					_, message, err := wsConn.ReadMessage()
+					if err != nil {
+						// If context is cancelled, ignore read error
+						if proxyCtx.Err() != nil {
+							return
+						}
+						fmt.Printf("TUNNEL[%s] ERROR: ws read error after WS->TCP=%d, TCP->WS=%d bytes: %v\n", tunnelID, atomic.LoadInt64(&bytesWSToTCP), atomic.LoadInt64(&bytesTCPToWS), err)
+						errChan <- fmt.Errorf("ws read error: %w", err)
+						return
+					}
+
+					// Unwrap
+					payload, err := unwrapMessage(message, config.Key)
+					if err != nil {
+						// Treat explicit "no device online" as a fatal error for this tunnel (trigger retry)
+						if errors.Is(err, ErrNoDeviceOnline) || strings.Contains(string(message), "no device online") {
+							fmt.Printf("TUNNEL[%s] DEBUG: EdgeView reported 'no device online' for tunnel\n", tunnelID)
+							errChan <- ErrNoDeviceOnline
+							return
+						}
+
+						fmt.Printf("TUNNEL[%s] DEBUG: unwrapMessage failed (non-enveloped or corrupt frame): %v\n", tunnelID, err)
+						continue
+					}
+
+					// Detect control messages such as +++Done+++ that are not tcpData
+					trimmed := strings.TrimSpace(string(payload))
+					if trimmed == "+++Done+++" {
+						fmt.Printf("TUNNEL[%s] DEBUG: Received EdgeView close marker '+++Done+++'; stopping WS->TCP loop\n", tunnelID)
+						errChan <- io.EOF
+						return
+					}
+					if strings.Contains(trimmed, "+++tcpSetupOK+++") {
+						fmt.Printf("TUNNEL[%s] DEBUG: Received tcpSetupOK banner from EdgeView. Payload len: %d\n", tunnelID, len(payload))
+
+						// Strip the banner to see if there is any JSON data following it
+						tempStr := string(payload)
+						tempStr = strings.Replace(tempStr, "+++tcpSetupOK+++", "", -1)
+						tempStr = strings.TrimSpace(tempStr)
+
+						// Look for JSON start (tcpData starts with '{')
+						if idx := strings.Index(tempStr, "{"); idx != -1 {
+							if idx > 0 {
+								fmt.Printf("TUNNEL[%s] DEBUG: Ignoring prefix before JSON: %s\n", tunnelID, tempStr[:idx])
+								tempStr = tempStr[idx:]
+							}
+						} else {
+							// No JSON found. If it's not empty, it's just garbage/headers.
+							if len(tempStr) > 0 {
+								fmt.Printf("TUNNEL[%s] DEBUG: Ignoring non-JSON content after banner: %s\n", tunnelID, tempStr)
+							}
+							continue
+						}
+
+						// Update payload to point to the remaining data (hopefully JSON)
+						fmt.Printf("TUNNEL[%s] DEBUG: Found potential JSON data (%d bytes), attempting to parse...\n", tunnelID, len(tempStr))
+						payload = []byte(tempStr)
+					}
+
+					// Parse tcpData
+					var td tcpData
+					if err := json.Unmarshal(payload, &td); err != nil {
+						// It's not JSON.
+						// Check if it contains raw VNC data (signature "RFB")
+						// It might be preceded by headers like "=== Network: ... ==="
+						if idx := strings.Index(string(payload), "RFB"); idx != -1 {
+							fmt.Printf("TUNNEL[%s] DEBUG: Detected raw VNC handshake (RFB) at offset %d, forwarding...\n", tunnelID, idx)
+
+							// Strip headers/garbage before RFB
+							vncData := payload[idx:]
+
+							atomic.AddInt64(&bytesWSToTCP, int64(len(vncData)))
+							_, err := conn.Write(vncData)
+							if err != nil {
+								fmt.Printf("TUNNEL[%s] ERROR: tcp write error after WS->TCP=%d bytes: %v\n", tunnelID, atomic.LoadInt64(&bytesWSToTCP), err)
+								errChan <- err
+								return
+							}
+							continue
+						}
+
+						// Log non-JSON messages to see what we're getting (e.g. status updates)
+						prefix := string(payload)
+						if len(prefix) > 200 {
+							prefix = prefix[:200] + "..."
+						}
+						// Use %q to see newlines and special chars
+						fmt.Printf("TUNNEL[%s] DEBUG: Received non-JSON payload from EdgeView: %q\n", tunnelID, prefix)
+						continue
+					}
+
+					if len(td.Data) > 0 {
+						fmt.Printf("TUNNEL[%s] DEBUG: WS->TCP Received %d bytes (tcpData)\n", tunnelID, len(td.Data))
+						atomic.AddInt64(&bytesWSToTCP, int64(len(td.Data)))
+
+						_, err := conn.Write(td.Data)
+						if err != nil {
+							fmt.Printf("TUNNEL[%s] ERROR: tcp write error after WS->TCP=%d bytes: %v\n", tunnelID, atomic.LoadInt64(&bytesWSToTCP), err)
+							errChan <- err
+							return
+						}
+					}
+				}
+			}
+		}()
+
+		// Wait for error or context cancel
+		select {
+		case err := <-errChan:
+			// Check if we should retry
+			if errors.Is(err, ErrNoDeviceOnline) {
+				fmt.Printf("TUNNEL[%s] WARNING: EdgeView session failed with 'no device online'. Retrying... (Attempt %d/%d)\n", tunnelID, attempt, maxRetries)
+				proxyCancel() // Stop the loops
+				wsConn.Close()
+				if attempt < maxRetries {
+					time.Sleep(1 * time.Second)
+					continue // Retry the outer loop
+				}
+			}
+
+			// Fatal error or max retries reached
+			if err != io.EOF {
+				fmt.Printf("TUNNEL[%s] Connection closed with error: %v\n", tunnelID, err)
+				m.FailTunnel(tunnelID, err) // Fail the tunnel on a non-retryable error
+			} else {
+				fmt.Printf("TUNNEL[%s] Connection closed cleanly\n", tunnelID)
+			}
+			proxyCancel()
+			wsConn.Close()
+			return // Exit the function
+
+		case <-ctx.Done():
+			fmt.Printf("TUNNEL[%s] Context cancelled, closing tunnel\n", tunnelID)
+			proxyCancel()
+			wsConn.Close()
+			return // Exit the function
+		}
 	}
 }
 
