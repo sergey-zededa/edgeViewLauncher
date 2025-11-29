@@ -3,11 +3,13 @@ build/bin
 frontend/dist
 dist-electron/
 
+eve/
+
 # Dependencies
 node_modules
 
 # Example client implementation (not part of this module)
-edgeview-client/
+# edgeview-client/
 
 # System files
 .DS_Store

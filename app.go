@@ -321,24 +321,6 @@ func (a *App) StartTunnel(nodeID string, targetIP string, targetPort int) (int, 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		fmt.Printf("DEBUG: Starting tunnel (attempt %d/%d)...\n", attempt, maxRetries)
 
-		// Pre-check: Verify device is actually online before starting the proxy listener.
-		// StartProxy returns immediately, so we need this check to make the retry loop effective.
-		_, err := a.sessionManager.ExecuteCommand(nodeID, "date")
-		if err != nil {
-			if strings.Contains(err.Error(), "no device online") && attempt < maxRetries {
-				fmt.Printf("DEBUG: Device offline (pre-check), retrying in 2 seconds... (attempt %d/%d)\n", attempt, maxRetries)
-				time.Sleep(2 * time.Second)
-				continue
-			}
-			// If it's another error, we might still want to try starting the proxy or fail here.
-			// But "no device online" is the specific case we are handling.
-			// Let's log it and proceed to StartProxy, which might fail or succeed (maybe "date" failed for other reasons).
-			fmt.Printf("DEBUG: Pre-check failed: %v. Proceeding to StartProxy anyway.\n", err)
-		} else {
-			fmt.Println("DEBUG: Pre-check passed. Waiting 1s to ensure session state clears...")
-			time.Sleep(1 * time.Second)
-		}
-
 		port, tunnelID, err = a.sessionManager.StartProxy(a.ctx, cached.Config, nodeID, target)
 
 		if err == nil {

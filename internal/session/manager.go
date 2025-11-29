@@ -203,17 +203,30 @@ type cmdOpt struct {
 	IsJSON       bool   `json:"isJSON"`
 	Extraline    int    `json:"extraline"`
 	Logtype      string `json:"logtype"`
-	UserInfo     string `json:"userInfo"`
 }
 
 // StartProxy starts a local TCP listener that proxies to the EdgeView WebSocket
 // Returns the local port number and tunnel ID. Tunnels are keyed by the
 // ZEDEDA device node ID so they can be listed per-device from the UI.
 func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, nodeID string, target string) (int, string, error) {
-	// Start local TCP listener on random port
-	listener, err := net.Listen("tcp", "localhost:0")
-	if err != nil {
-		return 0, "", fmt.Errorf("failed to start local listener: %w", err)
+	// Start local TCP listener
+	// Try preferred ports 9001-9010 first (matching reference client behavior)
+	var listener net.Listener
+	var err error
+
+	for port := 9001; port <= 9010; port++ {
+		listener, err = net.Listen("tcp", fmt.Sprintf("localhost:%d", port))
+		if err == nil {
+			break
+		}
+	}
+
+	// Fallback to random port if preferred ports are taken
+	if listener == nil {
+		listener, err = net.Listen("tcp", "localhost:0")
+		if err != nil {
+			return 0, "", fmt.Errorf("failed to start local listener: %w", err)
+		}
 	}
 
 	localPort := listener.Addr().(*net.TCPAddr).Port
@@ -288,9 +301,7 @@ func (m *Manager) ExecuteCommand(nodeID string, command string) (string, error) 
 
 	// Construct hostname
 	hostname, _ := os.Hostname()
-	if len(config.UUID) >= 5 {
-		hostname += "-" + config.UUID[len(config.UUID)-5:]
-	}
+	// Reference client does NOT append UUID, only InstID
 	if config.InstID > 0 {
 		hostname += fmt.Sprintf("-inst-%d", config.InstID)
 	}
@@ -323,10 +334,9 @@ func (m *Manager) ExecuteCommand(nodeID string, command string) (string, error) 
 
 	// Send command
 	query := cmdOpt{
-		Version:  edgeViewVersion,
-		System:   command, // "app", "log", etc.
-		IsJSON:   false,   // app command returns plain text, not JSON
-		UserInfo: "edgeViewLauncher",
+		Version: edgeViewVersion,
+		System:  command, // "app", "log", etc.
+		IsJSON:  false,   // app command returns plain text, not JSON
 	}
 
 	fmt.Printf("DEBUG: Sending EdgeView command: %s\n", command)
@@ -424,9 +434,7 @@ func (m *Manager) QueryDevice(ctx context.Context, config *zededa.SessionConfig,
 
 		// 2. Construct Hostname
 		hostname, _ := os.Hostname()
-		if len(config.UUID) >= 5 {
-			hostname += "-" + config.UUID[len(config.UUID)-5:]
-		}
+		// Reference client does NOT append UUID, only InstID
 		if config.InstID > 0 {
 			hostname += fmt.Sprintf("-inst-%d", config.InstID)
 		}
@@ -467,7 +475,6 @@ func (m *Manager) QueryDevice(ctx context.Context, config *zededa.SessionConfig,
 		query := cmdOpt{
 			Version:      edgeViewVersion,
 			ClientEPAddr: clientIP,
-			UserInfo:     "edgeViewLauncher",
 			IsJSON:       isJSON,
 		}
 
@@ -512,8 +519,10 @@ func (m *Manager) QueryDevice(ctx context.Context, config *zededa.SessionConfig,
 					fmt.Printf("DEBUG: Instance %d is busy. Retrying...\n", config.InstID)
 					wsConn.Close()
 
-					// Increment Instance ID and retry
-					config.InstID++
+					// Default to Instance 2 to avoid conflict with reference client (usually Inst 1)
+					// and to avoid "zombie" sessions from previous failed attempts
+					config.InstID = 2
+					config.MaxInst = 3 // Assuming standard limit
 					maxLimit := config.MaxInst
 					if maxLimit == 0 {
 						maxLimit = startInstID + 5
@@ -683,7 +692,7 @@ func unwrapMessage(data []byte, key string) ([]byte, error) {
 }
 
 // connectToEdgeView establishes a WebSocket connection to EdgeView
-func (m *Manager) connectToEdgeView(config *zededa.SessionConfig) (*websocket.Conn, error) {
+func (m *Manager) connectToEdgeView(config *zededa.SessionConfig) (*websocket.Conn, string, error) {
 	// 1. Compute Token Hash
 	tokenToHash := config.Token
 	if config.InstID > 0 {
@@ -695,11 +704,9 @@ func (m *Manager) connectToEdgeView(config *zededa.SessionConfig) (*websocket.Co
 	hash16 := h.Sum(nil)[:16]
 	tokenHash := base64.RawURLEncoding.EncodeToString(hash16)
 
-	// 2. Construct Hostname
+	// Construct hostname
 	hostname, _ := os.Hostname()
-	if len(config.UUID) >= 5 {
-		hostname += "-" + config.UUID[len(config.UUID)-5:]
-	}
+	// Reference client does NOT append UUID, only InstID
 	if config.InstID > 0 {
 		hostname += fmt.Sprintf("-inst-%d", config.InstID)
 	}
@@ -725,20 +732,39 @@ func (m *Manager) connectToEdgeView(config *zededa.SessionConfig) (*websocket.Co
 	wsConn, resp, err := dialer.Dial(config.URL, headers)
 	if err != nil {
 		if resp != nil {
-			return nil, fmt.Errorf("failed to connect to websocket (status %d): %w", resp.StatusCode, err)
+			return nil, "", fmt.Errorf("failed to connect to websocket (status %d): %w", resp.StatusCode, err)
 		}
-		return nil, fmt.Errorf("failed to connect to websocket: %w", err)
+		return nil, "", fmt.Errorf("failed to connect to websocket: %w", err)
 	}
 
 	// 4. Read Initial IP Message
 	_, msg, err := wsConn.ReadMessage()
 	if err != nil {
 		wsConn.Close()
-		return nil, fmt.Errorf("failed to read initial message: %w", err)
+		return nil, "", fmt.Errorf("failed to read initial message: %w", err)
 	}
-	fmt.Printf("DEBUG: Received initial message: %s\n", string(msg))
 
-	return wsConn, nil
+	initialMsg := string(msg)
+	fmt.Printf("DEBUG: Received initial message: %s\n", initialMsg)
+
+	// Extract client IP address from message like "YourEndPointIPAddr:213.47.61.191"
+	clientIP := ""
+	if strings.HasPrefix(initialMsg, "YourEndPointIPAddr:") {
+		clientIP = strings.TrimPrefix(initialMsg, "YourEndPointIPAddr:")
+		clientIP = strings.TrimSpace(clientIP)
+		fmt.Printf("DEBUG: Extracted client IP: %s\n", clientIP)
+	}
+
+	// Store client IP in the connection for later use
+	// We'll pass it back via a custom field
+	// For now, let's use a simple approach: store in a map keyed by wsConn
+	// Actually, let's modify the return signature to return the IP too
+	// But that would require changing all callers...
+	// Instead, let's store it in the config temporarily
+	// Actually, config is passed in, not modified
+	// Let me use a different approach: modify connectToEdgeView to return both
+
+	return wsConn, clientIP, nil
 }
 
 // handleTunnelConnection handles a single TCP client connection for a persistent tunnel
@@ -758,7 +784,7 @@ func (m *Manager) handleTunnelConnection(ctx context.Context, conn net.Conn, con
 
 		// 1. Connect to EdgeView
 		fmt.Printf("TUNNEL[%s] Connecting to EdgeView URL=%s (InstID=%d) (Attempt %d/%d)\n", tunnelID, config.URL, config.InstID, attempt, maxRetries)
-		wsConn, err := m.connectToEdgeView(config)
+		wsConn, clientIP, err := m.connectToEdgeView(config)
 		if err != nil {
 			fmt.Printf("TUNNEL[%s] ERROR: Failed to connect to EdgeView: %v\n", tunnelID, err)
 			proxyCancel()
@@ -772,10 +798,10 @@ func (m *Manager) handleTunnelConnection(ctx context.Context, conn net.Conn, con
 
 		// 2. Send Initial Query
 		query := cmdOpt{
-			Version:  edgeViewVersion,
-			Network:  "tcp/" + target,
-			IsJSON:   false,
-			UserInfo: "edgeViewLauncher",
+			Version:      edgeViewVersion,
+			ClientEPAddr: clientIP,
+			Network:      "tcp/" + target,
+			IsJSON:       false, // Must be false for TCP tunnels
 		}
 
 		queryBytes, err := json.Marshal(query)
@@ -804,6 +830,9 @@ func (m *Manager) handleTunnelConnection(ctx context.Context, conn net.Conn, con
 		// 3. Start Bidirectional Proxy
 		errChan := make(chan error, 2)
 
+		// Shared state for setup completion (accessed by both goroutines)
+		var tcpSetupComplete int32 // 0 = false, 1 = true (atomic)
+
 		// TCP -> WebSocket
 		go func() {
 			defer proxyCancel() // Ensure cleanup if this loop exits
@@ -818,21 +847,36 @@ func (m *Manager) handleTunnelConnection(ctx context.Context, conn net.Conn, con
 					n, err := conn.Read(buf)
 					if n > 0 {
 						fmt.Printf("TUNNEL[%s] DEBUG: TCP->WS Read %d bytes\n", tunnelID, n)
+
+						// Wait for setup to complete before forwarding data
+						// This prevents SSH clients from sending data before initialization packet
+						if atomic.LoadInt32(&tcpSetupComplete) == 0 {
+							fmt.Printf("TUNNEL[%s] DEBUG: Buffering %d bytes - waiting for tcpSetupComplete\n", tunnelID, n)
+							time.Sleep(100 * time.Millisecond)
+							continue
+						}
+
 						atomic.AddInt64(&bytesTCPToWS, int64(n))
 
-						// Wrap in tcpData
+						// Wrap in tcpData struct (matching EVE protocol)
 						td := tcpData{
-							Version:   1,
-							MappingID: 0,
-							ChanNum:   0,
+							Version:   0, // MUST be 0 to match EVE reference
+							MappingID: 1, // MUST be 1 for single mapping
+							ChanNum:   1, // MUST be 1 for single channel
 							Data:      buf[:n],
 						}
 						tdBytes, _ := json.Marshal(td)
-						if err := sendWrappedMessage(wsConn, tdBytes, config.Key, websocket.TextMessage); err != nil {
+
+						// Debug: Print payload
+						fmt.Printf("TUNNEL[%s] DEBUG: Sending tcpData: %s\n", tunnelID, string(tdBytes))
+
+						// Send as BinaryMessage (required by EVE for tcpData)
+						if err := sendWrappedMessage(wsConn, tdBytes, config.Key, websocket.BinaryMessage); err != nil {
 							fmt.Printf("TUNNEL[%s] ERROR: ws write error after sending %d bytes TCP->WS: %v\n", tunnelID, atomic.LoadInt64(&bytesTCPToWS), err)
 							errChan <- fmt.Errorf("ws write error: %w", err)
 							return
 						}
+						fmt.Printf("TUNNEL[%s] DEBUG: Sent %d bytes to WS (Binary)\n", tunnelID, n)
 					}
 					if err != nil {
 						if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
@@ -864,6 +908,7 @@ func (m *Manager) handleTunnelConnection(ctx context.Context, conn net.Conn, con
 					return
 				default:
 					_, message, err := wsConn.ReadMessage()
+					fmt.Printf("TUNNEL[%s] DEBUG: WebSocket ReadMessage returned: size=%d, err=%v\n", tunnelID, len(message), err)
 					if err != nil {
 						// If context is cancelled, ignore read error
 						if proxyCtx.Err() != nil {
@@ -876,6 +921,7 @@ func (m *Manager) handleTunnelConnection(ctx context.Context, conn net.Conn, con
 
 					// Unwrap
 					payload, err := unwrapMessage(message, config.Key)
+					fmt.Printf("TUNNEL[%s] DEBUG: unwrapMessage returned: payloadSize=%d, err=%v\n", tunnelID, len(payload), err)
 					if err != nil {
 						// Treat explicit "no device online" as a fatal error for this tunnel (trigger retry)
 						if errors.Is(err, ErrNoDeviceOnline) || strings.Contains(string(message), "no device online") {
@@ -895,47 +941,53 @@ func (m *Manager) handleTunnelConnection(ctx context.Context, conn net.Conn, con
 						errChan <- io.EOF
 						return
 					}
+
 					if strings.Contains(trimmed, "+++tcpSetupOK+++") {
-						fmt.Printf("TUNNEL[%s] DEBUG: Received tcpSetupOK banner from EdgeView. Payload len: %d\n", tunnelID, len(payload))
+						fmt.Printf("TUNNEL[%s] DEBUG: Received tcpSetupOK banner - TCP relay is now active\n", tunnelID)
+						atomic.StoreInt32(&tcpSetupComplete, 1)
 
-						// Strip the banner to see if there is any JSON data following it
-						tempStr := string(payload)
-						tempStr = strings.Replace(tempStr, "+++tcpSetupOK+++", "", -1)
-						tempStr = strings.TrimSpace(tempStr)
+						// CRITICAL: Send initialization packet to trigger server-side Dial()
+						// The EVE protocol requires the CLIENT to send first data packet
+						// For VNC (and other protocols), this triggers the server to connect to the target
+						// See eve/edgeview-client/tcp.go lines 189-197 (justEnterVNC flag)
 
-						// Look for JSON start (tcpData starts with '{')
-						if idx := strings.Index(tempStr, "{"); idx != -1 {
-							if idx > 0 {
-								fmt.Printf("TUNNEL[%s] DEBUG: Ignoring prefix before JSON: %s\n", tunnelID, tempStr[:idx])
-								tempStr = tempStr[idx:]
-							}
-						} else {
-							// No JSON found. If it's not empty, it's just garbage/headers.
-							if len(tempStr) > 0 {
-								fmt.Printf("TUNNEL[%s] DEBUG: Ignoring non-JSON content after banner: %s\n", tunnelID, tempStr)
-							}
-							continue
+						// Add delay to avoid race condition where server prints tcpSetupOK before initializing maps
+						fmt.Printf("TUNNEL[%s] DEBUG: Waiting 1s before sending initialization packet...\n", tunnelID)
+						time.Sleep(1 * time.Second)
+
+						initData := tcpData{
+							Version:   0,        // Zero value - matches EVE implementation
+							MappingID: 1,        // First mapping
+							ChanNum:   1,        // First channel
+							Data:      []byte{}, // EMPTY - triggers server Dial without sending data to target
 						}
+						initBytes, _ := json.Marshal(initData)
+						// Wrap and send as BinaryMessage (required by EVE for tcpData)
+						// Debug: Print payload
+						fmt.Printf("TUNNEL[%s] DEBUG: Sending initialization tcpData: %s\n", tunnelID, string(initBytes))
 
-						// Update payload to point to the remaining data (hopefully JSON)
-						fmt.Printf("TUNNEL[%s] DEBUG: Found potential JSON data (%d bytes), attempting to parse...\n", tunnelID, len(tempStr))
-						payload = []byte(tempStr)
+						// Add small delay to avoid overwhelming EVE (test)
+						time.Sleep(100 * time.Millisecond)
+
+						if err := sendWrappedMessage(wsConn, initBytes, config.Key, websocket.BinaryMessage); err != nil {
+							fmt.Printf("TUNNEL[%s] ERROR: Failed to send initialization packet: %v\n", tunnelID, err)
+							errChan <- err
+							return
+						}
+						fmt.Printf("TUNNEL[%s] DEBUG: Sent initialization packet (%d bytes) to WS (Binary)\n", tunnelID, len(initBytes))
+
+						continue
 					}
 
-					// Parse tcpData
+					// After setup is complete, EdgeView sends RAW BINARY data in WebSocket frames
+					// Try JSON first (for multi-target scenarios), then fall back to raw binary
 					var td tcpData
 					if err := json.Unmarshal(payload, &td); err != nil {
-						// It's not JSON.
-						// Check if it contains raw VNC data (signature "RFB")
-						// It might be preceded by headers like "=== Network: ... ==="
-						if idx := strings.Index(string(payload), "RFB"); idx != -1 {
-							fmt.Printf("TUNNEL[%s] DEBUG: Detected raw VNC handshake (RFB) at offset %d, forwarding...\n", tunnelID, idx)
-
-							// Strip headers/garbage before RFB
-							vncData := payload[idx:]
-
-							atomic.AddInt64(&bytesWSToTCP, int64(len(vncData)))
-							_, err := conn.Write(vncData)
+						// Not JSON - if setup is complete, this is raw binary data
+						if atomic.LoadInt32(&tcpSetupComplete) == 1 {
+							fmt.Printf("TUNNEL[%s] DEBUG: WS->TCP Forwarding raw binary %d bytes\n", tunnelID, len(payload))
+							atomic.AddInt64(&bytesWSToTCP, int64(len(payload)))
+							_, err := conn.Write(payload)
 							if err != nil {
 								fmt.Printf("TUNNEL[%s] ERROR: tcp write error after WS->TCP=%d bytes: %v\n", tunnelID, atomic.LoadInt64(&bytesWSToTCP), err)
 								errChan <- err
@@ -944,16 +996,16 @@ func (m *Manager) handleTunnelConnection(ctx context.Context, conn net.Conn, con
 							continue
 						}
 
-						// Log non-JSON messages to see what we're getting (e.g. status updates)
+						// Before setup, log and ignore non-JSON payloads (probably informational headers)
 						prefix := string(payload)
 						if len(prefix) > 200 {
 							prefix = prefix[:200] + "..."
 						}
-						// Use %q to see newlines and special chars
-						fmt.Printf("TUNNEL[%s] DEBUG: Received non-JSON payload from EdgeView: %q\n", tunnelID, prefix)
+						fmt.Printf("TUNNEL[%s] DEBUG: Ignoring pre-setup non-JSON payload: %q\n", tunnelID, prefix)
 						continue
 					}
 
+					// JSON tcpData received (used for multiple simultaneous TCP targets)
 					if len(td.Data) > 0 {
 						fmt.Printf("TUNNEL[%s] DEBUG: WS->TCP Received %d bytes (tcpData)\n", tunnelID, len(td.Data))
 						atomic.AddInt64(&bytesWSToTCP, int64(len(td.Data)))
