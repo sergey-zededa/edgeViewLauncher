@@ -209,6 +209,12 @@ type cmdOpt struct {
 // Returns the local port number and tunnel ID. Tunnels are keyed by the
 // ZEDEDA device node ID so they can be listed per-device from the UI.
 func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, nodeID string, target string) (int, string, error) {
+	// Ensure InstID is set (default to 2 to avoid conflicts)
+	if config.InstID == 0 {
+		config.InstID = 2
+		config.MaxInst = 3
+	}
+
 	// Start local TCP listener
 	// Try preferred ports 9001-9010 first (matching reference client behavior)
 	var listener net.Listener
@@ -833,6 +839,10 @@ func (m *Manager) handleTunnelConnection(ctx context.Context, conn net.Conn, con
 		// Shared state for setup completion (accessed by both goroutines)
 		var tcpSetupComplete int32 // 0 = false, 1 = true (atomic)
 
+		// Buffer for data received before setup completes (for SSH clients that send immediately)
+		var preSetupBuffer []byte
+		var preSetupMutex sync.Mutex
+
 		// TCP -> WebSocket
 		go func() {
 			defer proxyCancel() // Ensure cleanup if this loop exits
@@ -852,9 +862,38 @@ func (m *Manager) handleTunnelConnection(ctx context.Context, conn net.Conn, con
 						// This prevents SSH clients from sending data before initialization packet
 						if atomic.LoadInt32(&tcpSetupComplete) == 0 {
 							fmt.Printf("TUNNEL[%s] DEBUG: Buffering %d bytes - waiting for tcpSetupComplete\n", tunnelID, n)
-							time.Sleep(100 * time.Millisecond)
+							preSetupMutex.Lock()
+							preSetupBuffer = append(preSetupBuffer, buf[:n]...)
+							preSetupMutex.Unlock()
 							continue
 						}
+
+						// Check if we have buffered data to send first
+						preSetupMutex.Lock()
+						if len(preSetupBuffer) > 0 {
+							fmt.Printf("TUNNEL[%s] DEBUG: Sending %d buffered bytes first\n", tunnelID, len(preSetupBuffer))
+
+							// Send buffered data
+							td := tcpData{
+								Version:   0,
+								MappingID: 1,
+								ChanNum:   1,
+								Data:      preSetupBuffer,
+							}
+							tdBytes, _ := json.Marshal(td)
+							if err := sendWrappedMessage(wsConn, tdBytes, config.Key, websocket.BinaryMessage); err != nil {
+								preSetupMutex.Unlock()
+								fmt.Printf("TUNNEL[%s] ERROR: ws write error sending buffered data: %v\n", tunnelID, err)
+								errChan <- fmt.Errorf("ws write error: %w", err)
+								return
+							}
+							atomic.AddInt64(&bytesTCPToWS, int64(len(preSetupBuffer)))
+							fmt.Printf("TUNNEL[%s] DEBUG: Sent %d buffered bytes to WS (Binary)\n", tunnelID, len(preSetupBuffer))
+
+							// Clear buffer
+							preSetupBuffer = nil
+						}
+						preSetupMutex.Unlock()
 
 						atomic.AddInt64(&bytesTCPToWS, int64(n))
 
