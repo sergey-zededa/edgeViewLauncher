@@ -50,6 +50,11 @@ type App struct {
 	config         *config.Config
 	zededaClient   zededaAPI
 	sessionManager sessionAPI
+	mu             sync.RWMutex
+
+	// Connection progress tracking
+	connectionProgress map[string]string // nodeID -> status message
+	progressMu         sync.RWMutex
 
 	// Cache for app enrichments (IPs, VNC ports)
 	enrichmentCache map[string]AppEnrichment // Key: App UUID
@@ -66,24 +71,53 @@ func NewApp() *App {
 	cfg, _ := config.Load() // Ignore error for now, use default
 
 	// Find active cluster config
-	baseURL := "https://zedcontrol.zededa.net"
+	baseURL := "https://zedcontrol.zededa.net" // Default
 	apiToken := ""
 
-	for _, c := range cfg.Clusters {
-		if c.Name == cfg.ActiveCluster {
-			baseURL = c.BaseURL
-			apiToken = c.APIToken
-			break
+	if cfg.ActiveCluster != "" {
+		for _, c := range cfg.Clusters {
+			if c.Name == cfg.ActiveCluster {
+				baseURL = c.BaseURL
+				apiToken = c.APIToken
+				break
+			}
+		}
+	} else if len(cfg.Clusters) > 0 {
+		// Fallback to first cluster
+		baseURL = cfg.Clusters[0].BaseURL
+		apiToken = cfg.Clusters[0].APIToken
+	} else {
+		// Legacy fallback
+		if cfg.BaseURL != "" {
+			baseURL = cfg.BaseURL
+		}
+		if cfg.APIToken != "" {
+			apiToken = cfg.APIToken
 		}
 	}
 
 	return &App{
-		config:          cfg,
-		zededaClient:    zededa.NewClient(baseURL, apiToken),
-		sessionManager:  session.NewManager(),
-		enrichmentCache: make(map[string]AppEnrichment),
-		nodeMetaCache:   make(map[string]NodeMeta),
+		config:             cfg,
+		zededaClient:       zededa.NewClient(baseURL, apiToken),
+		sessionManager:     session.NewManager(),
+		enrichmentCache:    make(map[string]AppEnrichment),
+		nodeMetaCache:      make(map[string]NodeMeta),
+		connectionProgress: make(map[string]string),
 	}
+}
+
+// SetConnectionProgress updates the connection status for a node
+func (a *App) SetConnectionProgress(nodeID, status string) {
+	a.progressMu.Lock()
+	defer a.progressMu.Unlock()
+	a.connectionProgress[nodeID] = status
+}
+
+// GetConnectionProgress returns the current connection status for a node
+func (a *App) GetConnectionProgress(nodeID string) string {
+	a.progressMu.RLock()
+	defer a.progressMu.RUnlock()
+	return a.connectionProgress[nodeID]
 }
 
 // startup is called when the app starts. The context is saved
@@ -190,12 +224,14 @@ func (a *App) AddRecentDevice(nodeID string) {
 // ConnectToNode initiates a session to the node
 func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (string, error) {
 	fmt.Printf("ConnectToNode called for %s (In-App: %v)\n", nodeID, useInAppTerminal)
+	a.SetConnectionProgress(nodeID, "Initializing connection...")
 
 	var sessionConfig *zededa.SessionConfig
 	var port int
 	var needNewProxy bool
 
 	// Check if we have a cached session
+	a.SetConnectionProgress(nodeID, "Checking for cached session...")
 	if cached, ok := a.sessionManager.GetCachedSession(nodeID); ok {
 		// For native terminal, try to reuse the cached proxy port
 		if !useInAppTerminal && cached.Port > 0 {
@@ -212,9 +248,11 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (string, error
 	} else {
 		// No cached session - need to get new script
 		fmt.Println("No cached session, requesting new EdgeView script...")
+		a.SetConnectionProgress(nodeID, "Requesting new EdgeView session from Cloud...")
 		script, err := a.zededaClient.InitSession(nodeID)
 		if err != nil {
 			fmt.Printf("InitSession failed: %v\n", err)
+			a.SetConnectionProgress(nodeID, "Error: Failed to init session")
 			return "", fmt.Errorf("failed to init session: %w", err)
 		}
 		fmt.Println("EdgeView enabled, script received.")
@@ -224,9 +262,16 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (string, error
 		sessionConfig, err = a.zededaClient.ParseEdgeViewScript(script)
 		if err != nil {
 			fmt.Printf("ParseEdgeViewScript failed: %v\n", err)
+			a.SetConnectionProgress(nodeID, "Error: Failed to parse script")
 			return "", fmt.Errorf("failed to parse script: %w", err)
 		}
 		fmt.Printf("Script parsed. URL: %s\n", sessionConfig.URL)
+
+		// Give device time to establish stable connection
+		// Native Terminal.app connects immediately, so we need enough time for device to come online
+		fmt.Println("DEBUG: Waiting 10 seconds for device to establish stable EdgeView connection...")
+		a.SetConnectionProgress(nodeID, "Waiting for device to establish secure connection...")
+		time.Sleep(10 * time.Second)
 
 		needNewProxy = true
 	}
@@ -234,12 +279,14 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (string, error
 	// Start new proxy if needed
 	if needNewProxy {
 		fmt.Println("Starting proxy...")
+		a.SetConnectionProgress(nodeID, "Starting local secure proxy...")
 		var err error
 		var tunnelID string
 		// Default to SSH (tcp/localhost:22)
 		port, tunnelID, err = a.sessionManager.StartProxy(a.ctx, sessionConfig, nodeID, "localhost:22")
 		if err != nil {
 			fmt.Printf("StartProxy failed: %v\n", err)
+			a.SetConnectionProgress(nodeID, "Error: Failed to start proxy")
 			return "", fmt.Errorf("failed to start proxy: %w", err)
 		}
 		fmt.Printf("Proxy started on port %d (Tunnel ID: %s)\n", port, tunnelID)
@@ -258,17 +305,21 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (string, error
 		}
 	}
 
-	// Ensure SSH Key (needed for terminal launch)
-	keyPath, _, err := ssh.EnsureSSHKey()
-	if err != nil {
-		return "", fmt.Errorf("failed to ensure ssh key: %w", err)
-	}
-
 	// Launch the terminal if requested
 	if !useInAppTerminal {
 		fmt.Println("Launching native terminal...")
+		a.SetConnectionProgress(nodeID, "Launching native terminal...")
+
+		// Get key path from key manager (using standalone function now)
+		keyPath, _, err := ssh.EnsureSSHKey()
+		if err != nil {
+			fmt.Printf("EnsureSSHKey failed: %v\n", err)
+			// Continue anyway, might work if agent is active
+		}
+
 		if err := a.sessionManager.LaunchTerminal(port, keyPath); err != nil {
 			fmt.Printf("LaunchTerminal failed: %v\n", err)
+			a.SetConnectionProgress(nodeID, "Error: Failed to launch terminal")
 			return "", fmt.Errorf("failed to launch terminal: %w", err)
 		}
 		fmt.Println("Native terminal launched successfully.")
@@ -276,6 +327,7 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (string, error
 		fmt.Println("In-app terminal requested, skipping native launch.")
 	}
 
+	a.SetConnectionProgress(nodeID, "Connected")
 	return fmt.Sprintf("Session started on port %d", port), nil
 }
 
@@ -303,9 +355,10 @@ func (a *App) StartTunnel(nodeID string, targetIP string, targetPort int) (int, 
 		a.sessionManager.StoreCachedSession(nodeID, sessionConfig, 0, expiresAt)
 		cached, _ = a.sessionManager.GetCachedSession(nodeID)
 
-		// Give device more time to establish stable connection
-		fmt.Println("DEBUG: Waiting 5 seconds for device to establish stable EdgeView connection...")
-		time.Sleep(5 * time.Second)
+		// Give device MORE time to establish stable connection
+		// Native Terminal.app connects immediately, so we need enough time for device to come online
+		fmt.Println("DEBUG: Waiting 10 seconds for device to establish stable EdgeView connection...")
+		time.Sleep(10 * time.Second)
 	}
 
 	// Construct target string (e.g., "192.168.0.1:5900")
