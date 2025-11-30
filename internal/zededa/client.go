@@ -747,3 +747,86 @@ func (c *Client) DisableSSH(nodeID string) error {
 
 	return nil
 }
+
+// TokenInfo contains information about a session token
+type TokenInfo struct {
+	Valid     bool      `json:"valid"`
+	ExpiresAt time.Time `json:"expiresAt"`
+	Subject   string    `json:"subject"` // Usually the user email or ID
+	Error     string    `json:"error,omitempty"`
+}
+
+// VerifyToken checks if a session token is valid by calling the IAM API
+func (c *Client) VerifyToken(token string) (*TokenInfo, error) {
+	// Base64 encode the token for the URL path
+	encodedToken := base64.URLEncoding.EncodeToString([]byte(token))
+	url := fmt.Sprintf("%s/api/v1/sessions/token/%s", c.BaseURL, encodedToken)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	// No Authorization header needed for this specific endpoint as it validates the token in path
+	// But usually we need to be authenticated to check other tokens?
+	// The docs say: "Get Session Token Information"
+	// Let's try without auth first, or use the token itself if needed.
+	// Actually, usually we are checking the token *we just pasted*, so we might not have a valid client token yet.
+	// If this endpoint requires auth, we might need to use the token itself as bearer?
+	// Let's assume for now we use the client's current token if available, or just try the request.
+	// If the user is setting up a NEW cluster, c.Token might be empty or old.
+	// However, the endpoint `/v1/sessions/token/{token}` might be public or require the token itself.
+	// Let's try adding the token itself as auth if c.Token is empty.
+
+	authToken := c.Token
+	if authToken == "" {
+		authToken = token
+	}
+	req.Header.Set("Authorization", "Bearer "+authToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return &TokenInfo{Valid: false, Error: fmt.Sprintf("API returned status %d", resp.StatusCode)}, nil
+	}
+
+	// Response structure from ZEDEDA IAM API
+	// { "token": "...", "expiresAt": "...", "subject": "..." }
+	// We need to map the actual JSON response.
+	// Based on standard ZEDEDA API, let's assume a structure or try to decode generic map first if uncertain.
+	// But the user provided a link: /v1/sessions/token/{sessionToken.base64}
+	// Let's define a struct that matches likely response.
+
+	var result struct {
+		Token     string `json:"token"`
+		ExpiresAt string `json:"expiresAt"` // RFC3339
+		Subject   string `json:"subject"`
+		// Add other fields if known
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	// Parse expiry
+	var expiresAt time.Time
+	if result.ExpiresAt != "" {
+		// Try standard formats
+		if t, err := time.Parse(time.RFC3339, result.ExpiresAt); err == nil {
+			expiresAt = t
+		} else {
+			// Try other formats if needed
+			fmt.Printf("Warning: failed to parse expiry %s: %v\n", result.ExpiresAt, err)
+		}
+	}
+
+	return &TokenInfo{
+		Valid:     true,
+		ExpiresAt: expiresAt,
+		Subject:   result.Subject,
+	}, nil
+}
