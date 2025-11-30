@@ -11,12 +11,14 @@
     /* Dark background matching app theme */
     color: var(--text-color);
     border: 1px solid var(--tooltip-border);
-    padding: 6px 10px;
+    padding: 8px 12px;
     border-radius: 6px;
     font-size: 12px;
     white-space: nowrap;
+    max-width: 400px;
+    /* Prevent overly wide tooltips */
     z-index: 10000;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
     pointer-events: none;
     animation: tooltipFadeIn 0.15s ease-out;
     font-weight: 500;
@@ -29,6 +31,8 @@
     left: 50%;
     transform: translateX(-50%);
     margin-bottom: 10px;
+    /* Prevent tooltip from going off-screen */
+    max-width: calc(100vw - 20px);
 }
 
 .tooltip-top::after {
@@ -38,6 +42,7 @@
     left: 50%;
     margin-left: -5px;
     border-width: 5px;
+    border-style: solid;
     border-color: var(--tooltip-bg) transparent transparent transparent;
 }
 
@@ -56,6 +61,7 @@
     left: 50%;
     margin-left: -5px;
     border-width: 5px;
+    border-style: solid;
     border-color: transparent transparent var(--tooltip-bg) transparent;
 }
 

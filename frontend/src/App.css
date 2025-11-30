@@ -12,6 +12,11 @@
     --highlight-color: rgba(56, 139, 253, 0.15);
     --scrollbar-thumb: #30363d;
     --scrollbar-thumb-hover: #484f58;
+
+    /* Tooltip colors */
+    --tooltip-bg: #21262d;
+    --tooltip-border: #30363d;
+    --text-color: #c9d1d9;
 }
 
 body {
@@ -472,7 +477,7 @@ body {
     cursor: pointer;
     display: inline-flex;
     align-items: center;
-    vertical-align: middle;
+    align-self: center;
     margin-left: 6px;
     transition: color 0.2s;
 }
@@ -1008,4 +1013,22 @@ body {
 
 .animate-spin {
     animation: spin 1s linear infinite;
+}
+
+/* Link Button Styling */
+.link-button {
+    background: transparent;
+    border: none;
+    color: var(--accent-color);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: all 0.2s;
+    font-weight: 500;
+}
+
+.link-button:hover {
+    background: var(--bg-hover);
+    color: var(--accent-hover);
 }
