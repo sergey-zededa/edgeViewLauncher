@@ -212,13 +212,27 @@ function App() {
       }
     }
     if (!ts) {
-      return { timestamp: null, expired: false, label: '-' };
+      return { timestamp: null, expired: false, label: '-', colorClass: '' };
     }
-    const expired = ts <= Date.now();
+    const now = Date.now();
+    const diff = ts - now;
+    const expired = diff <= 0;
+
+    // Color coding: Green (>30min), Yellow (0-30min), Red (expired)
+    let colorClass = '';
+    if (expired) {
+      colorClass = 'error'; // Red
+    } else if (diff < 30 * 60 * 1000) {
+      colorClass = 'mismatch'; // Yellow
+    } else {
+      colorClass = 'success'; // Green
+    }
+
     return {
       timestamp: ts,
       expired,
       label: expired ? 'Expired' : getRelativeTime(ts),
+      colorClass,
     };
   };
 
@@ -951,15 +965,15 @@ function App() {
                         <div className="status-label">SESSION</div>
                         <div className={`status-value ${isSessionConnected ? 'success' : 'error'}`}>
                           {isSessionConnected ? (
-                            <><Check size={14} /> Connected</>
+                            <><Check size={14} /> Activated</>
                           ) : (
-                            <><X size={14} /> Disconnected</>
+                            <><X size={14} /> Inactive</>
                           )}
                         </div>
                       </div>
                       <div className="status-item">
-                        <span className="status-label">Expires</span>
-                        <span className={`value ${sessionExpired ? 'error' : ''}`}>
+                        <div className="status-label">EXPIRES</div>
+                        <div className={`status-value ${expiryInfo.colorClass}`}>
                           {expiryInfo.timestamp ? (
                             <span title={new Date(expiryInfo.timestamp).toLocaleString()}>
                               {expiryInfo.label}
@@ -967,15 +981,14 @@ function App() {
                           ) : '-'}
                           {sessionExpired && (
                             <button
-                              className="icon-btn refresh-btn"
+                              className="inline-icon-btn"
                               title="Restart EdgeView session"
                               onClick={handleResetEdgeView}
-                              style={{ marginLeft: '6px' }}
                             >
                               <RefreshCw size={14} />
                             </button>
                           )}
-                        </span>
+                        </div>
                       </div>
                     </div>
                     <div className="ssh-controls" style={{ borderTop: '1px solid #333', paddingTop: '15px', marginTop: '5px' }}>
@@ -1085,7 +1098,8 @@ function App() {
                                 <button
                                   className={`connect-btn ${expandedServiceId === idx ? 'active' : 'secondary'}`}
                                   onClick={() => setExpandedServiceId(expandedServiceId === idx ? null : idx)}
-                                  title="Connect to service"
+                                  title={!isSessionConnected ? "EdgeView session not active" : "Connect to service"}
+                                  disabled={!isSessionConnected}
                                 >
                                   <Globe size={14} /> {expandedServiceId === idx ? 'Close' : 'Connect'}
                                 </button>
@@ -1095,7 +1109,7 @@ function App() {
                               <div className="service-options">
                                 {app.vncPort && (
                                   <div
-                                    className={`option-btn ${tunnelLoading ? 'loading' : ''}`}
+                                    className={`option-btn ${tunnelLoading ? 'loading' : ''} ${sessionExpired ? 'disabled' : ''}`}
                                     onClick={async () => {
                                       if (sessionExpired) {
                                         addLog('Cannot start VNC tunnel: EdgeView session has expired. Restart the session first.', 'warning');
@@ -1132,7 +1146,7 @@ function App() {
                                   </div>
                                 )}
                                 <div
-                                  className={`option-btn ${tunnelLoading ? 'loading' : ''}`}
+                                  className={`option-btn ${tunnelLoading ? 'loading' : ''} ${sessionExpired ? 'disabled' : ''}`}
                                   onClick={async () => {
                                     if (sessionExpired) {
                                       addLog('Cannot start SSH tunnel: EdgeView session has expired. Restart the session first.', 'warning');
@@ -1151,6 +1165,10 @@ function App() {
                                       addTunnel('SSH', sshTarget, 22, localPort, tunnelId);
                                       setHighlightTunnels(true);
                                       setTimeout(() => setHighlightTunnels(false), 2000);
+                                      addLog(
+                                        `Connect to EVE-OS: ssh -p ${localPort} root@localhost`,
+                                        'info'
+                                      );
                                       setExpandedServiceId(null);
                                     } catch (err) {
                                       console.error(err);
@@ -1161,42 +1179,44 @@ function App() {
                                     }
                                   }}>
                                   {tunnelLoading ? <Activity size={20} className="option-icon animate-spin" /> : <Terminal size={20} className="option-icon" />}
-                                  <span className="option-label">SSH Terminal</span>
+                                  <span className="option-label">Launch SSH</span>
                                 </div>
-                                <div className="option-btn" onClick={async () => {
-                                  if (sessionExpired) {
-                                    addLog('Cannot start TCP tunnel: EdgeView session has expired. Restart the session first.', 'warning');
-                                    return;
-                                  }
-                                  try {
-                                    const portInput = prompt("Enter target port (e.g. 80, 8080):", "80");
-                                    if (!portInput) return;
-                                    const port = parseInt(portInput);
-                                    if (isNaN(port)) {
-                                      alert("Invalid port number");
+                                <div
+                                  className={`option-btn ${tunnelLoading ? 'loading' : ''} ${sessionExpired ? 'disabled' : ''}`}
+                                  onClick={async () => {
+                                    if (sessionExpired) {
+                                      addLog('Cannot start TCP tunnel: EdgeView session has expired. Restart the session first.', 'warning');
                                       return;
                                     }
-                                    const ip = app.ips && app.ips.length > 0 ? app.ips[0] : '127.0.0.1';
-                                    setTunnelLoading(true);
-                                    setTunnelLoadingMessage(`Starting TCP tunnel to ${ip}:${port}...`);
-                                    addLog(`Starting TCP tunnel to ${ip}:${port}...`, 'info');
-                                    const result = await StartTunnel(selectedNode.id, ip, port);
-                                    const localPort = result.port || result;
-                                    const tunnelId = result.tunnelId;
-                                    addLog(`TCP tunnel active: localhost:${localPort} -> ${ip}:${port}`, 'success');
-                                    addTunnel('TCP', ip, port, localPort, tunnelId);
-                                    setHighlightTunnels(true);
-                                    setTimeout(() => setHighlightTunnels(false), 2000);
-                                    alert(`Tunnel Active!\n\nConnect to: localhost:${localPort}\n\nForwards to: ${ip}:${port}`);
-                                    setExpandedServiceId(null);
-                                  } catch (err) {
-                                    console.error(err);
-                                    addLog(`Failed to start TCP tunnel: ${err.message}`, 'error');
-                                  } finally {
-                                    setTunnelLoading(false);
-                                    setTunnelLoadingMessage('');
-                                  }
-                                }}>
+                                    try {
+                                      const portInput = prompt("Enter target port (e.g. 80, 8080):", "80");
+                                      if (!portInput) return;
+                                      const port = parseInt(portInput);
+                                      if (isNaN(port)) {
+                                        alert("Invalid port number");
+                                        return;
+                                      }
+                                      const ip = app.ips && app.ips.length > 0 ? app.ips[0] : '127.0.0.1';
+                                      setTunnelLoading(true);
+                                      setTunnelLoadingMessage(`Starting TCP tunnel to ${ip}:${port}...`);
+                                      addLog(`Starting TCP tunnel to ${ip}:${port}...`, 'info');
+                                      const result = await StartTunnel(selectedNode.id, ip, port);
+                                      const localPort = result.port || result;
+                                      const tunnelId = result.tunnelId;
+                                      addLog(`TCP tunnel active: localhost:${localPort} -> ${ip}:${port}`, 'success');
+                                      addTunnel('TCP', ip, port, localPort, tunnelId);
+                                      setHighlightTunnels(true);
+                                      setTimeout(() => setHighlightTunnels(false), 2000);
+                                      alert(`Tunnel Active!\n\nConnect to: localhost:${localPort}\n\nForwards to: ${ip}:${port}`);
+                                      setExpandedServiceId(null);
+                                    } catch (err) {
+                                      console.error(err);
+                                      addLog(`Failed to start TCP tunnel: ${err.message}`, 'error');
+                                    } finally {
+                                      setTunnelLoading(false);
+                                      setTunnelLoadingMessage('');
+                                    }
+                                  }}>
                                   <Activity size={20} className="option-icon" />
                                   <span className="option-label">TCP Tunnel</span>
                                 </div>
