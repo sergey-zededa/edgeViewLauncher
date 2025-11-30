@@ -464,6 +464,23 @@ body {
     justify-content: center;
 }
 
+.inline-icon-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    padding: 2px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    vertical-align: middle;
+    margin-left: 6px;
+    transition: color 0.2s;
+}
+
+.inline-icon-btn:hover {
+    color: var(--text-primary);
+}
+
 .icon-btn:hover {
     background: var(--bg-hover);
     color: var(--text-primary);
@@ -511,11 +528,13 @@ body {
     font-weight: 500;
 }
 
-.status-value.enabled {
+.status-value.enabled,
+.status-value.success {
     color: #238636;
 }
 
-.status-value.disabled {
+.status-value.disabled,
+.status-value.error {
     color: #da3633;
 }
 
@@ -633,6 +652,23 @@ body {
     border-color: var(--text-secondary);
 }
 
+.connect-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background: var(--bg-primary);
+    border-color: var(--border-color);
+    color: var(--text-secondary);
+}
+
+.connect-btn.secondary:disabled,
+.connect-btn.active:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background: var(--bg-primary);
+    border-color: var(--border-color);
+    color: var(--text-secondary);
+}
+
 .service-options {
     margin-top: 12px;
     padding-top: 12px;
@@ -678,6 +714,18 @@ body {
 .option-btn.loading {
     opacity: 0.7;
     pointer-events: none;
+}
+
+.option-btn.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background: var(--bg-primary);
+    border-color: var(--border-color);
+    color: var(--text-secondary);
+}
+
+.option-btn.disabled .option-icon {
+    color: var(--text-secondary);
 }
 
 .option-icon {
