@@ -21,6 +21,7 @@
 + Closing the sessions using UI results in following errors:
 DEBUG: Sending 695 bytes to EdgeView via WebSocket (tcpData JSON: 977 bytes)
 API call error: Error: missing tunnel ID
++ Add space to "EdgeView session active(expires: 11/29/2025, 1:19:22 AM)" between "active" and "(expires:"
 
 
 - app need to live in the tray
@@ -31,10 +32,9 @@ API call error: Error: missing tunnel ID
 - ? Helper strings to show how to connect to a tunnel/platform dependent
 - No number of allowed connections anymore?
 - [8:29:44 PM]EdgeView session active(expires: 11/29/2025, 1:19:22 AM) - use local OS time setting to display in the same format (24 vs 12h)
-- Add space to "EdgeView session active(expires: 11/29/2025, 1:19:22 AM)" between "active" and "(expires:"
 - noVNC wiring
 
-- display cluster access token validity time (if available/readable from token or API) and mark it red if expired - can we fetch this info from API? -check https://zedcontrol.zededa.net/api/v1/docs/?urls.primaryName=ZEDEDA%20IAM%20Service#/IdentityAccessManagement/IdentityAccessManagement_GetUserSession /v1/sessions/token/{sessionToken.base64}
+- instead of checking cluster access for validity, which always fails, explore if we can display cluster access token validity time (if available/readable from token or API) and mark it red if expired - can we fetch this info from API? -check https://zedcontrol.zededa.net/api/v1/docs/?urls.primaryName=ZEDEDA%20IAM%20Service#/IdentityAccessManagement/IdentityAccessManagement_GetUserSession /v1/sessions/token/{sessionToken.base64}
 
 - add status message on failing to connect to the controller/cluster when receiving the list of devices
 - Why are we requesting for an edge view script "[Go Backend] Waiting for EdgeView script...", don't we receive token info already here: "[Go Backend] DEBUG: edgeviewconfig: map[appPolicy:map[allowApp:true] devPolicy:map[allowDev:true] extPolicy:map[allowExt:false] generationId:4 jwtInfo:map[allowSec:18000 authen:EvAuth_TYPE_UNSPECIFIED dispUrl:https://zedcloud.hummingbird.zededa.net/api/v1/edge-view encrypt:false expireSec:1764541644 numInst:3] requireControllerAuthen:false token:eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdXQiOjAsImRlcCI6Imh0dHBzOi8vemVkY2xvdWQuaHVtbWluZ2JpcmQuemVkZWRhLm5ldC9hcGkvdjEvZWRnZS12aWV3IiwiZW5jIjpmYWxzZSwiZXhwIjoxNzY0NTQxNjQ0LCJrZXkiOiJja3ZrbHFxamJnc3QiLCJudW0iOjMsInN1YiI6ImU5YzJjMTlkLWNlNWEtNGE5NC1hMDYzLTExYTYwNDU2ZjFhNCJ9.SI_fXL-TJqOebZCtlqQQtn26ixFUnodbFFYoQD_qTBaNPTqHUUhdhD039myLubo097SAV1WHDmldxgRyWNyZxA]"
