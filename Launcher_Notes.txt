@@ -13,28 +13,30 @@
 + limit recent devices list to top 10 recent devices
 + make device to recent not on SSH activation but on going to the details page
 + icon need to be updated
++ Implement auto refresh of list of devices and status every 10-15 seconds in the background
++ show currently active peers/instances?
++ Add Activity log messages on tunnel activation/deactivation and other important activities which are not yet logged
 
 
 - app need to live in the tray
 - settings to be stored securely (use keyring or other relevant OS features)
-- show currently active peers/instances?
+
 + auto day/night scheme in line with OS ??? Need to test
 - need an option to select preferred terminal app
 - No EdgeView reset option anymore?
 - No number of allowed connections anymore?
 - [8:29:44 PM]EdgeView session active(expires: 11/29/2025, 1:19:22 AM) - use local OS time setting to display in the same format (24 vs 12h)
 - Add space to "EdgeView session active(expires: 11/29/2025, 1:19:22 AM)" between "active" and "(expires:"
-- Add Activity log messages on tunnel activation/deactivation and other important activities which are not yet logged
 - Shows Scanning services with spinning icon on VNC/Tunnel activation instead of relevant message about activating tunnel
 
 - display cluster access token validity time (if available/readable from token or API) and mark it red if expired - can we fetch this info from API? -check https://zedcontrol.zededa.net/api/v1/docs/?urls.primaryName=ZEDEDA%20IAM%20Service#/IdentityAccessManagement/IdentityAccessManagement_GetUserSession /v1/sessions/token/{sessionToken.base64}
 
 - add status message on failing to connect to the controller/cluster when receiving the list of devices
-- Implement auto refresh of list of devices and status every 10-15 seconds in the background
 
 
 - Indicate VNC session status (running, data is transferring, etc)
 - collect info
+- multiple icons are rotating when either of options is selected (TCP/VNC/SSH)
 - Closing the sessions using UI results in following errors:
 DEBUG: Sending 695 bytes to EdgeView via WebSocket (tcpData JSON: 977 bytes)
 
