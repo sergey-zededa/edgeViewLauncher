@@ -209,11 +209,10 @@ type cmdOpt struct {
 // Returns the local port number and tunnel ID. Tunnels are keyed by the
 // ZEDEDA device node ID so they can be listed per-device from the UI.
 func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, nodeID string, target string) (int, string, error) {
-	// Ensure InstID is set (default to 2 to avoid conflicts)
-	if config.InstID == 0 {
-		config.InstID = 2
-		config.MaxInst = 3
-	}
+	// ALWAYS use InstID=2 to avoid conflicts with reference client (usually uses 1)
+	// and to avoid session conflicts when creating fresh sessions
+	config.InstID = 2
+	config.MaxInst = 3
 
 	// Start local TCP listener
 	// Try preferred ports 9001-9010 first (matching reference client behavior)
@@ -1063,11 +1062,27 @@ func (m *Manager) handleTunnelConnection(ctx context.Context, conn net.Conn, con
 		// Wait for error or context cancel
 		select {
 		case err := <-errChan:
-			// Check if we should retry
+			proxyCancel() // Stop the loops
+			wsConn.Close()
+
+			// Check if this was a "device not ready" error (+++Done+++ before tcpSetupOK)
+			// This happens when device hasn't established EdgeView connection yet
+			if err == io.EOF && atomic.LoadInt32(&tcpSetupComplete) == 0 {
+				fmt.Printf("TUNNEL[%s] WARNING: Device not ready yet (got +++Done+++ before tcpSetupOK)\n", tunnelID)
+				if attempt < maxRetries {
+					// Wait longer for device to come online (exponential backoff)
+					waitTime := time.Duration(attempt*5) * time.Second
+					fmt.Printf("TUNNEL[%s] WARNING: Retrying in %v... (Attempt %d/%d)\n", tunnelID, waitTime, attempt, maxRetries)
+					time.Sleep(waitTime)
+					continue // Retry the outer loop
+				}
+				m.FailTunnel(tunnelID, fmt.Errorf("device did not come online after %d attempts", maxRetries))
+				return // Exit the function
+			}
+
+			// Check if we should retry for ErrNoDeviceOnline
 			if errors.Is(err, ErrNoDeviceOnline) {
 				fmt.Printf("TUNNEL[%s] WARNING: EdgeView session failed with 'no device online'. Retrying... (Attempt %d/%d)\n", tunnelID, attempt, maxRetries)
-				proxyCancel() // Stop the loops
-				wsConn.Close()
 				if attempt < maxRetries {
 					time.Sleep(1 * time.Second)
 					continue // Retry the outer loop
