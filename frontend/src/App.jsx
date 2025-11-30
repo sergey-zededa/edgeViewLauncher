@@ -39,6 +39,7 @@ function App() {
   const [localPort, setLocalPort] = useState(null);
   const [tcpTunnelConfig, setTcpTunnelConfig] = useState(null); // { ip, appName }
   const [tcpPortInput, setTcpPortInput] = useState('');
+  const [tcpIpInput, setTcpIpInput] = useState('');
   const [tcpError, setTcpError] = useState('');
 
   // Dropdown state
@@ -290,7 +291,11 @@ function App() {
       return;
     }
 
-    const ip = tcpTunnelConfig.ip;
+    const ip = tcpIpInput.trim();
+    if (!ip) {
+      setTcpError('Enter a valid IP address');
+      return;
+    }
 
     try {
       setTcpError('');
@@ -309,6 +314,7 @@ function App() {
 
       setTcpTunnelConfig(null);
       setTcpPortInput('');
+      setTcpIpInput('');
     } catch (err) {
       console.error(err);
       const msg = err.message || String(err);
@@ -1279,6 +1285,7 @@ function App() {
                                     if (tunnelLoading) return;
                                     const ip = app.ips && app.ips.length > 0 ? app.ips[0] : '127.0.0.1';
                                     setTcpTunnelConfig({ ip, appName: app.name });
+                                    setTcpIpInput(ip);
                                     setTcpPortInput('80');
                                     setTcpError('');
                                   }}>
@@ -1339,6 +1346,7 @@ function App() {
                       onClick={() => {
                         setTcpTunnelConfig(null);
                         setTcpPortInput('');
+                        setTcpIpInput('');
                         setTcpError('');
                       }}
                       title="Close"
@@ -1354,8 +1362,9 @@ function App() {
                     <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>Target IP</label>
                     <input
                       type="text"
-                      value={tcpTunnelConfig.ip}
-                      readOnly
+                      value={tcpIpInput}
+                      onChange={(e) => setTcpIpInput(e.target.value)}
+                      placeholder="e.g. 10.0.0.1, localhost"
                       style={{ width: '100%' }}
                     />
                   </div>
@@ -1382,6 +1391,7 @@ function App() {
                       onClick={() => {
                         setTcpTunnelConfig(null);
                         setTcpPortInput('');
+                        setTcpIpInput('');
                         setTcpError('');
                       }}
                     >
