@@ -29,6 +29,7 @@ type zededaAPI interface {
 	GetDeviceAppInstances(deviceID string) ([]zededa.AppInstance, error)
 	GetAppInstanceDetails(appInstanceID string) (*zededa.AppInstanceDetails, error)
 	GetDevice(nodeID string) (map[string]interface{}, error)
+	VerifyToken(token string) (*zededa.TokenInfo, error)
 }
 
 // sessionAPI defines the subset of session.Manager used by App.
@@ -959,4 +960,11 @@ func (a *App) VerifyEdgeViewTunnel(nodeID string) error {
 	// The SSH status check is sufficient to verify EdgeView is enabled
 	// Users can still connect via SSH successfully even if this check would fail
 	return nil
+}
+
+// VerifyToken checks if the provided token is valid
+func (a *App) VerifyToken(token string) (*zededa.TokenInfo, error) {
+	// Use the client to verify. Note: The client might be configured with a different token
+	// than the one being verified, but VerifyToken handles auth internally if needed.
+	return a.zededaClient.VerifyToken(token)
 }

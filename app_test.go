@@ -90,6 +90,10 @@ func (f *fakeZededaClient) GetDevice(nodeID string) (map[string]interface{}, err
 	return map[string]interface{}{}, nil
 }
 
+func (f *fakeZededaClient) VerifyToken(token string) (*zededa.TokenInfo, error) {
+	return &zededa.TokenInfo{Valid: true, Subject: "test-user"}, nil
+}
+
 type fakeSessionManager struct {
 	cached map[string]*session.CachedSession
 
