@@ -19,11 +19,37 @@
         "productName": "EdgeView Launcher",
         "mac": {
             "category": "public.app-category.developer-tools",
-            "target": "dmg"
+            "target": "dmg",
+            "extraResources": [
+                {
+                    "from": "edgeview-backend",
+                    "to": "edgeview-backend"
+                }
+            ]
+        },
+        "win": {
+            "target": "nsis",
+            "extraResources": [
+                {
+                    "from": "edgeview-backend.exe",
+                    "to": "edgeview-backend.exe"
+                }
+            ]
+        },
+        "linux": {
+            "target": ["AppImage", "deb"],
+            "category": "Development",
+            "extraResources": [
+                {
+                    "from": "edgeview-backend",
+                    "to": "edgeview-backend"
+                }
+            ]
         },
         "files": [
             "electron-main.js",
             "electron-preload.js",
+            "backendClient.js",
             "frontend/dist/**/*"
         ]
     }

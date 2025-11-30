@@ -8,7 +8,8 @@ let goBackend;
 const BACKEND_PORT = 8080;
 
 function createWindow() {
-    mainWindow = new BrowserWindow({
+    // Platform-specific window options
+    const windowOptions = {
         width: 800,
         height: 600,
         show: false, // Hide until ready
@@ -16,10 +17,18 @@ function createWindow() {
             preload: path.join(__dirname, 'electron-preload.js'),
             contextIsolation: true,
             nodeIntegration: false
-        },
-        titleBarStyle: 'hiddenInset',
-        frame: false
-    });
+        }
+    };
+
+    // macOS-specific: Use hidden title bar with inset traffic lights
+    if (process.platform === 'darwin') {
+        windowOptions.titleBarStyle = 'hiddenInset';
+        windowOptions.frame = false;
+    }
+    // Windows/Linux: Use standard frame with menu bar hidden
+    // (frame: true is default, so we don't need to set it)
+
+    mainWindow = new BrowserWindow(windowOptions);
 
     // Show window when ready
     mainWindow.once('ready-to-show', () => {
@@ -53,9 +62,13 @@ function startGoBackend() {
     // Start the Go HTTP server
     // In packaged app, resources are in app.asar or Contents/Resources
     const isDev = process.env.NODE_ENV === 'development';
+    
+    // Platform-specific executable name
+    const exeName = process.platform === 'win32' ? 'edgeview-backend.exe' : 'edgeview-backend';
+    
     const goExecutable = isDev
-        ? path.join(__dirname, 'edgeview-backend')
-        : path.join(process.resourcesPath, 'edgeview-backend');
+        ? path.join(__dirname, exeName)
+        : path.join(process.resourcesPath, exeName);
 
     console.log('Starting Go backend from:', goExecutable);
     console.log('isDev:', isDev);
@@ -155,14 +168,14 @@ ipcMain.handle('open-external', async (event, url) => {
 
 // Get System Time Format (12h vs 24h)
 ipcMain.handle('get-system-time-format', async () => {
-    const { systemPreferences, app } = require('electron');
+    const { app } = require('electron');
     const { exec } = require('child_process');
     const util = require('util');
     const execPromise = util.promisify(exec);
 
-    if (process.platform === 'darwin') {
-        try {
-            // 1. Try reading AppleICUForce24HourTime
+    try {
+        if (process.platform === 'darwin') {
+            // macOS: Try reading system preferences
             try {
                 const { stdout } = await execPromise('defaults read -g AppleICUForce24HourTime');
                 const output = stdout.trim();
@@ -172,7 +185,7 @@ ipcMain.handle('get-system-time-format', async () => {
                 // AppleICUForce24HourTime not set
             }
 
-            // 2. Try reading AppleLocale (e.g. "en_GB")
+            // Try AppleLocale
             let rawLocale = null;
             try {
                 const { stdout } = await execPromise('defaults read -g AppleLocale');
@@ -181,49 +194,49 @@ ipcMain.handle('get-system-time-format', async () => {
                 // AppleLocale not set
             }
 
-            // 3. Try reading AppleTimeFormat (custom format string)
+            // Try AppleTimeFormat
             try {
                 const { stdout } = await execPromise('defaults read -g AppleTimeFormat');
                 const timeFormat = stdout.trim();
-                // Check for 24h indicators: 'H' (0-23) or 'k' (1-24)
-                // 12h indicators are 'h' (1-12) or 'K' (0-11)
                 if (timeFormat.includes('H') || timeFormat.includes('k')) return true;
                 if (timeFormat.includes('h') || timeFormat.includes('K')) return false;
             } catch (e) {
                 // AppleTimeFormat not set
             }
 
-            // 4. Fallback to Intl with correct locale
-            // Try to construct a "language-REGION" locale which often gives better results for time format
-            // than the -u-rg- extension for en-US.
-            // Example: "en_US@rg=atzzzz" -> "en-AT"
+            // Fallback to Intl
             let localeToCheck = app.getLocale();
-
             if (rawLocale) {
-                // Check for region override (rg=atzzzz)
                 const rgMatch = rawLocale.match(/@rg=([a-z]{2})/i);
                 if (rgMatch && rgMatch[1]) {
                     const lang = rawLocale.split('_')[0];
                     const region = rgMatch[1].toUpperCase();
                     localeToCheck = `${lang}-${region}`;
                 } else {
-                    // Standard format: en_US -> en-US
                     localeToCheck = rawLocale.replace('_', '-').split('@')[0];
                 }
             }
 
             const opts = new Intl.DateTimeFormat(localeToCheck, { hour: 'numeric' }).resolvedOptions();
-
-            if (opts.hourCycle) {
-                return opts.hourCycle.startsWith('h2');
+            if (opts.hourCycle) return opts.hourCycle.startsWith('h2');
+            if (opts.hour12 !== undefined) return !opts.hour12;
+        } else if (process.platform === 'win32') {
+            // Windows: Query registry for time format
+            try {
+                const { stdout } = await execPromise('reg query "HKCU\\Control Panel\\International" /v sShortTime');
+                // If format contains 'H' (24h) vs 'h' (12h)
+                if (stdout.includes('H')) return true;
+                if (stdout.includes('h')) return false;
+            } catch (e) {
+                // Registry query failed
             }
-            if (opts.hour12 !== undefined) {
-                return !opts.hour12;
-            }
-
-        } catch (e) {
-            // Time format check failed
         }
+        // Linux and fallback: Use Intl API
+        const opts = new Intl.DateTimeFormat(app.getLocale(), { hour: 'numeric' }).resolvedOptions();
+        if (opts.hourCycle) return opts.hourCycle.startsWith('h2');
+        if (opts.hour12 !== undefined) return !opts.hour12;
+    } catch (e) {
+        // Time format detection failed
     }
 
     return null;
