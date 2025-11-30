@@ -189,6 +189,32 @@ function App() {
     };
   }, [selectedNode]);
 
+  // Background device list refresh (every 30 seconds)
+  useEffect(() => {
+    // Only refresh when viewing the device list (not in settings, not viewing a device)
+    if (showSettings || selectedNode) {
+      return;
+    }
+
+    // Set up interval to refresh device list every 30 seconds
+    const refreshInterval = setInterval(async () => {
+      try {
+        // Silent refresh - don't set loading state to avoid UI flicker
+        const results = await SearchNodes(query);
+        setNodes(results || []);
+        // Preserve selectedIndex to maintain user's position in the list
+      } catch (err) {
+        console.error('Background device list refresh failed:', err);
+        // Silently fail - don't disrupt user experience
+      }
+    }, 30000); // 30 seconds
+
+    return () => {
+      clearInterval(refreshInterval);
+    };
+  }, [query, showSettings, selectedNode]);
+
+
   // Sync editingCluster with activeCluster when settings open
   useEffect(() => {
     if (showSettings) {
