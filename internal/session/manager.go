@@ -45,6 +45,15 @@ type Tunnel struct {
 	Cancel     context.CancelFunc
 	Status     string
 	Error      string
+
+	// Shared WebSocket connection for all TCP clients (reference client architecture)
+	wsConn    *websocket.Conn
+	wsMu      sync.Mutex // Protects wsConn writes
+	clientIP  string     // Client endpoint IP from EdgeView
+	config    *zededa.SessionConfig
+	channels  map[uint16]chan []byte // ChanNum -> channel for incoming data
+	channelMu sync.RWMutex
+	nextChan  uint32 // Atomic counter for channel allocation
 }
 
 type Manager struct {
@@ -205,17 +214,18 @@ type cmdOpt struct {
 	Logtype      string `json:"logtype"`
 }
 
-// StartProxy starts a local TCP listener that proxies to the EdgeView WebSocket
-// Returns the local port number and tunnel ID. Tunnels are keyed by the
-// ZEDEDA device node ID so they can be listed per-device from the UI.
+// StartProxy starts a local TCP listener that proxies to the EdgeView WebSocket.
+// This implementation matches the reference EdgeView client architecture:
+// 1. Establish ONE WebSocket connection upfront
+// 2. Send the tcp command and wait for +++tcpSetupOK+++
+// 3. Start accepting TCP clients that multiplex over the shared WebSocket
+// Returns the local port number and tunnel ID.
 func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, nodeID string, target string) (int, string, error) {
 	// ALWAYS use InstID=2 to avoid conflicts with reference client (usually uses 1)
-	// and to avoid session conflicts when creating fresh sessions
 	config.InstID = 2
 	config.MaxInst = 3
 
-	// Start local TCP listener
-	// Try preferred ports 9001-9010 first (matching reference client behavior)
+	// Start local TCP listener first
 	var listener net.Listener
 	var err error
 
@@ -226,7 +236,6 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 		}
 	}
 
-	// Fallback to random port if preferred ports are taken
 	if listener == nil {
 		listener, err = net.Listen("tcp", "localhost:0")
 		if err != nil {
@@ -235,38 +244,139 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 	}
 
 	localPort := listener.Addr().(*net.TCPAddr).Port
-	fmt.Printf("[%s] Persistent Proxy listening on localhost:%d for target %s\n", time.Now().Format("2006-01-02 15:04:05"), localPort, target)
+	fmt.Printf("[%s] Tunnel listening on localhost:%d for target %s\n", time.Now().Format("2006-01-02 15:04:05"), localPort, target)
 
-	// Create Tunnel
-	// Generate a simple unique ID
+	// Try to establish WebSocket and get tcpSetupOK with retries
+	const maxRetries = 5
+	var wsConn *websocket.Conn
+	var clientIP string
+	var lastErr error
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		// Connect to EdgeView
+		wsConn, clientIP, err = m.connectToEdgeView(config)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to connect to EdgeView: %w", err)
+			if attempt < maxRetries {
+				time.Sleep(time.Duration(attempt*2) * time.Second)
+				continue
+			}
+			listener.Close()
+			return 0, "", lastErr
+		}
+
+		// Send the TCP tunnel command
+		query := cmdOpt{
+			Version:      edgeViewVersion,
+			ClientEPAddr: clientIP,
+			Network:      "tcp/" + target,
+			IsJSON:       false,
+		}
+		queryBytes, _ := json.Marshal(query)
+
+		if err := sendWrappedMessage(wsConn, queryBytes, config.Key, websocket.TextMessage); err != nil {
+			wsConn.Close()
+			lastErr = fmt.Errorf("failed to send tcp command: %w", err)
+			if attempt < maxRetries {
+				time.Sleep(time.Duration(attempt) * time.Second)
+				continue
+			}
+			listener.Close()
+			return 0, "", lastErr
+		}
+
+		// Wait for +++tcpSetupOK+++ (with timeout)
+		setupErr := m.waitForTcpSetupOK(wsConn, config.Key, 30*time.Second)
+		if setupErr == nil {
+			break // Success
+		}
+
+		// Setup failed - retry
+		wsConn.Close()
+		wsConn = nil
+		lastErr = setupErr
+
+		if attempt < maxRetries {
+			time.Sleep(time.Duration(attempt*3) * time.Second)
+		}
+	}
+
+	if wsConn == nil {
+		listener.Close()
+		return 0, "", fmt.Errorf("failed to establish tunnel after %d attempts: %w", maxRetries, lastErr)
+	}
+
+	// Create Tunnel with shared WebSocket
 	tunnelID := fmt.Sprintf("tunnel-%d", time.Now().UnixNano())
-
-	// Create a background context for the tunnel (independent of the request context)
 	tunnelCtx, cancel := context.WithCancel(context.Background())
 
-	// IMPORTANT: key the tunnel by the ZEDEDA device nodeID, not the
-	// session UUID, so that /api/tunnels?nodeId=<deviceId> returns the
-	// expected per-device tunnel list in the UI.
 	tunnel := &Tunnel{
 		ID:        tunnelID,
 		NodeID:    nodeID,
-		TargetIP:  target, // Storing full target string for now (ip:port)
+		TargetIP:  target,
 		LocalPort: localPort,
-		Type:      "TCP", // Default type for generic tunnels
+		Type:      "TCP",
 		CreatedAt: time.Now(),
 		Cancel:    cancel,
 		Status:    "active",
 		Error:     "",
+		wsConn:    wsConn,
+		clientIP:  clientIP,
+		config:    config,
+		channels:  make(map[uint16]chan []byte),
+		nextChan:  0,
 	}
 
-	// Register Tunnel
-	fmt.Printf("DEBUG: Registering tunnel %s for nodeID %s target %s on localhost:%d\n", tunnelID, nodeID, target, localPort)
 	m.RegisterTunnel(tunnel)
 
-	// Start Accept Loop in background
-	go m.tunnelAcceptLoop(tunnelCtx, listener, config, target, tunnelID)
+	// Start the WebSocket reader that dispatches to TCP clients
+	go m.tunnelWSReader(tunnelCtx, tunnel)
+
+	// Start accepting TCP client connections
+	go m.tunnelAcceptLoop(tunnelCtx, listener, tunnel)
 
 	return localPort, tunnelID, nil
+}
+
+// waitForTcpSetupOK waits for the +++tcpSetupOK+++ message from EdgeView
+func (m *Manager) waitForTcpSetupOK(wsConn *websocket.Conn, key string, timeout time.Duration) error {
+	setupDone := make(chan error, 1)
+	go func() {
+		for {
+			_, msg, err := wsConn.ReadMessage()
+			if err != nil {
+				setupDone <- fmt.Errorf("ws read error waiting for tcpSetupOK: %w", err)
+				return
+			}
+
+			payload, err := unwrapMessage(msg, key)
+			if err != nil {
+				// Check for plain-text errors
+				if strings.Contains(string(msg), "no device online") {
+					setupDone <- ErrNoDeviceOnline
+					return
+				}
+				continue // Non-envelope message, ignore
+			}
+
+			payloadStr := string(payload)
+			if strings.Contains(payloadStr, "+++tcpSetupOK+++") {
+				setupDone <- nil
+				return
+			}
+			if strings.Contains(payloadStr, "+++Done+++") {
+				setupDone <- fmt.Errorf("device closed connection before tcpSetupOK")
+				return
+			}
+		}
+	}()
+
+	select {
+	case err := <-setupDone:
+		return err
+	case <-time.After(timeout):
+		return fmt.Errorf("timeout waiting for tcpSetupOK")
+	}
 }
 
 // LaunchTerminal opens a new terminal window with the SSH command
@@ -772,357 +882,91 @@ func (m *Manager) connectToEdgeView(config *zededa.SessionConfig) (*websocket.Co
 	return wsConn, clientIP, nil
 }
 
-// handleTunnelConnection handles a single TCP client connection for a persistent tunnel
-func (m *Manager) handleTunnelConnection(ctx context.Context, conn net.Conn, config *zededa.SessionConfig, target string, tunnelID string) {
-	const tunnelDebug = false
-
-	defer conn.Close()
-
-	remoteAddr := conn.RemoteAddr()
-	fmt.Printf("TUNNEL[%s] New TCP client from %s -> target %s (InstID=%d)\n", tunnelID, remoteAddr, target, config.InstID)
-
-	var bytesTCPToWS int64
-	var bytesWSToTCP int64
-
-	maxRetries := 3
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		// Create a cancellable context for this attempt's proxy loops
-		proxyCtx, proxyCancel := context.WithCancel(ctx)
-
-		// 1. Connect to EdgeView
-		fmt.Printf("TUNNEL[%s] Connecting to EdgeView URL=%s (InstID=%d) (Attempt %d/%d)\n", tunnelID, config.URL, config.InstID, attempt, maxRetries)
-		wsConn, clientIP, err := m.connectToEdgeView(config)
-		if err != nil {
-			fmt.Printf("TUNNEL[%s] ERROR: Failed to connect to EdgeView: %v\n", tunnelID, err)
-			proxyCancel()
-			if attempt < maxRetries {
-				time.Sleep(1 * time.Second)
-				continue
-			}
-			m.FailTunnel(tunnelID, err)
-			return
+// tunnelWSReader reads from the shared WebSocket and dispatches data to
+// the appropriate TCP client channel based on ChanNum.
+func (m *Manager) tunnelWSReader(ctx context.Context, tunnel *Tunnel) {
+	defer func() {
+		tunnel.wsMu.Lock()
+		if tunnel.wsConn != nil {
+			tunnel.wsConn.Close()
 		}
+		tunnel.wsMu.Unlock()
 
-		// 2. Send Initial Query
-		query := cmdOpt{
-			Version:      edgeViewVersion,
-			ClientEPAddr: clientIP,
-			Network:      "tcp/" + target,
-			IsJSON:       false, // Must be false for TCP tunnels
+		// Close all client channels
+		tunnel.channelMu.Lock()
+		for _, ch := range tunnel.channels {
+			close(ch)
 		}
-
-		queryBytes, err := json.Marshal(query)
-		if err != nil {
-			fmt.Printf("TUNNEL[%s] ERROR: Failed to marshal query: %v\n", tunnelID, err)
-			wsConn.Close()
-			proxyCancel()
-			m.FailTunnel(tunnelID, err)
-			return
-		}
-
-		fmt.Printf("TUNNEL[%s] Sending EdgeView tcp query: %s\n", tunnelID, query.Network)
-		if err := sendWrappedMessage(wsConn, queryBytes, config.Key, websocket.TextMessage); err != nil {
-			fmt.Printf("TUNNEL[%s] ERROR: Failed to send query: %v\n", tunnelID, err)
-			wsConn.Close()
-			proxyCancel()
-			if attempt < maxRetries {
-				time.Sleep(1 * time.Second)
-				continue
-			}
-			m.FailTunnel(tunnelID, err)
-			return
-		}
-		fmt.Printf("TUNNEL[%s] Initial tcp query sent - starting proxy loops\n", tunnelID)
-
-		// 3. Start Bidirectional Proxy
-		errChan := make(chan error, 2)
-
-		// Shared state for setup completion (accessed by both goroutines)
-		var tcpSetupComplete int32 // 0 = false, 1 = true (atomic)
-
-		// Buffer for data received before setup completes (for SSH clients that send immediately)
-		var preSetupBuffer []byte
-		var preSetupMutex sync.Mutex
-
-		// TCP -> WebSocket
-		go func() {
-			defer proxyCancel() // Ensure cleanup if this loop exits
-			buf := make([]byte, 64*1024)
-			for {
-				select {
-				case <-proxyCtx.Done():
-					return
-				default:
-					// Use deadline to make Read interruptible
-					conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-					n, err := conn.Read(buf)
-					if n > 0 {
-						// fmt.Printf("TUNNEL[%s] DEBUG: TCP->WS Read %d bytes\n", tunnelID, n)
-
-						// Wait for setup to complete before forwarding data
-						// This prevents SSH clients from sending data before initialization packet
-						if atomic.LoadInt32(&tcpSetupComplete) == 0 {
-							// fmt.Printf("TUNNEL[%s] DEBUG: Buffering %d bytes - waiting for tcpSetupComplete\n", tunnelID, n)
-							preSetupMutex.Lock()
-							preSetupBuffer = append(preSetupBuffer, buf[:n]...)
-							preSetupMutex.Unlock()
-							continue
-						}
-
-						// Check if we have buffered data to send first
-						preSetupMutex.Lock()
-						if len(preSetupBuffer) > 0 {
-							// fmt.Printf("TUNNEL[%s] DEBUG: Sending %d buffered bytes first\n", tunnelID, len(preSetupBuffer))
-
-							// Send buffered data
-							td := tcpData{
-								Version:   0,
-								MappingID: 1,
-								ChanNum:   1,
-								Data:      preSetupBuffer,
-							}
-							tdBytes, _ := json.Marshal(td)
-							if err := sendWrappedMessage(wsConn, tdBytes, config.Key, websocket.BinaryMessage); err != nil {
-								preSetupMutex.Unlock()
-								fmt.Printf("TUNNEL[%s] ERROR: ws write error sending buffered data: %v\n", tunnelID, err)
-								errChan <- fmt.Errorf("ws write error: %w", err)
-								return
-							}
-							atomic.AddInt64(&bytesTCPToWS, int64(len(preSetupBuffer)))
-							// fmt.Printf("TUNNEL[%s] DEBUG: Sent %d buffered bytes to WS (Binary)\n", tunnelID, len(preSetupBuffer))
-
-							// Clear buffer
-							preSetupBuffer = nil
-						}
-						preSetupMutex.Unlock()
-
-						atomic.AddInt64(&bytesTCPToWS, int64(n))
-
-						// Wrap in tcpData struct (matching EVE protocol)
-						td := tcpData{
-							Version:   0, // MUST be 0 to match EVE reference
-							MappingID: 1, // MUST be 1 for single mapping
-							ChanNum:   1, // MUST be 1 for single channel
-							Data:      buf[:n],
-						}
-						tdBytes, _ := json.Marshal(td)
-
-						// Debug: Print payload
-						// fmt.Printf("TUNNEL[%s] DEBUG: Sending tcpData: %s\n", tunnelID, string(tdBytes))
-
-						// Send as BinaryMessage (required by EVE for tcpData)
-						if err := sendWrappedMessage(wsConn, tdBytes, config.Key, websocket.BinaryMessage); err != nil {
-							fmt.Printf("TUNNEL[%s] ERROR: ws write error after sending %d bytes TCP->WS: %v\n", tunnelID, atomic.LoadInt64(&bytesTCPToWS), err)
-							errChan <- fmt.Errorf("ws write error: %w", err)
-							return
-						}
-						// fmt.Printf("TUNNEL[%s] DEBUG: Sent %d bytes to WS (Binary)\n", tunnelID, n)
-					}
-					if err != nil {
-						if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-							// Timeout is expected, check context and continue
-							if proxyCtx.Err() != nil {
-								return
-							}
-							continue
-						}
-						if err != io.EOF {
-							fmt.Printf("TUNNEL[%s] ERROR: tcp read error after %d bytes TCP->WS: %v\n", tunnelID, atomic.LoadInt64(&bytesTCPToWS), err)
-							errChan <- fmt.Errorf("tcp read error: %w", err)
-						} else {
-							fmt.Printf("TUNNEL[%s] TCP client closed connection (EOF) after %d bytes TCP->WS\n", tunnelID, atomic.LoadInt64(&bytesTCPToWS))
-							errChan <- fmt.Errorf("EOF")
-						}
-						return
-					}
-				}
-			}
-		}()
-
-		// WebSocket -> TCP
-		go func() {
-			defer proxyCancel()
-			for {
-				select {
-				case <-proxyCtx.Done():
-					return
-				default:
-					_, message, err := wsConn.ReadMessage()
-					// fmt.Printf("TUNNEL[%s] DEBUG: WebSocket ReadMessage returned: size=%d, err=%v\n", tunnelID, len(message), err)
-					if err != nil {
-						// If context is cancelled, ignore read error
-						if proxyCtx.Err() != nil {
-							return
-						}
-						fmt.Printf("TUNNEL[%s] ERROR: ws read error after WS->TCP=%d, TCP->WS=%d bytes: %v\n", tunnelID, atomic.LoadInt64(&bytesWSToTCP), atomic.LoadInt64(&bytesTCPToWS), err)
-						errChan <- fmt.Errorf("ws read error: %w", err)
-						return
-					}
-
-					// Unwrap
-					payload, err := unwrapMessage(message, config.Key)
-					// fmt.Printf("TUNNEL[%s] DEBUG: unwrapMessage returned: payloadSize=%d, err=%v\n", tunnelID, len(payload), err)
-					if err != nil {
-						// Treat explicit "no device online" as a fatal error for this tunnel (trigger retry)
-						if errors.Is(err, ErrNoDeviceOnline) || strings.Contains(string(message), "no device online") {
-							// fmt.Printf("TUNNEL[%s] DEBUG: EdgeView reported 'no device online' for tunnel\n", tunnelID)
-							errChan <- ErrNoDeviceOnline
-							return
-						}
-
-						// fmt.Printf("TUNNEL[%s] DEBUG: unwrapMessage failed (non-enveloped or corrupt frame): %v\n", tunnelID, err)
-						continue
-					}
-
-					// Detect control messages such as +++Done+++ that are not tcpData
-					trimmed := strings.TrimSpace(string(payload))
-					if trimmed == "+++Done+++" {
-						// fmt.Printf("TUNNEL[%s] DEBUG: Received EdgeView close marker '+++Done+++'; stopping WS->TCP loop\n", tunnelID)
-						errChan <- io.EOF
-						return
-					}
-
-					if strings.Contains(trimmed, "+++tcpSetupOK+++") {
-						if tunnelDebug {
-							fmt.Printf("TUNNEL[%s] DEBUG: Received tcpSetupOK banner - TCP relay is now active\n", tunnelID)
-						}
-						atomic.StoreInt32(&tcpSetupComplete, 1)
-
-						// CRITICAL: Send initialization packet to trigger server-side Dial()
-						// The EVE protocol requires the CLIENT to send first data packet
-						// For VNC (and other protocols), this triggers the server to connect to the target
-						// See eve/edgeview-client/tcp.go lines 189-197 (justEnterVNC flag)
-
-						// Add delay to avoid race condition where server prints tcpSetupOK before initializing maps
-						time.Sleep(1 * time.Second)
-
-						initData := tcpData{
-							Version:   0,        // Zero value - matches EVE implementation
-							MappingID: 1,        // First mapping
-							ChanNum:   1,        // First channel
-							Data:      []byte{}, // EMPTY - triggers server Dial without sending data to target
-						}
-						initBytes, _ := json.Marshal(initData)
-
-						// Add small delay to avoid overwhelming EVE
-						time.Sleep(100 * time.Millisecond)
-
-						if err := sendWrappedMessage(wsConn, initBytes, config.Key, websocket.BinaryMessage); err != nil {
-							fmt.Printf("TUNNEL[%s] ERROR: Failed to send initialization packet: %v\n", tunnelID, err)
-							errChan <- err
-							return
-						}
-
-						continue
-					}
-
-					// After setup is complete, EdgeView sends tcpData JSON frames for
-					// TCP payload. We should NEVER forward arbitrary non-tcpData payloads
-					// directly to the SSH/VNC client, since those can contain control
-					// messages (e.g. +++tcpSetupOK+++, diagnostics) rather than raw
-					// application bytes. Doing so corrupts the SSH handshake and
-					// results in errors like "invalid packet length" or "message
-					// authentication code incorrect".
-					var td tcpData
-					if err := json.Unmarshal(payload, &td); err != nil {
-						// Not a tcpData frame – treat as a control/diagnostic message
-						// and DO NOT forward it to the TCP client.
-						if tunnelDebug {
-							prefix := string(payload)
-							if len(prefix) > 200 {
-								prefix = prefix[:200] + "..."
-							}
-							fmt.Printf("TUNNEL[%s] DEBUG: Ignoring non-tcpData payload (setupComplete=%d): %q\n", tunnelID, atomic.LoadInt32(&tcpSetupComplete), prefix)
-						}
-						continue
-					}
-					
-					// JSON tcpData received (used for single or multiple TCP targets)
-					if len(td.Data) > 0 {
-						// CRITICAL: Only forward data AFTER tcpSetupComplete is set
-						// This prevents early tcpData frames (if any) from corrupting the SSH handshake
-						if atomic.LoadInt32(&tcpSetupComplete) == 0 {
-							if tunnelDebug {
-								fmt.Printf("TUNNEL[%s] DEBUG: Ignoring tcpData (%d bytes) before tcpSetupComplete\n", tunnelID, len(td.Data))
-							}
-							continue
-						}
-						atomic.AddInt64(&bytesWSToTCP, int64(len(td.Data)))
-						
-						_, err := conn.Write(td.Data)
-						if err != nil {
-							fmt.Printf("TUNNEL[%s] ERROR: tcp write error after WS->TCP=%d bytes: %v\\n", tunnelID, atomic.LoadInt64(&bytesWSToTCP), err)
-							errChan <- err
-							return
-						}
-					}
-				}
-			}
-		}()
-
-		// Wait for error or context cancel
-		select {
-		case err := <-errChan:
-			proxyCancel() // Stop the loops
-			wsConn.Close()
-
-			// Check if this was a "device not ready" error (+++Done+++ before tcpSetupOK)
-			// This happens when device hasn't established EdgeView connection yet
-			if err == io.EOF && atomic.LoadInt32(&tcpSetupComplete) == 0 {
-				fmt.Printf("TUNNEL[%s] WARNING: Device not ready yet (got +++Done+++ before tcpSetupOK)\\n", tunnelID)
-				if attempt < maxRetries {
-					// Wait longer for device to come online (exponential backoff)
-					// Use a larger base delay to give the device more time between retries,
-					// especially for SSH where the daemon may start slowly under load.
-					waitTime := time.Duration(attempt*10) * time.Second
-					fmt.Printf("TUNNEL[%s] WARNING: Retrying in %v... (Attempt %d/%d)\n", tunnelID, waitTime, attempt, maxRetries)
-					time.Sleep(waitTime)
-					continue // Retry the outer loop
-				}
-				m.FailTunnel(tunnelID, fmt.Errorf("device did not come online after %d attempts", maxRetries))
-				return // Exit the function
-			}
-
-			// Check if we should retry for ErrNoDeviceOnline
-			if errors.Is(err, ErrNoDeviceOnline) {
-				fmt.Printf("TUNNEL[%s] WARNING: EdgeView session failed with 'no device online'. Retrying... (Attempt %d/%d)\n", tunnelID, attempt, maxRetries)
-				if attempt < maxRetries {
-					time.Sleep(1 * time.Second)
-					continue // Retry the outer loop
-				}
-			}
-
-			// Fatal error or max retries reached
-			if err != io.EOF {
-				fmt.Printf("TUNNEL[%s] Connection closed with error: %v\n", tunnelID, err)
-				m.FailTunnel(tunnelID, err) // Fail the tunnel on a non-retryable error
-			} else {
-				fmt.Printf("TUNNEL[%s] Connection closed cleanly\n", tunnelID)
-			}
-			proxyCancel()
-			wsConn.Close()
-			return // Exit the function
-
-		case <-ctx.Done():
-			fmt.Printf("TUNNEL[%s] Context cancelled, closing tunnel\n", tunnelID)
-			proxyCancel()
-			wsConn.Close()
-			return // Exit the function
-		}
-	}
-}
-
-// tunnelAcceptLoop accepts connections for a persistent tunnel
-func (m *Manager) tunnelAcceptLoop(ctx context.Context, listener net.Listener, config *zededa.SessionConfig, target string, tunnelID string) {
-	defer listener.Close()
-	defer m.CloseTunnel(tunnelID)
-
-	fmt.Printf("DEBUG: Tunnel %s listening on %s\n", tunnelID, listener.Addr())
+		tunnel.channels = nil
+		tunnel.channelMu.Unlock()
+	}()
 
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Printf("DEBUG: Tunnel %s closed\n", tunnelID)
+			return
+		default:
+			_, msg, err := tunnel.wsConn.ReadMessage()
+			if err != nil {
+				if ctx.Err() == nil {
+					fmt.Printf("TUNNEL[%s] WS reader error: %v\n", tunnel.ID, err)
+					m.FailTunnel(tunnel.ID, err)
+				}
+				return
+			}
+
+			payload, err := unwrapMessage(msg, tunnel.config.Key)
+			if err != nil {
+				// Check for plain-text errors
+				if strings.Contains(string(msg), "no device online") {
+					fmt.Printf("TUNNEL[%s] Device offline\n", tunnel.ID)
+					m.FailTunnel(tunnel.ID, ErrNoDeviceOnline)
+					return
+				}
+				continue
+			}
+
+			// Check for control messages
+			payloadStr := string(payload)
+			if strings.Contains(payloadStr, "+++Done+++") {
+				fmt.Printf("TUNNEL[%s] Received +++Done+++, closing\n", tunnel.ID)
+				return
+			}
+
+			// Parse tcpData
+			var td tcpData
+			if err := json.Unmarshal(payload, &td); err != nil {
+				continue // Not tcpData, skip
+			}
+
+			if len(td.Data) > 0 {
+				// Dispatch to the appropriate channel
+				tunnel.channelMu.RLock()
+				ch, ok := tunnel.channels[td.ChanNum]
+				tunnel.channelMu.RUnlock()
+
+				if ok {
+					select {
+					case ch <- td.Data:
+					case <-ctx.Done():
+						return
+					default:
+						// Channel full, drop data
+					}
+				}
+			}
+		}
+	}
+}
+
+// tunnelAcceptLoop accepts TCP connections and multiplexes them over the shared WebSocket
+func (m *Manager) tunnelAcceptLoop(ctx context.Context, listener net.Listener, tunnel *Tunnel) {
+	defer listener.Close()
+	defer m.CloseTunnel(tunnel.ID)
+
+	for {
+		select {
+		case <-ctx.Done():
 			return
 		default:
 			conn, err := listener.Accept()
@@ -1131,14 +975,114 @@ func (m *Manager) tunnelAcceptLoop(ctx context.Context, listener net.Listener, c
 				case <-ctx.Done():
 					return
 				default:
-					// Accept error - likely listener closed
 					time.Sleep(100 * time.Millisecond)
 					continue
 				}
 			}
 
-			// Handle connection in background
-			go m.handleTunnelConnection(ctx, conn, config, target, tunnelID)
+			// Allocate a channel number for this TCP client
+			chanNum := uint16(atomic.AddUint32(&tunnel.nextChan, 1))
+
+			// Create a channel for incoming data from WebSocket
+			dataChan := make(chan []byte, 100)
+			tunnel.channelMu.Lock()
+			if tunnel.channels == nil {
+				tunnel.channels = make(map[uint16]chan []byte)
+			}
+			tunnel.channels[chanNum] = dataChan
+			tunnel.channelMu.Unlock()
+
+			// Handle this TCP client
+			go m.handleSharedTunnelConnection(ctx, conn, tunnel, chanNum, dataChan)
+		}
+	}
+}
+
+// handleSharedTunnelConnection handles a single TCP client using the shared WebSocket
+func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Conn, tunnel *Tunnel, chanNum uint16, dataChan chan []byte) {
+	defer func() {
+		conn.Close()
+		// Remove our channel
+		tunnel.channelMu.Lock()
+		delete(tunnel.channels, chanNum)
+		tunnel.channelMu.Unlock()
+	}()
+
+	// For protocols like VNC that don't send data first, send an empty init packet
+	// to trigger the server-side Dial()
+	initData := tcpData{
+		Version:   0,
+		MappingID: 1,
+		ChanNum:   chanNum,
+		Data:      []byte{}, // Empty to trigger dial without sending data
+	}
+	initBytes, _ := json.Marshal(initData)
+
+	tunnel.wsMu.Lock()
+	err := sendWrappedMessage(tunnel.wsConn, initBytes, tunnel.config.Key, websocket.BinaryMessage)
+	tunnel.wsMu.Unlock()
+	if err != nil {
+		fmt.Printf("TUNNEL[%s] ChanNum=%d: Failed to send init packet: %v\n", tunnel.ID, chanNum, err)
+		return
+	}
+
+	done := make(chan struct{})
+
+	// WebSocket -> TCP (via dataChan)
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case data, ok := <-dataChan:
+				if !ok {
+					return // Channel closed
+				}
+				if _, err := conn.Write(data); err != nil {
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	// TCP -> WebSocket
+	buf := make([]byte, 64*1024)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-done:
+			return
+		default:
+			conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+			n, err := conn.Read(buf)
+			if n > 0 {
+				td := tcpData{
+					Version:   0,
+					MappingID: 1,
+					ChanNum:   chanNum,
+					Data:      buf[:n],
+				}
+				tdBytes, _ := json.Marshal(td)
+
+				tunnel.wsMu.Lock()
+				err := sendWrappedMessage(tunnel.wsConn, tdBytes, tunnel.config.Key, websocket.BinaryMessage)
+				tunnel.wsMu.Unlock()
+				if err != nil {
+					fmt.Printf("TUNNEL[%s] ChanNum=%d: WS write error: %v\n", tunnel.ID, chanNum, err)
+					return
+				}
+			}
+			if err != nil {
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					continue
+				}
+				if err != io.EOF {
+					fmt.Printf("TUNNEL[%s] ChanNum=%d: TCP read error: %v\n", tunnel.ID, chanNum, err)
+				}
+				return
+			}
 		}
 	}
 }
