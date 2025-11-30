@@ -1091,11 +1091,9 @@ function App() {
                           <div className="status-badge enabled">
                             <Unlock size={14} /> SSH Enabled
                           </div>
-                          <Tooltip text="Remove public key and disable SSH access on the device">
-                            <button className="action-link danger" onClick={handleDisableSSH}>
-                              Disable EVE-OS SSH
-                            </button>
-                          </Tooltip>
+                          <button className="action-link danger" onClick={handleDisableSSH} title="Remove public key and disable SSH access on the device">
+                            Disable EVE-OS SSH
+                          </button>
                         </div>
                       ) : sshStatus.status === 'mismatch' ? (
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
@@ -1103,17 +1101,13 @@ function App() {
                             <AlertTriangle size={14} /> Key Mismatch
                           </div>
                           <div className="ssh-actions-row">
-                            <Tooltip text="Remove public key and disable SSH access on the device">
-                              <button className="action-link danger" onClick={handleDisableSSH}>
-                                Disable SSH
-                              </button>
-                            </Tooltip>
+                            <button className="action-link danger" onClick={handleDisableSSH} title="Remove public key and disable SSH access on the device">
+                              Disable SSH
+                            </button>
                             <span className="separator">•</span>
-                            <Tooltip text="Replace device's SSH public key with your local key">
-                              <button className="action-link" onClick={handleSetupSSH}>
-                                Re-enable SSH
-                              </button>
-                            </Tooltip>
+                            <button className="action-link" onClick={handleSetupSSH} title="Replace device's SSH public key with your local key">
+                              Re-enable SSH
+                            </button>
                           </div>
                         </div>
                       ) : (
@@ -1121,11 +1115,9 @@ function App() {
                           <div className="status-badge disabled">
                             <Lock size={14} /> Disabled
                           </div>
-                          <Tooltip text="Install your local SSH public key on the device">
-                            <button className="action-link" onClick={handleSetupSSH}>
-                              Enable EVE-OS SSH
-                            </button>
-                          </Tooltip>
+                          <button className="action-link" onClick={handleSetupSSH} title="Install your local SSH public key on the device">
+                            Enable EVE-OS SSH
+                          </button>
                         </div>
                       )}
                     </div>
