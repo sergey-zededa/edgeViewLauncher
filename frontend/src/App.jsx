@@ -286,8 +286,41 @@ function App() {
   const sessionExpired = expiryInfo.expired;
   const isSessionConnected = tunnelConnected && !sessionExpired;
 
+  // State for time format preference
+  const [use24HourTime, setUse24HourTime] = useState(false);
+
+  useEffect(() => {
+    // Fetch system time format preference on mount
+    const checkTimeFormat = async () => {
+      try {
+        const is24h = await window.electronAPI.getSystemTimeFormat();
+
+        if (is24h !== null) {
+          setUse24HourTime(is24h);
+        } else {
+          // Fallback to browser detection if native check returns null (e.g. non-macOS)
+          const opts = new Intl.DateTimeFormat(undefined, { hour: 'numeric' }).resolvedOptions();
+
+          if (opts.hourCycle) {
+            setUse24HourTime(opts.hourCycle.startsWith('h2')); // h23 or h24 means 24-hour
+          } else if (opts.hour12 !== undefined) {
+            setUse24HourTime(!opts.hour12);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to check time format:', err);
+      }
+    };
+    checkTimeFormat();
+  }, []);
+
+  // Helper to detect user's time format preference (12h vs 24h)
+  const getTimeFormatOptions = () => {
+    return { hour12: !use24HourTime };
+  };
+
   const addLog = (message, type = 'info') => {
-    const timestamp = new Date().toLocaleTimeString();
+    const timestamp = new Date().toLocaleTimeString(undefined, getTimeFormatOptions());
     setLogs(prev => [...prev, { timestamp, message, type }]);
   };
 
@@ -490,7 +523,7 @@ function App() {
         const sessStatus = await GetSessionStatus(nodeId);
         setSessionStatus(sessStatus);
         if (sessStatus.active) {
-          addLog(`EdgeView session active(expires: ${new Date(sessStatus.expiresAt).toLocaleString()})`, 'success');
+          addLog(`EdgeView session active (expires: ${new Date(sessStatus.expiresAt).toLocaleString(undefined, getTimeFormatOptions())})`, 'success');
         }
       } catch (err) {
         console.error('Failed to get session status:', err);
@@ -1095,7 +1128,7 @@ function App() {
                         <div className="status-label">EXPIRES</div>
                         <div className={`status-value ${expiryInfo.colorClass}`}>
                           {expiryInfo.timestamp ? (
-                            <span title={new Date(expiryInfo.timestamp).toLocaleString()}>
+                            <span title={new Date(expiryInfo.timestamp).toLocaleString(undefined, getTimeFormatOptions())}>
                               {expiryInfo.label}
                             </span>
                           ) : '-'}
