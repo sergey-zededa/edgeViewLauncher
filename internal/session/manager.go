@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -381,10 +382,44 @@ func (m *Manager) waitForTcpSetupOK(wsConn *websocket.Conn, key string, timeout 
 
 // LaunchTerminal opens a new terminal window with the SSH command
 func (m *Manager) LaunchTerminal(port int, keyPath string) error {
-	sshCmd := fmt.Sprintf("ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i %s -p %d root@localhost", keyPath, port)
+	sshCmd := fmt.Sprintf("ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i \"%s\" -p %d root@localhost", keyPath, port)
 
-	// Launch Terminal.app on macOS
-	cmd := exec.Command("osascript", "-e", fmt.Sprintf(`tell application "Terminal" to do script "%s"`, sshCmd))
+	var cmd *exec.Cmd
+
+	switch runtime.GOOS {
+	case "darwin":
+		// macOS: Use osascript to open Terminal.app
+		cmd = exec.Command("osascript", "-e", fmt.Sprintf(`tell application "Terminal" to do script "%s"`, sshCmd))
+	case "windows":
+		// Windows: Use cmd.exe to open a new window with ssh
+		// Note: Windows 10+ has built-in OpenSSH
+		cmd = exec.Command("cmd", "/c", "start", "cmd", "/k", sshCmd)
+	case "linux":
+		// Linux: Try common terminal emulators in order of preference
+		terminals := []struct {
+			name string
+			args []string
+		}{
+			{"gnome-terminal", []string{"--", "bash", "-c", sshCmd + "; exec bash"}},
+			{"konsole", []string{"-e", "bash", "-c", sshCmd + "; exec bash"}},
+			{"xfce4-terminal", []string{"-e", sshCmd}},
+			{"xterm", []string{"-e", sshCmd}},
+		}
+
+		for _, term := range terminals {
+			if _, err := exec.LookPath(term.name); err == nil {
+				cmd = exec.Command(term.name, term.args...)
+				break
+			}
+		}
+
+		if cmd == nil {
+			return fmt.Errorf("no supported terminal emulator found (tried gnome-terminal, konsole, xfce4-terminal, xterm)")
+		}
+	default:
+		return fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
+	}
+
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to launch terminal: %w", err)
 	}
