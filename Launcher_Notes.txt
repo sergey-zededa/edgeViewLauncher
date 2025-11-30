@@ -30,7 +30,7 @@
 - display cluster access token validity time (if available/readable from token or API) and mark it red if expired - can we fetch this info from API? -check https://zedcontrol.zededa.net/api/v1/docs/?urls.primaryName=ZEDEDA%20IAM%20Service#/IdentityAccessManagement/IdentityAccessManagement_GetUserSession /v1/sessions/token/{sessionToken.base64}
 
 - add status message on failing to connect to the controller/cluster when receiving the list of devices
-- 
+- Implement auto refresh of list of devices and status every 10-15 seconds in the background
 
 
 - Indicate VNC session status (running, data is transferring, etc)
