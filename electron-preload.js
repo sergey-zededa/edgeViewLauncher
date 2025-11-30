@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     startTunnel: (nodeId, targetIP, targetPort) => ipcRenderer.invoke('api-call', '/api/start-tunnel', 'POST', { nodeId, targetIP, targetPort }),
     closeTunnel: (tunnelId) => ipcRenderer.invoke('api-call', `/api/tunnel/${tunnelId}`, 'DELETE'),
     listTunnels: (nodeId) => ipcRenderer.invoke('api-call', `/api/tunnels?nodeId=${nodeId}`, 'GET'),
+    getConnectionProgress: (nodeId) => ipcRenderer.invoke('api-call', `/api/connection-progress?nodeId=${nodeId}`, 'GET'),
     openTerminalWindow: (port) => ipcRenderer.invoke('open-terminal-window', port),
     openExternal: (url) => ipcRenderer.invoke('open-external', url)
 });

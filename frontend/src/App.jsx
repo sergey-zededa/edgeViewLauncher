@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { SearchNodes, ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice } from './electronAPI';
+import { SearchNodes, ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice } from './electronAPI';
 import VncViewer from './components/VncViewer';
 import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
@@ -37,6 +37,9 @@ function App() {
   const [logs, setLogs] = useState([]);
   const [showTerminal, setShowTerminal] = useState(false);
   const [localPort, setLocalPort] = useState(null);
+  const [tcpTunnelConfig, setTcpTunnelConfig] = useState(null); // { ip, appName }
+  const [tcpPortInput, setTcpPortInput] = useState('');
+  const [tcpError, setTcpError] = useState('');
 
   // Dropdown state
   const [showTerminalMenu, setShowTerminalMenu] = useState(false);
@@ -100,19 +103,35 @@ function App() {
           return;
         }
 
-        const mapped = tunnels.map(t => ({
-          id: t.ID,
-          nodeId: t.NodeID,
-          nodeName: t.NodeName || selectedNode.name,
-          projectId: t.ProjectID || selectedNode.project,
-          type: t.Type,
-          targetIP: (t.TargetIP || '').split(':')[0],
-          targetPort: parseInt(((t.TargetIP || '').split(':')[1] || '0'), 10),
-          localPort: t.LocalPort,
-          createdAt: t.CreatedAt,
-          status: t.Status || 'active',
-          error: t.Error || '',
-        }));
+        const mapped = tunnels.map(t => {
+          const rawTarget = t.TargetIP || '';
+          const [ipPart, portPart] = rawTarget.split(':');
+          const targetPort = parseInt(portPart || '0', 10);
+
+          // Derive a more user-friendly tunnel type for well-known ports.
+          let type = t.Type || 'TCP';
+          if (type === 'TCP') {
+            if (targetPort === 22) {
+              type = 'SSH';
+            } else if (targetPort === 5900) {
+              type = 'VNC';
+            }
+          }
+
+          return {
+            id: t.ID,
+            nodeId: t.NodeID,
+            nodeName: t.NodeName || selectedNode.name,
+            projectId: t.ProjectID || selectedNode.project,
+            type,
+            targetIP: ipPart || '',
+            targetPort,
+            localPort: t.LocalPort,
+            createdAt: t.CreatedAt,
+            status: t.Status || 'active',
+            error: t.Error || '',
+          };
+        });
 
         setActiveTunnels(prev => {
           // Compute diffs for activity logging (per-node)
@@ -260,6 +279,45 @@ function App() {
     };
     setActiveTunnels(prev => [...prev, tunnel]);
     return tunnel;
+  };
+
+  const startCustomTunnel = async () => {
+    if (!tcpTunnelConfig || !selectedNode) return;
+
+    const port = parseInt(tcpPortInput, 10);
+    if (Number.isNaN(port) || port <= 0 || port > 65535) {
+      setTcpError('Enter a valid port between 1 and 65535');
+      return;
+    }
+
+    const ip = tcpTunnelConfig.ip;
+
+    try {
+      setTcpError('');
+      setTunnelLoading(true);
+      setTunnelLoadingMessage(`Starting TCP tunnel to ${ip}:${port}...`);
+      addLog(`Starting TCP tunnel to ${ip}:${port}...`, 'info');
+
+      const result = await StartTunnel(selectedNode.id, ip, port);
+      const localPort = result.port || result;
+      const tunnelId = result.tunnelId;
+
+      addLog(`TCP tunnel active: localhost:${localPort} -> ${ip}:${port}`, 'success');
+      addTunnel('TCP', ip, port, localPort, tunnelId);
+      setHighlightTunnels(true);
+      setTimeout(() => setHighlightTunnels(false), 2000);
+
+      setTcpTunnelConfig(null);
+      setTcpPortInput('');
+    } catch (err) {
+      console.error(err);
+      const msg = err.message || String(err);
+      setTcpError(msg);
+      addLog(`Failed to start TCP tunnel: ${msg}`, 'error');
+    } finally {
+      setTunnelLoading(false);
+      setTunnelLoadingMessage('');
+    }
   };
 
   const removeTunnel = async (tunnelId) => {
@@ -428,8 +486,30 @@ function App() {
   };
 
   const startSession = async (nodeId, useInApp) => {
+    let cancelled = false;
+
+    const pollProgress = async () => {
+      if (cancelled) return;
+      try {
+        const progress = await GetConnectionProgress(nodeId);
+        if (progress && typeof progress.status === 'string' && progress.status.trim().length > 0) {
+          setLoadingMessage(progress.status);
+        }
+      } catch (e) {
+        // Ignore polling errors – connection attempts may still be in progress.
+      }
+    };
+
     try {
       setShowTerminalMenu(false);
+      setLoadingSSH(true);
+      setLoadingMessage('Starting EdgeView session...');
+      addLog(`Starting EdgeView SSH session (${useInApp ? 'In-App Terminal' : 'Native Terminal'})...`, 'info');
+
+      // Start polling connection progress while backend works.
+      pollProgress();
+      const intervalId = setInterval(pollProgress, 1000);
+
       const result = await ConnectToNode(nodeId, useInApp);
       if (useInApp) {
         const match = result.match(/port (\d+)/);
@@ -452,14 +532,22 @@ function App() {
       if (selectedNode) {
         addLog('Refreshing services with EdgeView data...', 'info');
         try {
-          const result = await GetDeviceServices(nodeId, selectedNode.name);
-          setServices(JSON.parse(result));
+          const refreshed = await GetDeviceServices(nodeId, selectedNode.name);
+          setServices(JSON.parse(refreshed));
           addLog('Services refreshed with enrichment data', 'success');
         } catch (err) {
           console.error('Failed to refresh services:', err);
         }
       }
+
+      cancelled = true;
+      clearInterval(intervalId);
+      setLoadingMessage('');
+      setLoadingSSH(false);
     } catch (err) {
+      cancelled = true;
+      setLoadingSSH(false);
+      setLoadingMessage('');
       console.error('Failed to connect:', err);
       setError({ type: 'error', message: `Failed to connect: ${err.message || err} ` });
     }
@@ -1183,39 +1271,16 @@ function App() {
                                 </div>
                                 <div
                                   className={`option-btn ${tunnelLoading ? 'loading' : ''} ${sessionExpired ? 'disabled' : ''}`}
-                                  onClick={async () => {
+                                  onClick={() => {
                                     if (sessionExpired) {
                                       addLog('Cannot start TCP tunnel: EdgeView session has expired. Restart the session first.', 'warning');
                                       return;
                                     }
-                                    try {
-                                      const portInput = prompt("Enter target port (e.g. 80, 8080):", "80");
-                                      if (!portInput) return;
-                                      const port = parseInt(portInput);
-                                      if (isNaN(port)) {
-                                        alert("Invalid port number");
-                                        return;
-                                      }
-                                      const ip = app.ips && app.ips.length > 0 ? app.ips[0] : '127.0.0.1';
-                                      setTunnelLoading(true);
-                                      setTunnelLoadingMessage(`Starting TCP tunnel to ${ip}:${port}...`);
-                                      addLog(`Starting TCP tunnel to ${ip}:${port}...`, 'info');
-                                      const result = await StartTunnel(selectedNode.id, ip, port);
-                                      const localPort = result.port || result;
-                                      const tunnelId = result.tunnelId;
-                                      addLog(`TCP tunnel active: localhost:${localPort} -> ${ip}:${port}`, 'success');
-                                      addTunnel('TCP', ip, port, localPort, tunnelId);
-                                      setHighlightTunnels(true);
-                                      setTimeout(() => setHighlightTunnels(false), 2000);
-                                      alert(`Tunnel Active!\n\nConnect to: localhost:${localPort}\n\nForwards to: ${ip}:${port}`);
-                                      setExpandedServiceId(null);
-                                    } catch (err) {
-                                      console.error(err);
-                                      addLog(`Failed to start TCP tunnel: ${err.message}`, 'error');
-                                    } finally {
-                                      setTunnelLoading(false);
-                                      setTunnelLoadingMessage('');
-                                    }
+                                    if (tunnelLoading) return;
+                                    const ip = app.ips && app.ips.length > 0 ? app.ips[0] : '127.0.0.1';
+                                    setTcpTunnelConfig({ ip, appName: app.name });
+                                    setTcpPortInput('80');
+                                    setTcpError('');
                                   }}>
                                   <Activity size={20} className="option-icon" />
                                   <span className="option-label">TCP Tunnel</span>
@@ -1243,6 +1308,103 @@ function App() {
             ) : null}
 
             {selectedNode && <ActivityLog logs={logs} />}
+
+            {tcpTunnelConfig && (
+              <div
+                style={{
+                  position: 'fixed',
+                  inset: 0,
+                  backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  zIndex: 2100,
+                }}
+              >
+                <div
+                  style={{
+                    backgroundColor: '#1e1e1e',
+                    borderRadius: '8px',
+                    padding: '16px 20px',
+                    minWidth: '320px',
+                    maxWidth: '420px',
+                    boxShadow: '0 12px 30px rgba(0, 0, 0, 0.4)',
+                    border: '1px solid #333',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                    <h4 style={{ margin: 0, fontSize: '14px' }}>Start TCP Tunnel</h4>
+                    <button
+                      className="icon-btn"
+                      onClick={() => {
+                        setTcpTunnelConfig(null);
+                        setTcpPortInput('');
+                        setTcpError('');
+                      }}
+                      title="Close"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                  <div style={{ fontSize: '12px', marginBottom: '10px', color: '#ccc' }}>
+                    <div>Device: {selectedNode?.name}</div>
+                    {tcpTunnelConfig.appName && <div>Application: {tcpTunnelConfig.appName}</div>}
+                  </div>
+                  <div className="form-group" style={{ marginBottom: '8px' }}>
+                    <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>Target IP</label>
+                    <input
+                      type="text"
+                      value={tcpTunnelConfig.ip}
+                      readOnly
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: '8px' }}>
+                    <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>Target Port</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="65535"
+                      value={tcpPortInput}
+                      onChange={(e) => setTcpPortInput(e.target.value)}
+                      placeholder="e.g. 80, 8080"
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                  {tcpError && (
+                    <div className="error-text" style={{ marginBottom: '8px' }}>
+                      {tcpError}
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '4px' }}>
+                    <button
+                      className="connect-btn secondary"
+                      onClick={() => {
+                        setTcpTunnelConfig(null);
+                        setTcpPortInput('');
+                        setTcpError('');
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      className={`connect-btn primary ${tunnelLoading ? 'loading' : ''}`}
+                      onClick={startCustomTunnel}
+                      disabled={tunnelLoading}
+                    >
+                      {tunnelLoading ? (
+                        <>
+                          <Activity size={14} className="animate-spin" />
+                          <span style={{ marginLeft: '6px' }}>Starting...</span>
+                        </>
+                      ) : (
+                        'Start Tunnel'
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {!selectedNode && (
               <div className="results-list">
