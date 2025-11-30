@@ -74,6 +74,10 @@ export const GetSessionStatus = (nodeId) => {
     return api.getSessionStatus(nodeId).then(res => res.data);
 };
 
+export const GetConnectionProgress = (nodeId) => {
+    return api.getConnectionProgress(nodeId).then(res => res.data);
+};
+
 export const GetAppInfo = (nodeId) => {
     return window.electronAPI.getAppInfo(nodeId);
 };

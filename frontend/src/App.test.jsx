@@ -29,6 +29,7 @@ vi.mock('./electronAPI', () => {
     GetEnterprise: vi.fn().mockResolvedValue({ name: 'Test Enterprise' }),
     GetProjects: vi.fn().mockResolvedValue([]),
     GetSessionStatus: vi.fn().mockResolvedValue({ active: false }),
+    GetConnectionProgress: vi.fn().mockResolvedValue({ status: 'Connected' }),
     GetAppInfo: vi.fn(fn),
     StartTunnel: vi.fn().mockResolvedValue({ port: 6000, tunnelId: 'tunnel-1' }),
     CloseTunnel: vi.fn(fn),

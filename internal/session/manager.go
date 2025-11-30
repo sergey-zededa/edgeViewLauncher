@@ -1070,10 +1070,12 @@ func (m *Manager) handleTunnelConnection(ctx context.Context, conn net.Conn, con
 			// Check if this was a "device not ready" error (+++Done+++ before tcpSetupOK)
 			// This happens when device hasn't established EdgeView connection yet
 			if err == io.EOF && atomic.LoadInt32(&tcpSetupComplete) == 0 {
-				fmt.Printf("TUNNEL[%s] WARNING: Device not ready yet (got +++Done+++ before tcpSetupOK)\n", tunnelID)
+				fmt.Printf("TUNNEL[%s] WARNING: Device not ready yet (got +++Done+++ before tcpSetupOK)\\n", tunnelID)
 				if attempt < maxRetries {
 					// Wait longer for device to come online (exponential backoff)
-					waitTime := time.Duration(attempt*5) * time.Second
+					// Use a larger base delay to give the device more time between retries,
+					// especially for SSH where the daemon may start slowly under load.
+					waitTime := time.Duration(attempt*10) * time.Second
 					fmt.Printf("TUNNEL[%s] WARNING: Retrying in %v... (Attempt %d/%d)\n", tunnelID, waitTime, attempt, maxRetries)
 					time.Sleep(waitTime)
 					continue // Retry the outer loop
