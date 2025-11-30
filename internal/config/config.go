@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -102,13 +103,23 @@ func Load() (*Config, error) {
 func Save(cfg *Config) error {
 	dir, err := GetConfigDir()
 	if err != nil {
-		return err
+		fmt.Printf("Config Save: GetConfigDir failed: %v\n", err)
+		return fmt.Errorf("failed to get config directory: %w", err)
 	}
 	path := filepath.Join(dir, "config.json")
+	fmt.Printf("Config Save: Writing to %s\n", path)
 
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
-		return err
+		fmt.Printf("Config Save: Marshal failed: %v\n", err)
+		return fmt.Errorf("failed to marshal config: %w", err)
 	}
-	return os.WriteFile(path, data, 0600)
+
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		fmt.Printf("Config Save: WriteFile failed: %v\n", err)
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+
+	fmt.Printf("Config Save: Success\n")
+	return nil
 }
