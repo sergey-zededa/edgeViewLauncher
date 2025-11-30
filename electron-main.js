@@ -153,3 +153,78 @@ ipcMain.handle('open-external', async (event, url) => {
     return true;
 });
 
+// Get System Time Format (12h vs 24h)
+ipcMain.handle('get-system-time-format', async () => {
+    const { systemPreferences, app } = require('electron');
+    const { exec } = require('child_process');
+    const util = require('util');
+    const execPromise = util.promisify(exec);
+
+    if (process.platform === 'darwin') {
+        try {
+            // 1. Try reading AppleICUForce24HourTime
+            try {
+                const { stdout } = await execPromise('defaults read -g AppleICUForce24HourTime');
+                const output = stdout.trim();
+                if (output === '1' || output.toLowerCase() === 'true') return true;
+                if (output === '0' || output.toLowerCase() === 'false') return false;
+            } catch (e) {
+                // AppleICUForce24HourTime not set
+            }
+
+            // 2. Try reading AppleLocale (e.g. "en_GB")
+            let rawLocale = null;
+            try {
+                const { stdout } = await execPromise('defaults read -g AppleLocale');
+                rawLocale = stdout.trim();
+            } catch (e) {
+                // AppleLocale not set
+            }
+
+            // 3. Try reading AppleTimeFormat (custom format string)
+            try {
+                const { stdout } = await execPromise('defaults read -g AppleTimeFormat');
+                const timeFormat = stdout.trim();
+                // Check for 24h indicators: 'H' (0-23) or 'k' (1-24)
+                // 12h indicators are 'h' (1-12) or 'K' (0-11)
+                if (timeFormat.includes('H') || timeFormat.includes('k')) return true;
+                if (timeFormat.includes('h') || timeFormat.includes('K')) return false;
+            } catch (e) {
+                // AppleTimeFormat not set
+            }
+
+            // 4. Fallback to Intl with correct locale
+            // Try to construct a "language-REGION" locale which often gives better results for time format
+            // than the -u-rg- extension for en-US.
+            // Example: "en_US@rg=atzzzz" -> "en-AT"
+            let localeToCheck = app.getLocale();
+
+            if (rawLocale) {
+                // Check for region override (rg=atzzzz)
+                const rgMatch = rawLocale.match(/@rg=([a-z]{2})/i);
+                if (rgMatch && rgMatch[1]) {
+                    const lang = rawLocale.split('_')[0];
+                    const region = rgMatch[1].toUpperCase();
+                    localeToCheck = `${lang}-${region}`;
+                } else {
+                    // Standard format: en_US -> en-US
+                    localeToCheck = rawLocale.replace('_', '-').split('@')[0];
+                }
+            }
+
+            const opts = new Intl.DateTimeFormat(localeToCheck, { hour: 'numeric' }).resolvedOptions();
+
+            if (opts.hourCycle) {
+                return opts.hourCycle.startsWith('h2');
+            }
+            if (opts.hour12 !== undefined) {
+                return !opts.hour12;
+            }
+
+        } catch (e) {
+            // Time format check failed
+        }
+    }
+
+    return null;
+});

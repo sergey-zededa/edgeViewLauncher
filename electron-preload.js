@@ -28,5 +28,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     listTunnels: (nodeId) => ipcRenderer.invoke('api-call', `/api/tunnels?nodeId=${nodeId}`, 'GET'),
     getConnectionProgress: (nodeId) => ipcRenderer.invoke('api-call', `/api/connection-progress?nodeId=${nodeId}`, 'GET'),
     openTerminalWindow: (port) => ipcRenderer.invoke('open-terminal-window', port),
-    openExternal: (url) => ipcRenderer.invoke('open-external', url)
+    openExternal: (url) => ipcRenderer.invoke('open-external', url),
+    getSystemTimeFormat: () => ipcRenderer.invoke('get-system-time-format')
 });
