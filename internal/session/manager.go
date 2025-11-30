@@ -983,7 +983,9 @@ func (m *Manager) handleTunnelConnection(ctx context.Context, conn net.Conn, con
 					}
 
 					if strings.Contains(trimmed, "+++tcpSetupOK+++") {
-						// fmt.Printf("TUNNEL[%s] DEBUG: Received tcpSetupOK banner - TCP relay is now active\n", tunnelID)
+						if tunnelDebug {
+							fmt.Printf("TUNNEL[%s] DEBUG: Received tcpSetupOK banner - TCP relay is now active\n", tunnelID)
+						}
 						atomic.StoreInt32(&tcpSetupComplete, 1)
 
 						// CRITICAL: Send initialization packet to trigger server-side Dial()
@@ -992,7 +994,6 @@ func (m *Manager) handleTunnelConnection(ctx context.Context, conn net.Conn, con
 						// See eve/edgeview-client/tcp.go lines 189-197 (justEnterVNC flag)
 
 						// Add delay to avoid race condition where server prints tcpSetupOK before initializing maps
-						// fmt.Printf("TUNNEL[%s] DEBUG: Waiting 1s before sending initialization packet...\n", tunnelID)
 						time.Sleep(1 * time.Second)
 
 						initData := tcpData{
@@ -1002,11 +1003,8 @@ func (m *Manager) handleTunnelConnection(ctx context.Context, conn net.Conn, con
 							Data:      []byte{}, // EMPTY - triggers server Dial without sending data to target
 						}
 						initBytes, _ := json.Marshal(initData)
-						// Wrap and send as BinaryMessage (required by EVE for tcpData)
-						// Debug: Print payload
-						// fmt.Printf("TUNNEL[%s] DEBUG: Sending initialization tcpData: %s\n", tunnelID, string(initBytes))
 
-						// Add small delay to avoid overwhelming EVE (test)
+						// Add small delay to avoid overwhelming EVE
 						time.Sleep(100 * time.Millisecond)
 
 						if err := sendWrappedMessage(wsConn, initBytes, config.Key, websocket.BinaryMessage); err != nil {
@@ -1014,45 +1012,46 @@ func (m *Manager) handleTunnelConnection(ctx context.Context, conn net.Conn, con
 							errChan <- err
 							return
 						}
-						// fmt.Printf("TUNNEL[%s] DEBUG: Sent initialization packet (%d bytes) to WS (Binary)\n", tunnelID, len(initBytes))
 
 						continue
 					}
 
-					// After setup is complete, EdgeView sends RAW BINARY data in WebSocket frames
-					// Try JSON first (for multi-target scenarios), then fall back to raw binary
+					// After setup is complete, EdgeView sends tcpData JSON frames for
+					// TCP payload. We should NEVER forward arbitrary non-tcpData payloads
+					// directly to the SSH/VNC client, since those can contain control
+					// messages (e.g. +++tcpSetupOK+++, diagnostics) rather than raw
+					// application bytes. Doing so corrupts the SSH handshake and
+					// results in errors like "invalid packet length" or "message
+					// authentication code incorrect".
 					var td tcpData
 					if err := json.Unmarshal(payload, &td); err != nil {
-						// Not JSON - if setup is complete, this is raw binary data
-						if atomic.LoadInt32(&tcpSetupComplete) == 1 {
-							// fmt.Printf("TUNNEL[%s] DEBUG: WS->TCP Forwarding raw binary %d bytes\n", tunnelID, len(payload))
-							atomic.AddInt64(&bytesWSToTCP, int64(len(payload)))
-							_, err := conn.Write(payload)
-							if err != nil {
-								fmt.Printf("TUNNEL[%s] ERROR: tcp write error after WS->TCP=%d bytes: %v\n", tunnelID, atomic.LoadInt64(&bytesWSToTCP), err)
-								errChan <- err
-								return
+						// Not a tcpData frame – treat as a control/diagnostic message
+						// and DO NOT forward it to the TCP client.
+						if tunnelDebug {
+							prefix := string(payload)
+							if len(prefix) > 200 {
+								prefix = prefix[:200] + "..."
+							}
+							fmt.Printf("TUNNEL[%s] DEBUG: Ignoring non-tcpData payload (setupComplete=%d): %q\n", tunnelID, atomic.LoadInt32(&tcpSetupComplete), prefix)
+						}
+						continue
+					}
+					
+					// JSON tcpData received (used for single or multiple TCP targets)
+					if len(td.Data) > 0 {
+						// CRITICAL: Only forward data AFTER tcpSetupComplete is set
+						// This prevents early tcpData frames (if any) from corrupting the SSH handshake
+						if atomic.LoadInt32(&tcpSetupComplete) == 0 {
+							if tunnelDebug {
+								fmt.Printf("TUNNEL[%s] DEBUG: Ignoring tcpData (%d bytes) before tcpSetupComplete\n", tunnelID, len(td.Data))
 							}
 							continue
 						}
-
-						// Before setup, log and ignore non-JSON payloads (probably informational headers)
-						prefix := string(payload)
-						if len(prefix) > 200 {
-							prefix = prefix[:200] + "..."
-						}
-						// fmt.Printf("TUNNEL[%s] DEBUG: Ignoring pre-setup non-JSON payload: %q\n", tunnelID, prefix)
-						continue
-					}
-
-					// JSON tcpData received (used for multiple simultaneous TCP targets)
-					if len(td.Data) > 0 {
-						// fmt.Printf("TUNNEL[%s] DEBUG: WS->TCP Received %d bytes (tcpData)\n", tunnelID, len(td.Data))
 						atomic.AddInt64(&bytesWSToTCP, int64(len(td.Data)))
-
+						
 						_, err := conn.Write(td.Data)
 						if err != nil {
-							fmt.Printf("TUNNEL[%s] ERROR: tcp write error after WS->TCP=%d bytes: %v\n", tunnelID, atomic.LoadInt64(&bytesWSToTCP), err)
+							fmt.Printf("TUNNEL[%s] ERROR: tcp write error after WS->TCP=%d bytes: %v\\n", tunnelID, atomic.LoadInt64(&bytesWSToTCP), err)
 							errChan <- err
 							return
 						}
