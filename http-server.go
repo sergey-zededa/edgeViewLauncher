@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"edgeViewLauncher/internal/config"
-	sshInternal "edgeViewLauncher/internal/ssh"
 	"edgeViewLauncher/internal/session"
+	sshInternal "edgeViewLauncher/internal/ssh"
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
@@ -334,6 +334,7 @@ func (s *HTTPServer) Start() {
 	mux.HandleFunc("/api/tunnel/{id}", s.handleCloseTunnel)
 	mux.HandleFunc("/api/tunnels", s.handleListTunnels)
 	mux.HandleFunc("/api/ssh/term", s.handleSSHTerminal)
+	mux.HandleFunc("/api/connection-progress", s.handleGetConnectionProgress)
 
 	// Health check
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -579,6 +580,17 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 			stdin.Write(msg)
 		}
 	}
+}
+
+func (s *HTTPServer) handleGetConnectionProgress(w http.ResponseWriter, r *http.Request) {
+	nodeID := r.URL.Query().Get("nodeId")
+	if nodeID == "" {
+		s.sendError(w, fmt.Errorf("nodeId parameter is required"))
+		return
+	}
+
+	status := s.app.GetConnectionProgress(nodeID)
+	s.sendSuccess(w, map[string]string{"status": status})
 }
 
 func main() {
