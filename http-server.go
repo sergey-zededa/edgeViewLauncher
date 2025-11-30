@@ -306,43 +306,43 @@ func (s *HTTPServer) Start() {
 	// Initialize app context
 	s.app.startup(context.Background())
 
-	mux := http.NewServeMux()
+	router := mux.NewRouter()
 
 	// Register routes
-	mux.HandleFunc("/api/search-nodes", s.handleSearchNodes)
-	mux.HandleFunc("/api/connect", s.handleConnect)
-	mux.HandleFunc("/api/settings", func(w http.ResponseWriter, r *http.Request) {
+	router.HandleFunc("/api/search-nodes", s.handleSearchNodes)
+	router.HandleFunc("/api/connect", s.handleConnect)
+	router.HandleFunc("/api/settings", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "GET" {
 			s.handleGetSettings(w, r)
 		} else {
 			s.handleSaveSettings(w, r)
 		}
 	})
-	mux.HandleFunc("/api/device-services", s.handleGetDeviceServices)
-	mux.HandleFunc("/api/setup-ssh", s.handleSetupSSH)
-	mux.HandleFunc("/api/ssh-status", s.handleGetSSHStatus)
-	mux.HandleFunc("/api/disable-ssh", s.handleDisableSSH)
-	mux.HandleFunc("/api/reset-edgeview", s.handleResetEdgeView)
-	mux.HandleFunc("/api/verify-tunnel", s.handleVerifyTunnel)
-	mux.HandleFunc("/api/recent-device", s.handleAddRecentDevice)
-	mux.HandleFunc("/api/user-info", s.handleGetUserInfo)
-	mux.HandleFunc("/api/enterprise", s.handleGetEnterprise)
-	mux.HandleFunc("/api/projects", s.handleGetProjects)
-	mux.HandleFunc("/api/session-status", s.handleGetSessionStatus)
-	mux.HandleFunc("/api/app-info", s.handleGetAppInfo)
-	mux.HandleFunc("/api/start-tunnel", s.handleStartTunnel)
-	mux.HandleFunc("/api/tunnel/{id}", s.handleCloseTunnel)
-	mux.HandleFunc("/api/tunnels", s.handleListTunnels)
-	mux.HandleFunc("/api/ssh/term", s.handleSSHTerminal)
-	mux.HandleFunc("/api/connection-progress", s.handleGetConnectionProgress)
+	router.HandleFunc("/api/device-services", s.handleGetDeviceServices)
+	router.HandleFunc("/api/setup-ssh", s.handleSetupSSH)
+	router.HandleFunc("/api/ssh-status", s.handleGetSSHStatus)
+	router.HandleFunc("/api/disable-ssh", s.handleDisableSSH)
+	router.HandleFunc("/api/reset-edgeview", s.handleResetEdgeView)
+	router.HandleFunc("/api/verify-tunnel", s.handleVerifyTunnel)
+	router.HandleFunc("/api/recent-device", s.handleAddRecentDevice)
+	router.HandleFunc("/api/user-info", s.handleGetUserInfo)
+	router.HandleFunc("/api/enterprise", s.handleGetEnterprise)
+	router.HandleFunc("/api/projects", s.handleGetProjects)
+	router.HandleFunc("/api/session-status", s.handleGetSessionStatus)
+	router.HandleFunc("/api/app-info", s.handleGetAppInfo)
+	router.HandleFunc("/api/start-tunnel", s.handleStartTunnel)
+	router.NewRoute().Path("/api/tunnel/{id}").Methods("DELETE").HandlerFunc(s.handleCloseTunnel)
+	router.HandleFunc("/api/tunnels", s.handleListTunnels)
+	router.HandleFunc("/api/ssh/term", s.handleSSHTerminal)
+	router.HandleFunc("/api/connection-progress", s.handleGetConnectionProgress)
 
 	// Health check
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 	})
 
-	handler := corsMiddleware(mux)
+	handler := corsMiddleware(router)
 
 	addr := fmt.Sprintf(":%d", s.port)
 	log.Printf("EdgeView HTTP Server starting on %s\n", addr)
