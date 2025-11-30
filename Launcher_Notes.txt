@@ -16,46 +16,30 @@
 + Implement auto refresh of list of devices and status every 10-15 seconds in the background
 + show currently active peers/instances?
 + Add Activity log messages on tunnel activation/deactivation and other important activities which are not yet logged
++ No EdgeView reset option anymore?
++ Shows Scanning services with spinning icon on VNC/Tunnel activation instead of relevant message about activating tunnel
++ Closing the sessions using UI results in following errors:
+DEBUG: Sending 695 bytes to EdgeView via WebSocket (tcpData JSON: 977 bytes)
+API call error: Error: missing tunnel ID
 
 
 - app need to live in the tray
 - settings to be stored securely (use keyring or other relevant OS features)
 
 + auto day/night scheme in line with OS ??? Need to test
-- need an option to select preferred terminal app
-- No EdgeView reset option anymore?
+- ? need an option to select preferred terminal app
+- ? Helper strings to show how to connect to a tunnel/platform dependent
 - No number of allowed connections anymore?
 - [8:29:44 PM]EdgeView session active(expires: 11/29/2025, 1:19:22 AM) - use local OS time setting to display in the same format (24 vs 12h)
 - Add space to "EdgeView session active(expires: 11/29/2025, 1:19:22 AM)" between "active" and "(expires:"
-- Shows Scanning services with spinning icon on VNC/Tunnel activation instead of relevant message about activating tunnel
+- noVNC wiring
 
 - display cluster access token validity time (if available/readable from token or API) and mark it red if expired - can we fetch this info from API? -check https://zedcontrol.zededa.net/api/v1/docs/?urls.primaryName=ZEDEDA%20IAM%20Service#/IdentityAccessManagement/IdentityAccessManagement_GetUserSession /v1/sessions/token/{sessionToken.base64}
 
 - add status message on failing to connect to the controller/cluster when receiving the list of devices
+- Why are we requesting for an edge view script "[Go Backend] Waiting for EdgeView script...", don't we receive token info already here: "[Go Backend] DEBUG: edgeviewconfig: map[appPolicy:map[allowApp:true] devPolicy:map[allowDev:true] extPolicy:map[allowExt:false] generationId:4 jwtInfo:map[allowSec:18000 authen:EvAuth_TYPE_UNSPECIFIED dispUrl:https://zedcloud.hummingbird.zededa.net/api/v1/edge-view encrypt:false expireSec:1764541644 numInst:3] requireControllerAuthen:false token:eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdXQiOjAsImRlcCI6Imh0dHBzOi8vemVkY2xvdWQuaHVtbWluZ2JpcmQuemVkZWRhLm5ldC9hcGkvdjEvZWRnZS12aWV3IiwiZW5jIjpmYWxzZSwiZXhwIjoxNzY0NTQxNjQ0LCJrZXkiOiJja3ZrbHFxamJnc3QiLCJudW0iOjMsInN1YiI6ImU5YzJjMTlkLWNlNWEtNGE5NC1hMDYzLTExYTYwNDU2ZjFhNCJ9.SI_fXL-TJqOebZCtlqQQtn26ixFUnodbFFYoQD_qTBaNPTqHUUhdhD039myLubo097SAV1WHDmldxgRyWNyZxA]"
 
 
 - Indicate VNC session status (running, data is transferring, etc)
 - collect info
 - multiple icons are rotating when either of options is selected (TCP/VNC/SSH)
-- Closing the sessions using UI results in following errors:
-DEBUG: Sending 695 bytes to EdgeView via WebSocket (tcpData JSON: 977 bytes)
-
-API call error: Error: missing tunnel ID
-    at /Users/sseper/Desktop/Projects/edgeViewLauncher/dist-electron/mac-arm64/EdgeView Launcher.app/Contents/Resources/app.asar/electron-main.js:129:19
-    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
-    at async Session.<anonymous> (node:electron/js2c/browser_init:2:107270)
-Error occurred in handler for 'api-call': Error: missing tunnel ID
-    at /Users/sseper/Desktop/Projects/edgeViewLauncher/dist-electron/mac-arm64/EdgeView Launcher.app/Contents/Resources/app.asar/electron-main.js:129:19
-    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
-    at async Session.<anonymous> (node:electron/js2c/browser_init:2:107270)
-(electron) 'console-message' arguments are deprecated and will be removed. Please use Event<WebContentsConsoleMessageEventParams> object instead.
-Renderer: Error: Error invoking remote method 'api-call': Error: missing tunnel ID
-API call error: Error: missing tunnel ID
-    at /Users/sseper/Desktop/Projects/edgeViewLauncher/dist-electron/mac-arm64/EdgeView Launcher.app/Contents/Resources/app.asar/electron-main.js:129:19
-    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
-    at async Session.<anonymous> (node:electron/js2c/browser_init:2:107270)
-Error occurred in handler for 'api-call': Error: missing tunnel ID
-    at /Users/sseper/Desktop/Projects/edgeViewLauncher/dist-electron/mac-arm64/EdgeView Launcher.app/Contents/Resources/app.asar/electron-main.js:129:19
-    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
-    at async Session.<anonymous> (node:electron/js2c/browser_init:2:107270)
-Renderer: Error: Error invoking remote method 'api-call': Error: missing tunnel ID
