@@ -37,7 +37,7 @@ type sessionAPI interface {
 	GetCachedSession(nodeID string) (*session.CachedSession, bool)
 	StoreCachedSession(nodeID string, config *zededa.SessionConfig, port int, expiresAt time.Time)
 	// StartProxy starts a persistent EdgeView proxy for the given device nodeID and target.
-	StartProxy(ctx context.Context, config *zededa.SessionConfig, nodeID string, target string) (int, string, error)
+	StartProxy(ctx context.Context, config *zededa.SessionConfig, nodeID string, target string, protocol string) (int, string, error)
 	LaunchTerminal(port int, keyPath string) error
 	ExecuteCommand(nodeID string, command string) (string, error)
 	CloseTunnel(tunnelID string) error
@@ -284,7 +284,7 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (string, error
 		var err error
 		var tunnelID string
 		// Default to SSH (tcp/localhost:22)
-		port, tunnelID, err = a.sessionManager.StartProxy(a.ctx, sessionConfig, nodeID, "localhost:22")
+		port, tunnelID, err = a.sessionManager.StartProxy(a.ctx, sessionConfig, nodeID, "localhost:22", "ssh")
 		if err != nil {
 			fmt.Printf("StartProxy failed: %v\n", err)
 			a.SetConnectionProgress(nodeID, "Error: Failed to start proxy")
@@ -333,9 +333,9 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (string, error
 }
 
 // StartTunnel starts a TCP tunnel to a specific IP and port on the device
-// StartTunnel starts a TCP tunnel to a specific IP and port on the device
-func (a *App) StartTunnel(nodeID string, targetIP string, targetPort int) (int, string, error) {
-	fmt.Printf("StartTunnel called for %s -> %s:%d\n", nodeID, targetIP, targetPort)
+// protocol is optional: "vnc", "ssh", "tcp". If empty, it's inferred from port.
+func (a *App) StartTunnel(nodeID, targetIP string, targetPort int, protocol string) (int, string, error) {
+	fmt.Printf("StartTunnel called for %s -> %s:%d (protocol: %s)\n", nodeID, targetIP, targetPort, protocol)
 
 	// Get cached session
 	cached, ok := a.sessionManager.GetCachedSession(nodeID)
@@ -362,6 +362,14 @@ func (a *App) StartTunnel(nodeID string, targetIP string, targetPort int) (int, 
 		time.Sleep(10 * time.Second)
 	}
 
+	// Infer protocol if not specified
+	if protocol == "" {
+		protocol = "tcp"
+		if targetPort >= 5900 && targetPort <= 5999 {
+			protocol = "vnc"
+		}
+	}
+
 	// Construct target string (e.g., "192.168.0.1:5900")
 	// Note: StartProxy will prepend "tcp/" to this
 	target := fmt.Sprintf("%s:%d", targetIP, targetPort)
@@ -375,7 +383,7 @@ func (a *App) StartTunnel(nodeID string, targetIP string, targetPort int) (int, 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		fmt.Printf("DEBUG: Starting tunnel (attempt %d/%d)...\n", attempt, maxRetries)
 
-		port, tunnelID, err = a.sessionManager.StartProxy(a.ctx, cached.Config, nodeID, target)
+		port, tunnelID, err = a.sessionManager.StartProxy(a.ctx, cached.Config, nodeID, target, protocol)
 
 		if err == nil {
 			fmt.Printf("Tunnel started on localhost:%d -> %s (ID: %s)\n", port, target, tunnelID)
@@ -731,15 +739,16 @@ func (a *App) DisableSSH(nodeID string) error {
 
 // ResetEdgeView recycles the EdgeView session to clear stuck connections
 func (a *App) ResetEdgeView(nodeID string) error {
-	// 1. Stop EdgeView
+	// Attempt to stop EdgeView - ignore errors as it may already be inactive
 	if err := a.zededaClient.StopEdgeView(nodeID); err != nil {
-		return fmt.Errorf("failed to stop EdgeView: %w", err)
+		fmt.Printf("Warning: Could not stop EdgeView (may already be inactive): %v\n", err)
+		// Not returning error - continue to attempt start
+	} else {
+		// If stop succeeded, wait briefly for propagation
+		time.Sleep(2 * time.Second)
 	}
 
-	// 2. Wait briefly (optional, but good for propagation)
-	time.Sleep(2 * time.Second)
-
-	// 3. Start EdgeView
+	// Always attempt to start EdgeView (idempotent operation)
 	if err := a.zededaClient.StartEdgeView(nodeID); err != nil {
 		return fmt.Errorf("failed to start EdgeView: %w", err)
 	}
@@ -963,8 +972,14 @@ func (a *App) VerifyEdgeViewTunnel(nodeID string) error {
 }
 
 // VerifyToken checks if the provided token is valid
-func (a *App) VerifyToken(token string) (*zededa.TokenInfo, error) {
-	// Use the client to verify. Note: The client might be configured with a different token
-	// than the one being verified, but VerifyToken handles auth internally if needed.
+func (a *App) VerifyToken(token, baseURL string) (*zededa.TokenInfo, error) {
+	// If a specific baseURL is provided (e.g. from settings form), use a temporary client
+	if baseURL != "" {
+		// Create a temp client to verify against the specified URL
+		tempClient := zededa.NewClient(baseURL, "")
+		return tempClient.VerifyToken(token)
+	}
+
+	// Otherwise use the configured client
 	return a.zededaClient.VerifyToken(token)
 }

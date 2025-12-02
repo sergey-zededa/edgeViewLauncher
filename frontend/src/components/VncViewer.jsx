@@ -43,8 +43,9 @@ const VncViewer = ({ url, onClose, password = '' }) => {
     }, [url, password]);
 
     const toggleFullscreen = () => {
+        const targetElement = document.querySelector('.vnc-viewer-overlay');
         if (!document.fullscreenElement) {
-            containerRef.current.requestFullscreen().catch(err => {
+            targetElement.requestFullscreen().catch(err => {
                 console.error(`Error attempting to enable fullscreen: ${err.message}`);
             });
             setIsFullscreen(true);
@@ -69,17 +70,29 @@ const VncViewer = ({ url, onClose, password = '' }) => {
             {/* Toolbar */}
             <div className="vnc-toolbar" style={{
                 padding: '10px',
+                paddingLeft: '80px',
                 backgroundColor: '#1a1a1a',
-                display: 'flex',
-                justifyContent: 'space-between',
+                display: 'grid',
+                gridTemplateColumns: '1fr auto 1fr',
                 alignItems: 'center',
-                borderBottom: '1px solid #333'
+                borderBottom: '1px solid #333',
+                WebkitAppRegion: 'drag'
             }}>
-                <div className="vnc-status" style={{ color: isConnected ? '#4caf50' : '#ff9800' }}>
+                <div></div>
+                <div className="vnc-status" style={{
+                    color: isConnected ? '#4caf50' : '#ff9800',
+                    textAlign: 'center',
+                    whiteSpace: 'nowrap'
+                }}>
                     <span style={{ marginRight: '10px' }}>●</span>
                     {status}
                 </div>
-                <div className="vnc-controls" style={{ display: 'flex', gap: '10px' }}>
+                <div className="vnc-controls" style={{
+                    display: 'flex',
+                    gap: '10px',
+                    WebkitAppRegion: 'no-drag',
+                    justifyContent: 'flex-end'
+                }}>
                     <button
                         onClick={toggleFullscreen}
                         className="icon-btn"

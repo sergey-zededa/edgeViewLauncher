@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VNC Viewer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            overflow: hidden;
+            background: #000;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+
+        #vnc-container {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #vnc-header {
+            background: #1a1a1a;
+            padding: 10px 15px;
+            border-bottom: 1px solid #333;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 40px;
+            -webkit-app-region: drag;
+        }
+
+        #vnc-info {
+            color: #fff;
+            font-size: 13px;
+            text-align: center;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        #vnc-status {
+            font-weight: 500;
+        }
+
+        #vnc-details {
+            font-size: 11px;
+            color: #999;
+        }
+
+        .status-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 6px;
+        }
+
+        .status-dot.connected {
+            background: #4caf50;
+        }
+
+        .status-dot.disconnected {
+            background: #ff9800;
+        }
+
+        #vnc-canvas {
+            flex: 1;
+            overflow: hidden;
+            background: #000;
+        }
+
+        #vnc-controls {
+            background: #1a1a1a;
+            padding: 8px 15px;
+            border-top: 1px solid #333;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .control-button {
+            background: #2a2a2a;
+            border: 1px solid #444;
+            color: #fff;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: background 0.2s;
+        }
+
+        .control-button:hover {
+            background: #3a3a3a;
+        }
+
+        .control-button:active {
+            background: #444;
+        }
+
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #fff;
+            font-size: 16px;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="vnc-container">
+        <div id="vnc-header">
+            <div id="vnc-info">
+                <div id="vnc-status">
+                    <span class="status-dot disconnected"></span>
+                    <span id="status-text">Connecting...</span>
+                </div>
+                <div id="vnc-details"></div>
+            </div>
+        </div>
+        <div id="vnc-canvas">
+            <div id="loading">Connecting to VNC server...</div>
+        </div>
+        <div id="vnc-controls">
+            <button class="control-button" id="btn-ctrl-alt-del">Ctrl+Alt+Del</button>
+            <button class="control-button" id="btn-ctrl-c">Ctrl+C</button>
+            <button class="control-button" id="btn-ctrl-v">Ctrl+V</button>
+            <button class="control-button" id="btn-tab">Tab</button>
+            <button class="control-button" id="btn-esc">Esc</button>
+            <button class="control-button" id="btn-fullscreen">Fullscreen</button>
+        </div>
+    </div>
+
+    <script type="module">
+        import RFB from '@novnc/novnc/lib/rfb.js';
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const port = urlParams.get('port');
+        const nodeName = urlParams.get('nodeName') || 'Unknown Device';
+        const appName = urlParams.get('appName') || 'VNC';
+        const tunnelId = urlParams.get('tunnelId') || '';
+
+        // Update header with connection details
+        document.getElementById('vnc-details').textContent = `${nodeName} • ${appName}`;
+        document.title = `VNC - ${nodeName}`;
+
+        if (!port) {
+            document.getElementById('status-text').textContent = 'Error: No port specified';
+            document.getElementById('loading').textContent = 'Error: No port specified';
+            throw new Error('No port specified');
+        }
+
+        const url = `ws://localhost:${port}`;
+        const canvas = document.getElementById('vnc-canvas');
+        const loading = document.getElementById('loading');
+        const statusText = document.getElementById('status-text');
+        const statusDot = document.querySelector('.status-dot');
+
+        let rfb = null;
+        let retryCount = 0;
+        const maxRetries = 5;
+        const retryDelay = 1000; // Start with 1 second
+
+        function connect() {
+            try {
+                statusText.textContent = retryCount > 0 ? `Connecting (attempt ${retryCount + 1}/${maxRetries})...` : 'Connecting...';
+
+                rfb = new RFB(canvas, url, {
+                    credentials: { password: '' },
+                    // Performance settings
+                    qualityLevel: 6,
+                    compressionLevel: 2,
+                    shared: true,
+                    viewOnly: false
+                });
+
+                // Optimize for speed
+                rfb.scaleViewport = false;
+                rfb.resizeSession = false;
+
+                rfb.addEventListener("connect", () => {
+                    if (loading && loading.parentNode) {
+                        loading.remove();
+                    }
+                    statusText.textContent = 'Connected';
+                    statusDot.classList.remove('disconnected');
+                    statusDot.classList.add('connected');
+                    rfb.focus();
+                    retryCount = 0; // Reset retry count on successful connection
+                });
+
+                rfb.addEventListener("disconnect", (e) => {
+                    const reason = e.detail.clean ? "Closed cleanly" : "Connection dropped";
+                    statusText.textContent = `Disconnected: ${reason}`;
+                    statusDot.classList.remove('connected');
+                    statusDot.classList.add('disconnected');
+
+                    // Only retry if it's not a clean disconnect and we haven't exceeded max retries
+                    if (!e.detail.clean && retryCount < maxRetries) {
+                        retryCount++;
+                        const delay = retryDelay * retryCount; // Exponential backoff
+                        statusText.textContent = `Connection failed, retrying in ${delay / 1000}s...`;
+                        setTimeout(connect, delay);
+                    } else {
+                        loading.textContent = `Disconnected: ${reason}`;
+                        if (!loading.parentNode) {
+                            canvas.appendChild(loading);
+                        }
+                    }
+                });
+
+            } catch (err) {
+                console.error('Failed to create VNC connection:', err);
+                statusText.textContent = `Error: ${err.message}`;
+                loading.textContent = `Error: ${err.message}`;
+
+                // Retry on error
+                if (retryCount < maxRetries) {
+                    retryCount++;
+                    const delay = retryDelay * retryCount;
+                    setTimeout(connect, delay);
+                }
+            }
+        }
+
+        // Start connection with a small initial delay to let the tunnel stabilize
+        setTimeout(connect, 500);
+
+        // Keyboard control button handlers
+        document.getElementById('btn-ctrl-alt-del').addEventListener('click', () => {
+            if (rfb) {
+                rfb.sendCtrlAltDel();
+            }
+        });
+
+        document.getElementById('btn-ctrl-c').addEventListener('click', () => {
+            if (rfb) {
+                rfb.sendKey(0xFFE3, 'ControlLeft', true);  // Ctrl down
+                rfb.sendKey(0x0063, 'KeyC', true);         // C down
+                rfb.sendKey(0x0063, 'KeyC', false);        // C up
+                rfb.sendKey(0xFFE3, 'ControlLeft', false); // Ctrl up
+            }
+        });
+
+        document.getElementById('btn-ctrl-v').addEventListener('click', () => {
+            if (rfb) {
+                rfb.sendKey(0xFFE3, 'ControlLeft', true);  // Ctrl down
+                rfb.sendKey(0x0076, 'KeyV', true);         // V down
+                rfb.sendKey(0x0076, 'KeyV', false);        // V up
+                rfb.sendKey(0xFFE3, 'ControlLeft', false); // Ctrl up
+            }
+        });
+
+        document.getElementById('btn-tab').addEventListener('click', () => {
+            if (rfb) {
+                rfb.sendKey(0xFF09, 'Tab', true);  // Tab down
+                rfb.sendKey(0xFF09, 'Tab', false); // Tab up
+            }
+        });
+
+        document.getElementById('btn-esc').addEventListener('click', () => {
+            if (rfb) {
+                rfb.sendKey(0xFF1B, 'Escape', true);  // Esc down
+                rfb.sendKey(0xFF1B, 'Escape', false); // Esc up
+            }
+        });
+
+        document.getElementById('btn-fullscreen').addEventListener('click', () => {
+            if (document.fullscreenElement) {
+                document.exitFullscreen();
+            } else {
+                document.documentElement.requestFullscreen();
+            }
+        });
+    </script>
+</body>
+
+</html>

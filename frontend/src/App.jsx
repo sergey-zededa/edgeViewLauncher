@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { SearchNodes, ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice } from './electronAPI';
-import VncViewer from './components/VncViewer';
+import { SearchNodes, ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken } from './electronAPI';
 import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
 import Tooltip from './components/Tooltip';
@@ -27,12 +26,11 @@ function App() {
   const [loadingSSH, setLoadingSSH] = useState(false);
   const [expandedServiceId, setExpandedServiceId] = useState(null);
   const [highlightTunnels, setHighlightTunnels] = useState(false);
-  const [activeVncSession, setActiveVncSession] = useState(null); // { url, port }
   const [activeTunnels, setActiveTunnels] = useState([]); // Track active tunnels across all devices
   const [showGlobalTunnels, setShowGlobalTunnels] = useState(false);
   const [tunnelConnected, setTunnelConnected] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
-  const [tunnelLoading, setTunnelLoading] = useState(false);
+  const [tunnelLoading, setTunnelLoading] = useState(null);
   const [tunnelLoadingMessage, setTunnelLoadingMessage] = useState('');
   const [logs, setLogs] = useState([]);
   const [showTerminal, setShowTerminal] = useState(false);
@@ -44,6 +42,8 @@ function App() {
 
   // Dropdown state
   const [showTerminalMenu, setShowTerminalMenu] = useState(false);
+  const [showVncMenu, setShowVncMenu] = useState(false);
+  const [vncMenuAppId, setVncMenuAppId] = useState(null);
   const dropdownRef = useRef(null);
 
   // Settings editing state
@@ -51,33 +51,10 @@ function App() {
   const [saveStatus, setSaveStatus] = useState('');
   const [tokenStatus, setTokenStatus] = useState(null);
 
-  // Helper to check token validity
-  const validateToken = (token) => {
-    if (!token || typeof token !== 'string') {
-      return { valid: false, error: 'Token is empty or invalid type' };
-    }
-    const parts = token.split(':');
-    if (parts.length !== 2) {
-      return { valid: false, error: 'Invalid format (expected: name:key)' };
-    }
-    const [tokenName, base64Key] = parts;
-    if (tokenName.length !== 7) {
-      return { valid: false, error: `Token name should be 7 characters (got ${tokenName.length})` };
-    }
-    if (base64Key.length < 170 || base64Key.length > 180) {
-      return { valid: false, error: `Session key length unusual (${base64Key.length} chars, expected ~171)` };
-    }
-    const base64Regex = /^[A-Za-z0-9_-]+$/;
-    if (!base64Regex.test(base64Key)) {
-      return { valid: false, error: 'Session key contains invalid characters (must be base64)' };
-    }
-    return { valid: true };
-  };
-
   const handleTokenPaste = (token) => {
     setEditingCluster({ ...editingCluster, apiToken: token });
-    const status = validateToken(token);
-    setTokenStatus(status.valid ? { valid: true, message: "Valid token format" } : { valid: false, message: status.error });
+    // Token verification disabled - will be re-enabled in future
+    setTokenStatus(null);
   };
 
   // Sync tunnels on node selection (polling + diff-based logging)
@@ -221,11 +198,8 @@ function App() {
       const active = config.clusters.find(c => c.name === config.activeCluster);
       if (active) {
         setEditingCluster({ ...active });
-        // Also validate the token immediately for visual feedback
-        if (active.apiToken) {
-          const status = validateToken(active.apiToken);
-          setTokenStatus(status.valid ? { valid: true, message: "Valid token format" } : { valid: false, message: status.error });
-        }
+        // Token verification disabled - will be re-enabled in future
+        setTokenStatus(null);
       }
     }
   }, [showSettings, config.activeCluster, config.clusters]);
@@ -284,7 +258,9 @@ function App() {
 
   const expiryInfo = getExpiryInfo();
   const sessionExpired = expiryInfo.expired;
-  const isSessionConnected = tunnelConnected && !sessionExpired;
+  // Session is connected if we have a valid active session (non-expired with timestamp)
+  // tunnelConnected is just a bonus verification, not required
+  const isSessionConnected = !sessionExpired && expiryInfo.timestamp !== null;
 
   // State for time format preference
   const [use24HourTime, setUse24HourTime] = useState(false);
@@ -358,7 +334,7 @@ function App() {
 
     try {
       setTcpError('');
-      setTunnelLoading(true);
+      setTunnelLoading('tcp');
       setTunnelLoadingMessage(`Starting TCP tunnel to ${ip}:${port}...`);
       addLog(`Starting TCP tunnel to ${ip}:${port}...`, 'info');
 
@@ -376,11 +352,12 @@ function App() {
       setTcpIpInput('');
     } catch (err) {
       console.error(err);
+      handleTunnelError(err);
       const msg = err.message || String(err);
       setTcpError(msg);
       addLog(`Failed to start TCP tunnel: ${msg}`, 'error');
     } finally {
-      setTunnelLoading(false);
+      setTunnelLoading(null);
       setTunnelLoadingMessage('');
     }
   };
@@ -403,11 +380,26 @@ function App() {
     const handleClickOutside = (event) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
         setShowTerminalMenu(false);
+        setShowVncMenu(false);
+        setVncMenuAppId(null);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // Helper to detect if error is session-related and update status
+  const handleTunnelError = (err) => {
+    const errorMsg = err.message || String(err);
+    // Detect session-related errors
+    if (errorMsg.includes('no active session') ||
+      errorMsg.includes('failed to create one') ||
+      errorMsg.includes('failed to enable EdgeView') ||
+      errorMsg.includes('session expired')) {
+      setTunnelConnected(false);
+      addLog('EdgeView session is not active. Click the reset button to restart the session.', 'error');
+    }
+  };
 
   const loadUserInfo = async () => {
     try {
@@ -515,12 +507,13 @@ function App() {
     setLoadingSSH(true);
     setLoadingMessage("Checking SSH configuration...");
     addLog("Checking SSH status...");
+    let sessStatus = null;
     try {
       const status = await GetSSHStatus(nodeId);
       setSshStatus(status);
       addLog(`SSH Status: ${status.status} `);
       try {
-        const sessStatus = await GetSessionStatus(nodeId);
+        sessStatus = await GetSessionStatus(nodeId);
         setSessionStatus(sessStatus);
         if (sessStatus.active) {
           addLog(`EdgeView session active (expires: ${new Date(sessStatus.expiresAt).toLocaleString(undefined, getTimeFormatOptions())})`, 'success');
@@ -533,8 +526,14 @@ function App() {
         addLog("Verifying EdgeView tunnel connectivity...");
         try {
           await VerifyTunnel(nodeId);
-          setTunnelConnected(true);
-          addLog("EdgeView session verified: Connected", 'success');
+          // Only set as connected if we also have a valid active session with expiry
+          if (sessStatus && sessStatus.active && sessStatus.expiresAt) {
+            setTunnelConnected(true);
+            addLog("EdgeView session verified: Connected", 'success');
+          } else {
+            setTunnelConnected(false);
+            addLog("No active EdgeView session", 'warning');
+          }
         } catch (err) {
           setTunnelConnected(false);
           addLog(`Tunnel check failed: ${err} `, 'warning');
@@ -673,8 +672,19 @@ function App() {
       }, 15000);
     } catch (err) {
       console.error("ResetEdgeView failed:", err);
-      addLog(`Reset failed: ${err} `, 'error');
-      setError({ type: 'error', message: `Failed to reset EdgeView: ${err.message || err} ` });
+      const errMsg = err.message || String(err);
+
+      // Check if it's a server error
+      if (errMsg.includes('500') || errMsg.includes('internal server error')) {
+        addLog(`Reset failed: ZEDEDA server error - unable to enable EdgeView on device`, 'error');
+        setError({
+          type: 'error',
+          message: 'EdgeView session reset failed. The server cannot enable EdgeView on this device. The device may be offline or not support EdgeView.'
+        });
+      } else {
+        addLog(`Reset failed: ${errMsg}`, 'error');
+        setError({ type: 'error', message: `Failed to reset EdgeView: ${errMsg}` });
+      }
     } finally {
       setLoadingSSH(false);
     }
@@ -880,6 +890,15 @@ function App() {
                   />
                 </div>
                 <div className="form-group">
+                  <label>Base URL</label>
+                  <input
+                    type="text"
+                    value={editingCluster.baseUrl}
+                    onChange={(e) => setEditingCluster({ ...editingCluster, baseUrl: e.target.value })}
+                    placeholder="https://..."
+                  />
+                </div>
+                <div className="form-group">
                   <label>API Token</label>
                   <textarea
                     className="token-input"
@@ -894,15 +913,6 @@ function App() {
                       {tokenStatus.message}
                     </div>
                   )}
-                </div>
-                <div className="form-group">
-                  <label>Base URL</label>
-                  <input
-                    type="text"
-                    value={editingCluster.baseUrl}
-                    onChange={(e) => setEditingCluster({ ...editingCluster, baseUrl: e.target.value })}
-                    placeholder="https://..."
-                  />
                 </div>
                 <div className="settings-actions">
                   {saveStatus && (
@@ -1116,12 +1126,22 @@ function App() {
                       </div>
                       <div className="status-item">
                         <div className="status-label">SESSION</div>
-                        <div className={`status-value ${isSessionConnected ? 'success' : 'error'}`}>
-                          {isSessionConnected ? (
-                            <><Check size={14} /> Activated</>
-                          ) : (
-                            <><X size={14} /> Inactive</>
-                          )}
+                        <div className={`status-value ${isSessionConnected ? 'success' : 'error'}`} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span>
+                            {isSessionConnected ? (
+                              <><Check size={14} /> Activated</>
+                            ) : (
+                              <><X size={14} /> Inactive</>
+                            )}
+                          </span>
+                          <button
+                            className="inline-icon-btn"
+                            title="Reset EdgeView session"
+                            onClick={handleResetEdgeView}
+                            style={{ marginLeft: 'auto' }}
+                          >
+                            <RefreshCw size={14} />
+                          </button>
                         </div>
                       </div>
                       <div className="status-item">
@@ -1253,45 +1273,126 @@ function App() {
                             {expandedServiceId === idx && (
                               <div className="service-options">
                                 {app.vncPort && (
-                                  <div
-                                    className={`option-btn ${tunnelLoading ? 'loading' : ''} ${sessionExpired ? 'disabled' : ''}`}
-                                    onClick={async () => {
-                                      if (sessionExpired) {
-                                        addLog('Cannot start VNC tunnel: EdgeView session has expired. Restart the session first.', 'warning');
-                                        return;
-                                      }
-                                      if (tunnelLoading) return;
-                                      try {
-                                        setTunnelLoading(true);
-                                        setTunnelLoadingMessage(`Starting VNC tunnel to localhost:${app.vncPort}...`);
-                                        const vncTarget = 'localhost';
-                                        addLog(`Starting VNC tunnel to ${vncTarget}:${app.vncPort}...`, 'info');
-                                        const result = await StartTunnel(selectedNode.id, vncTarget, app.vncPort);
-                                        const port = result.port || result;
-                                        const tunnelId = result.tunnelId;
-                                        addLog(`VNC tunnel active on localhost:${port}`, 'success');
-                                        addTunnel('VNC', vncTarget, app.vncPort, port, tunnelId);
-                                        setHighlightTunnels(true);
-                                        setTimeout(() => setHighlightTunnels(false), 2000);
-                                        addLog(
-                                          `Connect a VNC client to localhost:${port} (or use 'Open VNC Viewer' from Active Tunnels).`,
-                                          'info'
-                                        );
-                                        setExpandedServiceId(null);
-                                      } catch (err) {
-                                        console.error(err);
-                                        addLog(`Failed to start VNC tunnel: ${err.message}`, 'error');
-                                      } finally {
-                                        setTunnelLoading(false);
-                                        setTunnelLoadingMessage('');
-                                      }
-                                    }}>
-                                    {tunnelLoading ? <Activity size={20} className="option-icon animate-spin" /> : <Monitor size={20} className="option-icon" />}
-                                    <span className="option-label">Launch VNC</span>
+                                  <div className="option-btn-container" style={{ position: 'relative' }}>
+                                    <div
+                                      className={`option-btn ${tunnelLoading === 'vnc' ? 'loading' : ''} ${sessionExpired ? 'disabled' : ''}`}
+                                      onClick={() => {
+                                        if (sessionExpired || tunnelLoading) return;
+                                        setVncMenuAppId(vncMenuAppId === app.id ? null : app.id);
+                                        setShowVncMenu(vncMenuAppId !== app.id);
+                                      }}
+                                    >
+                                      {tunnelLoading === 'vnc' ? <Activity size={20} className="option-icon animate-spin" /> : <Monitor size={20} className="option-icon" />}
+                                      <span className="option-label">Launch VNC</span>
+                                      <ChevronDown size={16} style={{ marginLeft: '4px' }} />
+                                    </div>
+                                    {showVncMenu && vncMenuAppId === app.id && (
+                                      <div ref={dropdownRef} className="dropdown-menu" style={{
+                                        position: 'absolute',
+                                        top: '100%',
+                                        left: 0,
+                                        marginTop: '4px',
+                                        backgroundColor: '#1e1e1e',
+                                        border: '1px solid #333',
+                                        borderRadius: '6px',
+                                        boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+                                        zIndex: 1000,
+                                        minWidth: '200px'
+                                      }}>
+                                        <div
+                                          className="dropdown-item"
+                                          onClick={async () => {
+                                            setShowVncMenu(false);
+                                            setVncMenuAppId(null);
+                                            try {
+                                              setTunnelLoading('vnc');
+                                              setTunnelLoadingMessage(`Starting VNC tunnel to localhost:${app.vncPort}...`);
+                                              const vncTarget = 'localhost';
+                                              addLog(`Starting VNC tunnel to ${vncTarget}:${app.vncPort}...`, 'info');
+                                              const result = await StartTunnel(selectedNode.id, vncTarget, app.vncPort, 'vnc');
+                                              const port = result.port || result;
+                                              const tunnelId = result.tunnelId;
+                                              addLog(`VNC tunnel active on localhost:${port}`, 'success');
+                                              addTunnel('VNC', vncTarget, app.vncPort, port, tunnelId);
+
+                                              // Open VNC in new window
+                                              await window.electronAPI.openVncWindow({
+                                                port: port,
+                                                nodeName: selectedNode.name,
+                                                appName: app.name,
+                                                tunnelId: tunnelId
+                                              });
+                                              addLog(`VNC viewer opened in new window`, 'info');
+                                              setExpandedServiceId(null);
+                                            } catch (err) {
+                                              console.error(err);
+                                              handleTunnelError(err);
+                                              addLog(`Failed to start VNC tunnel: ${err.message}`, 'error');
+                                            } finally {
+                                              setTunnelLoading(null);
+                                              setTunnelLoadingMessage('');
+                                            }
+                                          }}
+                                          style={{
+                                            padding: '10px 14px',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '8px',
+                                            borderBottom: '1px solid #333'
+                                          }}
+                                        >
+                                          <Monitor size={16} />
+                                          <span>Open in Built-in Viewer</span>
+                                        </div>
+                                        <div
+                                          className="dropdown-item"
+                                          onClick={async () => {
+                                            setShowVncMenu(false);
+                                            setVncMenuAppId(null);
+                                            try {
+                                              setTunnelLoading('vnc');
+                                              setTunnelLoadingMessage(`Starting VNC tunnel to localhost:${app.vncPort}...`);
+                                              const vncTarget = 'localhost';
+                                              addLog(`Starting VNC tunnel to ${vncTarget}:${app.vncPort}...`, 'info');
+                                              const result = await StartTunnel(selectedNode.id, vncTarget, app.vncPort, 'tcp');
+                                              const port = result.port || result;
+                                              const tunnelId = result.tunnelId;
+                                              addLog(`VNC tunnel active on localhost:${port}`, 'success');
+                                              addTunnel('VNC', vncTarget, app.vncPort, port, tunnelId);
+                                              setHighlightTunnels(true);
+                                              setTimeout(() => setHighlightTunnels(false), 2000);
+                                              addLog(
+                                                `Connect your VNC client to localhost:${port}`,
+                                                'info'
+                                              );
+                                              setExpandedServiceId(null);
+                                            } catch (err) {
+                                              console.error(err);
+                                              handleTunnelError(err);
+                                              addLog(`Failed to start VNC tunnel: ${err.message}`, 'error');
+                                            } finally {
+                                              setTunnelLoading(null);
+                                              setTunnelLoadingMessage('');
+                                            }
+                                          }}
+                                          style={{
+                                            padding: '10px 14px',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '8px'
+                                          }}
+                                        >
+                                          <ExternalLink size={16} />
+                                          <span>Use External Client</span>
+                                        </div>
+                                      </div>
+                                    )}
                                   </div>
                                 )}
                                 <div
-                                  className={`option-btn ${tunnelLoading ? 'loading' : ''} ${sessionExpired ? 'disabled' : ''}`}
+                                  className={`option-btn ${tunnelLoading === 'ssh' ? 'loading' : ''} ${sessionExpired ? 'disabled' : ''}`}
                                   onClick={async () => {
                                     if (sessionExpired) {
                                       addLog('Cannot start SSH tunnel: EdgeView session has expired. Restart the session first.', 'warning');
@@ -1299,7 +1400,7 @@ function App() {
                                     }
                                     if (tunnelLoading) return;
                                     try {
-                                      setTunnelLoading(true);
+                                      setTunnelLoading('ssh');
                                       setTunnelLoadingMessage('Starting SSH tunnel to 10.2.255.254:22...');
                                       const sshTarget = '10.2.255.254';
                                       addLog(`Starting SSH tunnel to ${sshTarget}:22...`, 'info');
@@ -1317,13 +1418,14 @@ function App() {
                                       setExpandedServiceId(null);
                                     } catch (err) {
                                       console.error(err);
+                                      handleTunnelError(err);
                                       addLog(`Failed to start SSH tunnel: ${err.message}`, 'error');
                                     } finally {
-                                      setTunnelLoading(false);
+                                      setTunnelLoading(null);
                                       setTunnelLoadingMessage('');
                                     }
                                   }}>
-                                  {tunnelLoading ? <Activity size={20} className="option-icon animate-spin" /> : <Terminal size={20} className="option-icon" />}
+                                  {tunnelLoading === 'ssh' ? <Activity size={20} className="option-icon animate-spin" /> : <Terminal size={20} className="option-icon" />}
                                   <span className="option-label">Launch SSH</span>
                                 </div>
                                 <div
@@ -1449,11 +1551,11 @@ function App() {
                       Cancel
                     </button>
                     <button
-                      className={`connect-btn primary ${tunnelLoading ? 'loading' : ''}`}
+                      className={`connect-btn primary ${tunnelLoading === 'tcp' ? 'loading' : ''}`}
                       onClick={startCustomTunnel}
                       disabled={tunnelLoading}
                     >
-                      {tunnelLoading ? (
+                      {tunnelLoading === 'tcp' ? (
                         <>
                           <Activity size={14} className="animate-spin" />
                           <span style={{ marginLeft: '6px' }}>Starting...</span>

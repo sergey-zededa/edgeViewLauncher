@@ -23,6 +23,9 @@ DEBUG: Sending 695 bytes to EdgeView via WebSocket (tcpData JSON: 977 bytes)
 API call error: Error: missing tunnel ID
 + Add space to "EdgeView session active(expires: 11/29/2025, 1:19:22 AM)" between "active" and "(expires:"
 + [8:29:44 PM]EdgeView session active(expires: 11/29/2025, 1:19:22 AM) - use local OS time setting to display in the same format (24 vs 12h)
++ multiple icons are rotating when either of Connect options is selected (TCP/VNC/SSH)
++ And VNC connection is still failing BTW:
++ noVNC wiring?
 
 
 - app need to live in the tray
@@ -32,7 +35,7 @@ API call error: Error: missing tunnel ID
 - ? need an option to select preferred terminal app
 - ? Helper strings to show how to connect to a tunnel/platform dependent
 - No number of allowed connections anymore?
-- noVNC wiring?
+
 - !!!save config does not work in windows 
 
 - >>>Antigravity>>> instead of checking cluster access for validity, which always fails, explore if we can display cluster access token validity time (if available/readable from token or API) and mark it red if expired - can we fetch this info from API? -check https://zedcontrol.zededa.net/api/v1/docs/?urls.primaryName=ZEDEDA%20IAM%20Service#/IdentityAccessManagement/IdentityAccessManagement_GetUserSession /v1/sessions/token/{sessionToken.base64}
@@ -44,4 +47,6 @@ API call error: Error: missing tunnel ID
 
 - Indicate VNC/SSH/TCP tunnel status/liveliness (running, data is transferring, etc). Do not overcomplicate or over engineer, I need user some clear indication if data is flowing over the tunnel and it looks alive or not.
 - collect info
-- multiple icons are rotating when either of Connect options is selected (TCP/VNC/SSH)
+
+
+

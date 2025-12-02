@@ -335,6 +335,7 @@ func (s *HTTPServer) Start() {
 	router.HandleFunc("/api/tunnels", s.handleListTunnels)
 	router.HandleFunc("/api/ssh/term", s.handleSSHTerminal)
 	router.HandleFunc("/api/connection-progress", s.handleGetConnectionProgress)
+	router.HandleFunc("/api/verify-token", s.handleVerifyToken)
 
 	// Health check
 	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -355,13 +356,14 @@ func (s *HTTPServer) handleStartTunnel(w http.ResponseWriter, r *http.Request) {
 		NodeID     string `json:"nodeId"`
 		TargetIP   string `json:"targetIP"`
 		TargetPort int    `json:"targetPort"`
+		Protocol   string `json:"protocol"` // Optional: "vnc", "ssh", "tcp"
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.sendError(w, err)
 		return
 	}
 
-	port, tunnelID, err := s.app.StartTunnel(req.NodeID, req.TargetIP, req.TargetPort)
+	port, tunnelID, err := s.app.StartTunnel(req.NodeID, req.TargetIP, req.TargetPort, req.Protocol)
 	if err != nil {
 		s.sendError(w, err)
 		return
@@ -591,6 +593,25 @@ func (s *HTTPServer) handleGetConnectionProgress(w http.ResponseWriter, r *http.
 
 	status := s.app.GetConnectionProgress(nodeID)
 	s.sendSuccess(w, map[string]string{"status": status})
+}
+
+func (s *HTTPServer) handleVerifyToken(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Token   string `json:"token"`
+		BaseURL string `json:"baseUrl"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, err)
+		return
+	}
+
+	info, err := s.app.VerifyToken(req.Token, req.BaseURL)
+	if err != nil {
+		s.sendError(w, err)
+		return
+	}
+
+	s.sendSuccess(w, info)
 }
 
 func main() {

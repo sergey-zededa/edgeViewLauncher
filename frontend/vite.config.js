@@ -6,7 +6,13 @@ export default defineConfig({
   plugins: [react()],
   base: './', // Use relative paths for Electron
   build: {
-    target: 'esnext'
+    target: 'esnext',
+    rollupOptions: {
+      input: {
+        main: './index.html',
+        vnc: './vnc.html'
+      }
+    }
   },
   optimizeDeps: {
     esbuildOptions: {

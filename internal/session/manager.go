@@ -221,12 +221,12 @@ type cmdOpt struct {
 // 2. Send the tcp command and wait for +++tcpSetupOK+++
 // 3. Start accepting TCP clients that multiplex over the shared WebSocket
 // Returns the local port number and tunnel ID.
-func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, nodeID string, target string) (int, string, error) {
+func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, nodeID string, target string, protocol string) (int, string, error) {
 	// ALWAYS use InstID=2 to avoid conflicts with reference client (usually uses 1)
 	config.InstID = 2
 	config.MaxInst = 3
 
-	// Start local TCP listener first
+	// Start local listener first
 	var listener net.Listener
 	var err error
 
@@ -245,7 +245,7 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 	}
 
 	localPort := listener.Addr().(*net.TCPAddr).Port
-	fmt.Printf("[%s] Tunnel listening on localhost:%d for target %s\n", time.Now().Format("2006-01-02 15:04:05"), localPort, target)
+	fmt.Printf("[%s] Tunnel listening on localhost:%d for target %s (protocol: %s)\n", time.Now().Format("2006-01-02 15:04:05"), localPort, target, protocol)
 
 	// Try to establish WebSocket and get tcpSetupOK with retries
 	const maxRetries = 5
@@ -316,7 +316,7 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 		NodeID:    nodeID,
 		TargetIP:  target,
 		LocalPort: localPort,
-		Type:      "TCP",
+		Type:      strings.ToUpper(protocol),
 		CreatedAt: time.Now(),
 		Cancel:    cancel,
 		Status:    "active",
@@ -332,9 +332,43 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 
 	// Start the WebSocket reader that dispatches to TCP clients
 	go m.tunnelWSReader(tunnelCtx, tunnel)
+	// Start keep-alive loop
+	go m.tunnelKeepAlive(tunnelCtx, tunnel)
 
-	// Start accepting TCP client connections
-	go m.tunnelAcceptLoop(tunnelCtx, listener, tunnel)
+	if protocol == "vnc" {
+		// Start HTTP server for WebSocket upgrades
+		server := &http.Server{
+			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				upgrader := websocket.Upgrader{
+					CheckOrigin: func(r *http.Request) bool { return true },
+				}
+				conn, err := upgrader.Upgrade(w, r, nil)
+				if err != nil {
+					fmt.Printf("Failed to upgrade WS: %v\n", err)
+					return
+				}
+
+				// Handle this client
+				m.handleWSClient(tunnelCtx, conn, tunnel)
+			}),
+		}
+
+		go func() {
+			defer m.CloseTunnel(tunnel.ID)
+			if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
+				fmt.Printf("HTTP server error: %v\n", err)
+			}
+		}()
+
+		// Ensure server is closed when context is done
+		go func() {
+			<-tunnelCtx.Done()
+			server.Close()
+		}()
+	} else {
+		// Start accepting TCP client connections
+		go m.tunnelAcceptLoop(tunnelCtx, listener, tunnel)
+	}
 
 	return localPort, tunnelID, nil
 }
@@ -917,6 +951,35 @@ func (m *Manager) connectToEdgeView(config *zededa.SessionConfig) (*websocket.Co
 	return wsConn, clientIP, nil
 }
 
+// tunnelKeepAlive sends periodic ping messages to keep the WebSocket connection alive
+func (m *Manager) tunnelKeepAlive(ctx context.Context, tunnel *Tunnel) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	fmt.Printf("TUNNEL[%s] Keep-alive started\n", tunnel.ID)
+
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Printf("TUNNEL[%s] Keep-alive stopped (context done)\n", tunnel.ID)
+			return
+		case <-ticker.C:
+			fmt.Printf("TUNNEL[%s] Sending keep-alive ping...\n", tunnel.ID)
+			tunnel.wsMu.Lock()
+			// Send a standard WebSocket Ping message
+			err := tunnel.wsConn.WriteMessage(websocket.PingMessage, []byte{})
+			tunnel.wsMu.Unlock()
+			if err != nil {
+				fmt.Printf("TUNNEL[%s] Keep-alive ping failed: %v\n", tunnel.ID, err)
+				// If ping fails, the connection is likely dead, so fail the tunnel
+				m.FailTunnel(tunnel.ID, err)
+				return
+			} else {
+				fmt.Printf("TUNNEL[%s] Keep-alive ping successful\n", tunnel.ID)
+			}
+		}
+	}
+}
+
 // tunnelWSReader reads from the shared WebSocket and dispatches data to
 // the appropriate TCP client channel based on ChanNum.
 func (m *Manager) tunnelWSReader(ctx context.Context, tunnel *Tunnel) {
@@ -971,8 +1034,10 @@ func (m *Manager) tunnelWSReader(ctx context.Context, tunnel *Tunnel) {
 			// Parse tcpData
 			var td tcpData
 			if err := json.Unmarshal(payload, &td); err != nil {
+				fmt.Printf("TUNNEL[%s] Failed to parse tcpData: %v\n", tunnel.ID, err)
 				continue // Not tcpData, skip
 			}
+			fmt.Printf("TUNNEL[%s] Received data for ChanNum=%d (len=%d)\n", tunnel.ID, td.ChanNum, len(td.Data))
 
 			if len(td.Data) > 0 {
 				// Dispatch to the appropriate channel
@@ -1060,6 +1125,7 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 		fmt.Printf("TUNNEL[%s] ChanNum=%d: Failed to send init packet: %v\n", tunnel.ID, chanNum, err)
 		return
 	}
+	fmt.Printf("TUNNEL[%s] ChanNum=%d: Init packet sent, starting bidirectional copy\n", tunnel.ID, chanNum)
 
 	done := make(chan struct{})
 
@@ -1090,7 +1156,7 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 		case <-done:
 			return
 		default:
-			conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+			conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 			n, err := conn.Read(buf)
 			if n > 0 {
 				td := tcpData{
@@ -1107,6 +1173,8 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 				if err != nil {
 					fmt.Printf("TUNNEL[%s] ChanNum=%d: WS write error: %v\n", tunnel.ID, chanNum, err)
 					return
+				} else {
+					fmt.Printf("TUNNEL[%s] ChanNum=%d: Sent %d bytes to WS\n", tunnel.ID, chanNum, n)
 				}
 			}
 			if err != nil {
@@ -1120,4 +1188,25 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 			}
 		}
 	}
+}
+
+// handleWSClient handles a single WebSocket client using the shared WebSocket
+func (m *Manager) handleWSClient(ctx context.Context, wsConn *websocket.Conn, tunnel *Tunnel) {
+	conn := NewWSConnAdapter(wsConn)
+
+	// Allocate a channel number for this client
+	chanNum := uint16(atomic.AddUint32(&tunnel.nextChan, 1))
+
+	// Create a channel for incoming data from WebSocket
+	dataChan := make(chan []byte, 100)
+	tunnel.channelMu.Lock()
+	if tunnel.channels == nil {
+		tunnel.channels = make(map[uint16]chan []byte)
+	}
+	tunnel.channels[chanNum] = dataChan
+	tunnel.channelMu.Unlock()
+
+	// Handle this client using the shared logic
+	// Note: handleSharedTunnelConnection closes the connection when done
+	go m.handleSharedTunnelConnection(ctx, conn, tunnel, chanNum, dataChan)
 }
