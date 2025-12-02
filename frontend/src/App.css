@@ -695,6 +695,10 @@ body {
     }
 }
 
+.option-btn-container {
+    flex: 1;
+}
+
 .option-btn {
     flex: 1;
     display: flex;

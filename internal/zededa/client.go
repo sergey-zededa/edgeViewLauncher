@@ -2,11 +2,13 @@ package zededa
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -69,11 +71,21 @@ type Client struct {
 }
 
 func NewClient(baseURL, token string) *Client {
+	// Clone default transport to keep proxy settings etc.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// Disable HTTP/2
+	transport.ForceAttemptHTTP2 = false
+	transport.TLSNextProto = make(map[string]func(string, *tls.Conn) http.RoundTripper)
+	transport.TLSClientConfig = &tls.Config{
+		NextProtos: []string{"http/1.1"},
+	}
+
 	return &Client{
 		BaseURL: baseURL,
 		Token:   token,
 		HTTPClient: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout:   30 * time.Second,
+			Transport: transport,
 		},
 	}
 }
@@ -758,31 +770,16 @@ type TokenInfo struct {
 
 // VerifyToken checks if a session token is valid by calling the IAM API
 func (c *Client) VerifyToken(token string) (*TokenInfo, error) {
-	// Base64 encode the token for the URL path
-	encodedToken := base64.URLEncoding.EncodeToString([]byte(token))
+	// Token is likely already base64/base64url. Do not double-encode.
+	// Just escape it for safety in the URL path.
+	encodedToken := url.PathEscape(token)
 	url := fmt.Sprintf("%s/api/v1/sessions/token/%s", c.BaseURL, encodedToken)
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
-	// No Authorization header needed for this specific endpoint as it validates the token in path
-	// But usually we need to be authenticated to check other tokens?
-	// The docs say: "Get Session Token Information"
-	// Let's try without auth first, or use the token itself if needed.
-	// Actually, usually we are checking the token *we just pasted*, so we might not have a valid client token yet.
-	// If this endpoint requires auth, we might need to use the token itself as bearer?
-	// Let's assume for now we use the client's current token if available, or just try the request.
-	// If the user is setting up a NEW cluster, c.Token might be empty or old.
-	// However, the endpoint `/v1/sessions/token/{token}` might be public or require the token itself.
-	// Let's try adding the token itself as auth if c.Token is empty.
-
-	authToken := c.Token
-	if authToken == "" {
-		authToken = token
-	}
-	req.Header.Set("Authorization", "Bearer "+authToken)
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {

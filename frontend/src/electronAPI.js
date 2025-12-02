@@ -82,8 +82,8 @@ export const GetAppInfo = (nodeId) => {
     return window.electronAPI.getAppInfo(nodeId);
 };
 
-export const StartTunnel = (nodeId, targetIP, targetPort) => {
-    return window.electronAPI.startTunnel(nodeId, targetIP, targetPort).then(res => res.data);
+export const StartTunnel = (nodeId, targetIP, targetPort, protocol) => {
+    return api.startTunnel(nodeId, targetIP, targetPort, protocol).then(res => res.data);
 };
 
 export const CloseTunnel = (tunnelId) => {
@@ -108,4 +108,7 @@ export const ListTunnels = (nodeId) => {
         // In case backend ever returns a single tunnel object, normalize to array
         return Array.isArray(data) ? data : [];
     });
+};
+export const VerifyToken = (token, baseUrl) => {
+    return window.electronAPI.verifyToken(token, baseUrl).then(res => res.data);
 };

@@ -119,7 +119,7 @@ func (m *fakeSessionManager) StoreCachedSession(nodeID string, cfg *zededa.Sessi
 	m.cached[nodeID] = &session.CachedSession{Config: cfg, Port: port, ExpiresAt: expiresAt}
 }
 
-func (m *fakeSessionManager) StartProxy(ctx context.Context, cfg *zededa.SessionConfig, nodeID string, target string) (int, string, error) {
+func (m *fakeSessionManager) StartProxy(ctx context.Context, cfg *zededa.SessionConfig, nodeID string, target string, protocol string) (int, string, error) {
 	return m.startProxyPort, m.startProxyID, m.startProxyErr
 }
 
@@ -277,7 +277,7 @@ func TestStartTunnel_CreatesSessionWhenMissing(t *testing.T) {
 		sessionManager: fakeSess,
 	}
 
-	port, tunnelID, err := a.StartTunnel("nodeA", "192.168.0.10", 5900)
+	port, tunnelID, err := a.StartTunnel("nodeA", "192.168.0.10", 5900, "")
 	if err != nil {
 		t.Fatalf("StartTunnel returned error: %v", err)
 	}
@@ -382,7 +382,7 @@ func TestStartTunnel_InitSessionError(t *testing.T) {
 		sessionManager: fakeSess,
 	}
 
-	_, _, err := a.StartTunnel("node-err", "10.0.0.1", 5900)
+	_, _, err := a.StartTunnel("node-err", "10.0.0.1", 5900, "")
 	if err == nil || !strings.Contains(err.Error(), "no active session found") {
 		t.Fatalf("expected no-active-session error, got: %v", err)
 	}
@@ -405,7 +405,7 @@ func TestStartTunnel_StartProxyRetriesAndFails(t *testing.T) {
 		sessionManager: fakeSess,
 	}
 
-	_, _, err := a.StartTunnel("node-offline", "10.0.0.1", 5900)
+	_, _, err := a.StartTunnel("node-offline", "10.0.0.1", 5900, "")
 	if err == nil || !strings.Contains(err.Error(), "failed to start tunnel after") {
 		t.Fatalf("expected retry failure error, got: %v", err)
 	}

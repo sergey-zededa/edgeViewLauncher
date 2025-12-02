@@ -23,11 +23,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getProjects: () => ipcRenderer.invoke('api-call', '/api/projects', 'GET'),
     getSessionStatus: (nodeId) => ipcRenderer.invoke('api-call', '/api/session-status', 'POST', { nodeId }),
     getAppInfo: (nodeId) => ipcRenderer.invoke('api-call', '/api/app-info', 'POST', { nodeId }),
-    startTunnel: (nodeId, targetIP, targetPort) => ipcRenderer.invoke('api-call', '/api/start-tunnel', 'POST', { nodeId, targetIP, targetPort }),
+    startTunnel: (nodeId, targetIP, targetPort, protocol) => ipcRenderer.invoke('api-call', '/api/start-tunnel', 'POST', { nodeId, targetIP, targetPort, protocol }),
     closeTunnel: (tunnelId) => ipcRenderer.invoke('api-call', `/api/tunnel/${tunnelId}`, 'DELETE'),
     listTunnels: (nodeId) => ipcRenderer.invoke('api-call', `/api/tunnels?nodeId=${nodeId}`, 'GET'),
     getConnectionProgress: (nodeId) => ipcRenderer.invoke('api-call', `/api/connection-progress?nodeId=${nodeId}`, 'GET'),
     openTerminalWindow: (port) => ipcRenderer.invoke('open-terminal-window', port),
+    openVncWindow: (options) => ipcRenderer.invoke('open-vnc-window', options),
     openExternal: (url) => ipcRenderer.invoke('open-external', url),
-    getSystemTimeFormat: () => ipcRenderer.invoke('get-system-time-format')
+    getSystemTimeFormat: () => ipcRenderer.invoke('get-system-time-format'),
+    verifyToken: (token, baseUrl) => ipcRenderer.invoke('api-call', '/api/verify-token', 'POST', { token, baseUrl })
 });

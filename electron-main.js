@@ -58,14 +58,73 @@ function createWindow() {
     });
 }
 
+function createVncWindow(options) {
+    const { port, nodeName, appName, tunnelId } = options;
+
+    const vncWindow = new BrowserWindow({
+        width: 1024,
+        height: 768,
+        title: `VNC - ${nodeName}`,
+        show: false,
+        webPreferences: {
+            contextIsolation: true,
+            nodeIntegration: false
+        },
+        ...(process.platform === 'darwin' ? {
+            titleBarStyle: 'hiddenInset',
+            frame: false
+        } : {})
+    });
+
+    // Build URL with connection parameters
+    const params = new URLSearchParams({
+        port,
+        nodeName: nodeName || 'Unknown Device',
+        appName: appName || 'VNC',
+        tunnelId: tunnelId || ''
+    });
+
+    if (process.env.NODE_ENV === 'development') {
+        // In development, serve from Vite dev server
+        vncWindow.loadURL(`http://localhost:5173/vnc.html?${params}`);
+    } else {
+        // In production, load from packaged files
+        const vncPath = path.join(__dirname, 'frontend', 'dist', 'vnc.html');
+        vncWindow.loadFile(vncPath, { search: params.toString() }).catch(err => {
+            console.error('Failed to load VNC window:', err);
+        });
+    }
+
+    vncWindow.once('ready-to-show', () => {
+        vncWindow.show();
+    });
+
+    vncWindow.on('closed', () => {
+        // Window closed, cleanup tunnel
+        console.log(`VNC window closed for ${nodeName}`);
+        if (tunnelId) {
+            // Close the tunnel via API
+            fetch(`http://localhost:8080/api/tunnel/${tunnelId}`, {
+                method: 'DELETE'
+            }).then(() => {
+                console.log(`Tunnel ${tunnelId} closed`);
+            }).catch(err => {
+                console.error(`Failed to close tunnel ${tunnelId}:`, err);
+            });
+        }
+    });
+
+    return vncWindow;
+}
+
 function startGoBackend() {
     // Start the Go HTTP server
     // In packaged app, resources are in app.asar or Contents/Resources
     const isDev = process.env.NODE_ENV === 'development';
-    
+
     // Platform-specific executable name
     const exeName = process.platform === 'win32' ? 'edgeview-backend.exe' : 'edgeview-backend';
-    
+
     const goExecutable = isDev
         ? path.join(__dirname, exeName)
         : path.join(process.resourcesPath, exeName);
@@ -132,6 +191,17 @@ ipcMain.handle('api-call', async (event, endpoint, method, body) => {
     } catch (error) {
         console.error('API call error:', error);
         throw error;
+    }
+});
+
+// Open VNC Window
+ipcMain.handle('open-vnc-window', async (event, options) => {
+    try {
+        createVncWindow(options);
+        return { success: true };
+    } catch (error) {
+        console.error('Failed to create VNC window:', error);
+        return { success: false, error: error.message };
     }
 });
 
