@@ -1178,15 +1178,13 @@ function App() {
                               {expiryInfo.label}
                             </span>
                           ) : '-'}
-                          {sessionExpired && (
-                            <button
-                              className="inline-icon-btn"
-                              title="Restart EdgeView session"
-                              onClick={handleResetEdgeView}
-                            >
-                              <RefreshCw size={14} />
-                            </button>
-                          )}
+                          <button
+                            className="inline-icon-btn"
+                            title="Restart EdgeView session"
+                            onClick={handleResetEdgeView}
+                          >
+                            <RefreshCw size={14} />
+                          </button>
                         </div>
                       </div>
                     </div>

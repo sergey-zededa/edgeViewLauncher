@@ -463,7 +463,18 @@ func (m *Manager) waitForTcpSetupOK(wsConn *websocket.Conn, key string, timeout 
 
 			payload, err := unwrapMessage(msg, key)
 			if err != nil {
-				// Check for plain-text errors
+				// Check for specific errors returned by unwrapMessage
+				if err == ErrBusyInstance {
+					setupDone <- ErrBusyInstance
+					return
+				}
+				if err == ErrNoDeviceOnline {
+					setupDone <- ErrNoDeviceOnline
+					return
+				}
+
+				// Check for plain-text errors in the raw message if unwrapMessage didn't catch them specifically
+				// (though unwrapMessage should handle most now)
 				if strings.Contains(string(msg), "no device online") {
 					setupDone <- ErrNoDeviceOnline
 					return
