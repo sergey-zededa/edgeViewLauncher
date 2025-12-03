@@ -579,7 +579,12 @@ function App() {
         const match = result.match(/port (\d+)/);
         if (match && match[1]) {
           const port = match[1];
-          window.electronAPI.openTerminalWindow(port);
+          window.electronAPI.openTerminalWindow({
+            port: parseInt(port),
+            nodeName: selectedNode.name,
+            targetInfo: 'EVE-OS SSH',
+            tunnelId: '' // Could be extracted from result if available
+          });
         } else {
           console.error("Could not parse port from result:", result);
           setError({ type: 'error', message: "Failed to start terminal: Could not determine port." });

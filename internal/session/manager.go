@@ -1081,7 +1081,7 @@ func (m *Manager) tunnelWSReader(ctx context.Context, tunnel *Tunnel) {
 				fmt.Printf("TUNNEL[%s] Failed to parse tcpData: %v\n", tunnel.ID, err)
 				continue // Not tcpData, skip
 			}
-			fmt.Printf("TUNNEL[%s] Received data for ChanNum=%d (len=%d)\n", tunnel.ID, td.ChanNum, len(td.Data))
+			// Data received for channel
 
 			if len(td.Data) > 0 {
 				// Dispatch to the appropriate channel
@@ -1219,8 +1219,6 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 				if err != nil {
 					fmt.Printf("TUNNEL[%s] ChanNum=%d: WS write error: %v\n", tunnel.ID, chanNum, err)
 					return
-				} else {
-					fmt.Printf("TUNNEL[%s] ChanNum=%d: Sent %d bytes to WS\n", tunnel.ID, chanNum, n)
 				}
 			}
 			if err != nil {
