@@ -186,6 +186,10 @@ var (
 	// ErrNoDeviceOnline is returned when EdgeView reports that the
 	// device is not currently connected ("no device online").
 	ErrNoDeviceOnline = errors.New("device is not connected to EdgeView (no device online)")
+
+	// ErrBusyInstance is returned when EdgeView reports that the
+	// instance limit has been reached ("can't have more than 2 peers").
+	ErrBusyInstance = errors.New("device instance limit reached (can't have more than 2 peers)")
 )
 
 // envelopeMsg matches original EdgeView crypto.go:30-33
@@ -222,9 +226,22 @@ type cmdOpt struct {
 // 3. Start accepting TCP clients that multiplex over the shared WebSocket
 // Returns the local port number and tunnel ID.
 func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, nodeID string, target string, protocol string) (int, string, error) {
-	// ALWAYS use InstID=2 to avoid conflicts with reference client (usually uses 1)
-	config.InstID = 2
-	config.MaxInst = 3
+	// Respect the device's MaxInst limit from the JWT token
+	// For single-instance devices (MaxInst=1), use InstID=0
+	// For multi-instance devices (MaxInst>1), use InstID=1 to avoid conflict with reference client
+	if config.MaxInst == 1 {
+		// Single instance device - must use InstID 0
+		config.InstID = 0
+		fmt.Printf("DEBUG: Device supports single instance only (MaxInst=1), using InstID=0\n")
+	} else if config.MaxInst > 1 {
+		// Multi-instance device - use InstID 1 (reference client typically uses 0 or 1)
+		config.InstID = 1
+		fmt.Printf("DEBUG: Device supports %d instances (MaxInst=%d), using InstID=1\n", config.MaxInst, config.MaxInst)
+	} else {
+		// Fallback: if MaxInst is not set properly, default to 0
+		config.InstID = 0
+		fmt.Printf("DEBUG: MaxInst not set, defaulting to InstID=0\n")
+	}
 
 	// Start local listener first
 	var listener net.Listener
@@ -254,12 +271,18 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 	var lastErr error
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
+		if attempt > 1 {
+			fmt.Printf("DEBUG: Retry attempt %d/%d for tunnel setup...\n", attempt, maxRetries)
+		}
+
 		// Connect to EdgeView
 		wsConn, clientIP, err = m.connectToEdgeView(config)
 		if err != nil {
 			lastErr = fmt.Errorf("failed to connect to EdgeView: %w", err)
 			if attempt < maxRetries {
-				time.Sleep(time.Duration(attempt*2) * time.Second)
+				waitTime := time.Duration(attempt*2) * time.Second
+				fmt.Printf("DEBUG: Connection failed, waiting %v before retry...\n", waitTime)
+				time.Sleep(waitTime)
 				continue
 			}
 			listener.Close()
@@ -279,7 +302,9 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 			wsConn.Close()
 			lastErr = fmt.Errorf("failed to send tcp command: %w", err)
 			if attempt < maxRetries {
-				time.Sleep(time.Duration(attempt) * time.Second)
+				waitTime := time.Duration(attempt) * time.Second
+				fmt.Printf("DEBUG: Failed to send command, waiting %v before retry...\n", waitTime)
+				time.Sleep(waitTime)
 				continue
 			}
 			listener.Close()
@@ -287,9 +312,22 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 		}
 
 		// Wait for +++tcpSetupOK+++ (with timeout)
+		fmt.Printf("DEBUG: Waiting for tcpSetupOK from device (attempt %d/%d)...\n", attempt, maxRetries)
 		setupErr := m.waitForTcpSetupOK(wsConn, config.Key, 30*time.Second)
 		if setupErr == nil {
+			fmt.Println("DEBUG: tcpSetupOK received, tunnel established successfully!")
 			break // Success
+		}
+
+		// Setup failed - check if it's "no device online" error
+		if setupErr == ErrNoDeviceOnline {
+			fmt.Printf("DEBUG: Device is not online (attempt %d/%d). The device may not be connected to EdgeView yet.\n", attempt, maxRetries)
+		} else if setupErr == ErrBusyInstance {
+			fmt.Printf("DEBUG: Device is busy (attempt %d/%d). Previous session might still be active.\n", attempt, maxRetries)
+			// For single instance devices, we just have to wait.
+			// For multi-instance, we could try another instance, but for now let's just wait/retry.
+		} else {
+			fmt.Printf("DEBUG: Tunnel setup failed: %v (attempt %d/%d)\n", setupErr, attempt, maxRetries)
 		}
 
 		// Setup failed - retry
@@ -298,12 +336,20 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 		lastErr = setupErr
 
 		if attempt < maxRetries {
-			time.Sleep(time.Duration(attempt*3) * time.Second)
+			// Exponential backoff: 2s, 4s, 8s, 16s
+			// Start faster than before since we removed the initial 20s delay
+			waitTime := time.Duration(1<<uint(attempt)) * time.Second
+			fmt.Printf("DEBUG: Waiting %v before next attempt...\n", waitTime)
+			time.Sleep(waitTime)
 		}
 	}
 
 	if wsConn == nil {
 		listener.Close()
+		// Provide a more helpful error message for "no device online"
+		if lastErr == ErrNoDeviceOnline {
+			return 0, "", fmt.Errorf("device is not connected to EdgeView after %d attempts. Please ensure:\n  1. The device is powered on and connected to the internet\n  2. EdgeView is enabled on the device\n  3. The device has had sufficient time to establish its EdgeView connection (typically 20-30 seconds after enabling)", maxRetries)
+		}
 		return 0, "", fmt.Errorf("failed to establish tunnel after %d attempts: %w", maxRetries, lastErr)
 	}
 
@@ -601,7 +647,6 @@ func (m *Manager) ExecuteCommand(nodeID string, command string) (string, error) 
 
 // QueryDevice sends a command to the device and returns the response
 func (m *Manager) QueryDevice(ctx context.Context, config *zededa.SessionConfig, commandType, command string, isJSON bool) (string, error) {
-	startInstID := config.InstID
 
 	// Retry loop for Instance ID (in case of "can't have more than 2 peers" error)
 	for {
@@ -703,18 +748,12 @@ func (m *Manager) QueryDevice(ctx context.Context, config *zededa.SessionConfig,
 					fmt.Printf("DEBUG: Instance %d is busy. Retrying...\n", config.InstID)
 					wsConn.Close()
 
-					// Default to Instance 2 to avoid conflict with reference client (usually Inst 1)
-					// and to avoid "zombie" sessions from previous failed attempts
-					config.InstID = 2
-					config.MaxInst = 3 // Assuming standard limit
-					maxLimit := config.MaxInst
-					if maxLimit == 0 {
-						maxLimit = startInstID + 5
+					// Increment InstID, respecting MaxInst limit
+					config.InstID++
+					if config.InstID >= config.MaxInst {
+						return "", fmt.Errorf("all instances busy (tried up to %d of %d max)", config.InstID, config.MaxInst)
 					}
-
-					if config.InstID > maxLimit {
-						return "", fmt.Errorf("all instances busy (tried up to %d)", maxLimit)
-					}
+					fmt.Printf("DEBUG: Retrying with InstID=%d (MaxInst=%d)\n", config.InstID, config.MaxInst)
 					continue // RETRY LOOP
 				}
 				// Other unwrap error?
@@ -846,6 +885,11 @@ func unwrapMessage(data []byte, key string) ([]byte, error) {
 		}
 		fmt.Printf("DEBUG: unwrapMessage detected 'no device online' plain-text response: %s\n", trimmed)
 		return nil, ErrNoDeviceOnline
+	}
+
+	if strings.Contains(raw, "can't have more than 2 peers") {
+		fmt.Printf("DEBUG: unwrapMessage detected 'busy instance' plain-text response\n")
+		return nil, ErrBusyInstance
 	}
 
 	var envelope envelopeMsg
@@ -1110,22 +1154,24 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 
 	// For protocols like VNC that don't send data first, send an empty init packet
 	// to trigger the server-side Dial()
-	initData := tcpData{
-		Version:   0,
-		MappingID: 1,
-		ChanNum:   chanNum,
-		Data:      []byte{}, // Empty to trigger dial without sending data
-	}
-	initBytes, _ := json.Marshal(initData)
+	if tunnel.Type == "VNC" {
+		initData := tcpData{
+			Version:   0,
+			MappingID: 1,
+			ChanNum:   chanNum,
+			Data:      []byte{}, // Empty to trigger dial without sending data
+		}
+		initBytes, _ := json.Marshal(initData)
 
-	tunnel.wsMu.Lock()
-	err := sendWrappedMessage(tunnel.wsConn, initBytes, tunnel.config.Key, websocket.BinaryMessage)
-	tunnel.wsMu.Unlock()
-	if err != nil {
-		fmt.Printf("TUNNEL[%s] ChanNum=%d: Failed to send init packet: %v\n", tunnel.ID, chanNum, err)
-		return
+		tunnel.wsMu.Lock()
+		err := sendWrappedMessage(tunnel.wsConn, initBytes, tunnel.config.Key, websocket.BinaryMessage)
+		tunnel.wsMu.Unlock()
+		if err != nil {
+			fmt.Printf("TUNNEL[%s] ChanNum=%d: Failed to send init packet: %v\n", tunnel.ID, chanNum, err)
+			return
+		}
+		fmt.Printf("TUNNEL[%s] ChanNum=%d: Init packet sent (VNC), starting bidirectional copy\n", tunnel.ID, chanNum)
 	}
-	fmt.Printf("TUNNEL[%s] ChanNum=%d: Init packet sent, starting bidirectional copy\n", tunnel.ID, chanNum)
 
 	done := make(chan struct{})
 
