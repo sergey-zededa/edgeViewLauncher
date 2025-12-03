@@ -44,8 +44,40 @@ const TerminalView = ({ port }) => {
         term.loadAddon(fitAddon);
         term.loadAddon(new WebLinksAddon());
 
+        // Handle Copy/Paste
+        const handleKeyDown = (e) => {
+            const ctrlOrCmd = e.ctrlKey || e.metaKey;
+            const key = e.key.toLowerCase();
+
+            if (ctrlOrCmd && key === 'c') {
+                // Copy
+                const selection = term.getSelection();
+                if (selection) {
+                    navigator.clipboard.writeText(selection);
+                    return false; // Prevent default (SIGINT) if copying
+                }
+                return true; // Allow default (SIGINT) if no selection
+            }
+
+            if (ctrlOrCmd && key === 'v') {
+                // Paste
+                navigator.clipboard.readText().then(text => {
+                    if (ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ type: 'input', data: text }));
+                    }
+                }).catch(err => {
+                    console.error('Failed to read clipboard:', err);
+                });
+                return false; // Prevent default browser paste
+            }
+            return true;
+        };
+
+        term.attachCustomKeyEventHandler(handleKeyDown);
+
         term.open(terminalRef.current);
         fitAddon.fit();
+        term.focus(); // Ensure focus
 
         xtermRef.current = term;
         fitAddonRef.current = fitAddon;
@@ -62,6 +94,7 @@ const TerminalView = ({ port }) => {
             // Send resize event immediately
             const dims = { cols: term.cols, rows: term.rows };
             ws.send(JSON.stringify({ type: 'resize', ...dims }));
+            term.focus();
         };
 
         ws.onmessage = (event) => {

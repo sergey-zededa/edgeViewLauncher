@@ -1705,11 +1705,50 @@ function App() {
 }
 
 export function ActivityLog({ logs }) {
+  const logContentRef = useRef(null);
+  const [autoScroll, setAutoScroll] = useState(true);
+
+  useEffect(() => {
+    if (autoScroll && logContentRef.current) {
+      logContentRef.current.scrollTop = logContentRef.current.scrollHeight;
+    }
+  }, [logs, autoScroll]);
+
+  const handleScroll = () => {
+    if (!logContentRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = logContentRef.current;
+
+    // If user scrolls up, disable auto-scroll
+    // Tolerance of 10px
+    if (scrollHeight - scrollTop - clientHeight > 10) {
+      setAutoScroll(false);
+    } else {
+      // If user scrolls to bottom, re-enable auto-scroll
+      setAutoScroll(true);
+    }
+  };
+
   return (
     <div className="activity-log-section">
-      <div className="section-title">Activity Log</div>
+      <div className="section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span>Activity Log</span>
+        {!autoScroll && (
+          <button
+            className="link-button"
+            style={{ fontSize: '11px' }}
+            onClick={() => setAutoScroll(true)}
+          >
+            Resume Auto-scroll
+          </button>
+        )}
+      </div>
       <div className="activity-log">
-        <div className="log-content">
+        <div
+          className="log-content"
+          ref={logContentRef}
+          onScroll={handleScroll}
+          onClick={() => setAutoScroll(false)}
+        >
           {logs.length === 0 ? (
             <div className="log-entry muted">No activity recorded</div>
           ) : (
