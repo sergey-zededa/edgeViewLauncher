@@ -1094,11 +1094,26 @@ function App() {
                     </button>
                     {showTerminalMenu && (
                       <div className="dropdown-menu">
-                        <div className="dropdown-item" onClick={() => startSession(selectedNode.id, false)}>
-                          Native Terminal
+                        <div className="dropdown-item" onClick={() => startSession(selectedNode.id, true)} style={{
+                          padding: '10px 14px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          borderBottom: '1px solid #333'
+                        }}>
+                          <Terminal size={16} />
+                          <span>Open in Built-in Terminal</span>
                         </div>
-                        <div className="dropdown-item" onClick={() => startSession(selectedNode.id, true)}>
-                          In-App Terminal (xTerm.js)
+                        <div className="dropdown-item" onClick={() => startSession(selectedNode.id, false)} style={{
+                          padding: '10px 14px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px'
+                        }}>
+                          <ExternalLink size={16} />
+                          <span>Use External Terminal</span>
                         </div>
                       </div>
                     )}
