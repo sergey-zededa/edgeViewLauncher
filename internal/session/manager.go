@@ -1007,7 +1007,6 @@ func (m *Manager) tunnelKeepAlive(ctx context.Context, tunnel *Tunnel) {
 			fmt.Printf("TUNNEL[%s] Keep-alive stopped (context done)\n", tunnel.ID)
 			return
 		case <-ticker.C:
-			fmt.Printf("TUNNEL[%s] Sending keep-alive ping...\n", tunnel.ID)
 			tunnel.wsMu.Lock()
 			// Send a standard WebSocket Ping message
 			err := tunnel.wsConn.WriteMessage(websocket.PingMessage, []byte{})
@@ -1017,8 +1016,6 @@ func (m *Manager) tunnelKeepAlive(ctx context.Context, tunnel *Tunnel) {
 				// If ping fails, the connection is likely dead, so fail the tunnel
 				m.FailTunnel(tunnel.ID, err)
 				return
-			} else {
-				fmt.Printf("TUNNEL[%s] Keep-alive ping successful\n", tunnel.ID)
 			}
 		}
 	}

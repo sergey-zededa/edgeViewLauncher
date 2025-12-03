@@ -134,37 +134,45 @@ const TerminalView = ({ port }) => {
                 padding: '10px',
                 paddingLeft: '80px',
                 backgroundColor: '#1a1a1a',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
                 borderBottom: '1px solid #333',
                 WebkitAppRegion: 'drag',
-                position: 'relative'
+                position: 'relative',
+                height: '40px',
+                display: 'block'
             }}>
                 <div style={{
-                    color: '#999',
-                    fontSize: '13px',
-                    flex: 1
-                }}>
-                    {connectionInfo.nodeName} • {connectionInfo.targetInfo}
-                </div>
-                <div className="terminal-status" style={{
                     position: 'absolute',
                     left: '50%',
-                    transform: 'translateX(-50%)',
-                    color: isConnected ? '#4caf50' : '#ff9800',
+                    top: '50%',
+                    transform: 'translate(-50%, -50%)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    fontSize: '13px',
                     whiteSpace: 'nowrap',
-                    fontSize: '13px'
+                    pointerEvents: 'none'
                 }}>
-                    <span style={{ marginRight: '8px' }}>●</span>
-                    {status}
+                    <span style={{ color: '#999' }}>
+                        {connectionInfo.nodeName} • {connectionInfo.targetInfo}
+                    </span>
+                    <span style={{
+                        color: isConnected ? '#4caf50' : '#ff9800',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px'
+                    }}>
+                        <span>●</span>
+                        {status}
+                    </span>
                 </div>
                 <div className="terminal-controls" style={{
+                    position: 'absolute',
+                    right: '10px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
                     display: 'flex',
                     gap: '10px',
-                    WebkitAppRegion: 'no-drag',
-                    flex: 1,
-                    justifyContent: 'flex-end'
+                    WebkitAppRegion: 'no-drag'
                 }}>
                     <button
                         onClick={handleClose}

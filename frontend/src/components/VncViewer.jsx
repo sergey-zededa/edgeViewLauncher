@@ -72,26 +72,32 @@ const VncViewer = ({ url, onClose, password = '' }) => {
                 padding: '10px',
                 paddingLeft: '80px',
                 backgroundColor: '#1a1a1a',
-                display: 'grid',
-                gridTemplateColumns: '1fr auto 1fr',
-                alignItems: 'center',
                 borderBottom: '1px solid #333',
-                WebkitAppRegion: 'drag'
+                WebkitAppRegion: 'drag',
+                position: 'relative',
+                height: '40px',
+                display: 'block'
             }}>
-                <div></div>
                 <div className="vnc-status" style={{
+                    position: 'absolute',
+                    left: '50%',
+                    top: '50%',
+                    transform: 'translate(-50%, -50%)',
                     color: isConnected ? '#4caf50' : '#ff9800',
-                    textAlign: 'center',
-                    whiteSpace: 'nowrap'
+                    whiteSpace: 'nowrap',
+                    pointerEvents: 'none'
                 }}>
                     <span style={{ marginRight: '10px' }}>●</span>
                     {status}
                 </div>
                 <div className="vnc-controls" style={{
+                    position: 'absolute',
+                    right: '10px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
                     display: 'flex',
                     gap: '10px',
-                    WebkitAppRegion: 'no-drag',
-                    justifyContent: 'flex-end'
+                    WebkitAppRegion: 'no-drag'
                 }}>
                     <button
                         onClick={toggleFullscreen}
