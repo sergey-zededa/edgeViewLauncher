@@ -17,7 +17,8 @@ function createWindow() {
             preload: path.join(__dirname, 'electron-preload.js'),
             contextIsolation: true,
             nodeIntegration: false
-        }
+        },
+        icon: path.join(__dirname, 'icon.icns')
     };
 
     // macOS-specific: Use hidden title bar with inset traffic lights

@@ -23,7 +23,7 @@
     "mac": {
       "category": "public.app-category.developer-tools",
       "target": "dmg",
-      "icon": "build/icon.icns"
+      "icon": "icon.icns"
     },
     "files": [
       "electron-main.js",
