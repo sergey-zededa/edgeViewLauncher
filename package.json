@@ -20,22 +20,38 @@
   "build": {
     "appId": "com.edgeview.launcher",
     "productName": "EdgeView Launcher",
+    "win": {
+      "extraResources": [
+        {
+          "from": "edgeview-backend.exe",
+          "to": "edgeview-backend.exe"
+        }
+      ]
+    },
     "mac": {
       "category": "public.app-category.developer-tools",
       "target": "dmg",
-      "icon": "icon.icns"
+      "icon": "icon.icns",
+      "extraResources": [
+        {
+          "from": "edgeview-backend",
+          "to": "edgeview-backend"
+        }
+      ]
+    },
+    "linux": {
+      "extraResources": [
+        {
+          "from": "edgeview-backend",
+          "to": "edgeview-backend"
+        }
+      ]
     },
     "files": [
       "electron-main.js",
       "electron-preload.js",
       "backendClient.js",
       "frontend/dist/**/*"
-    ],
-    "extraResources": [
-      {
-        "from": "edgeview-backend",
-        "to": "edgeview-backend"
-      }
     ],
     "directories": {
       "output": "dist-electron"
