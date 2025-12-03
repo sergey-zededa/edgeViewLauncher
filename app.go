@@ -270,9 +270,11 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (string, error
 
 		// Give device time to establish stable connection
 		// Native Terminal.app connects immediately, so we need enough time for device to come online
-		fmt.Println("DEBUG: Waiting 10 seconds for device to establish stable EdgeView connection...")
-		a.SetConnectionProgress(nodeID, "Waiting for device to establish secure connection...")
-		time.Sleep(10 * time.Second)
+		// Give device time to establish stable connection
+		// Native Terminal.app connects immediately, so we need enough time for device to come online
+		fmt.Println("DEBUG: Requesting EdgeView session...")
+		a.SetConnectionProgress(nodeID, "Connecting to EdgeView...")
+		// No artificial delay - rely on retries in StartProxy
 
 		needNewProxy = true
 	}
@@ -358,8 +360,11 @@ func (a *App) StartTunnel(nodeID, targetIP string, targetPort int, protocol stri
 
 		// Give device MORE time to establish stable connection
 		// Native Terminal.app connects immediately, so we need enough time for device to come online
-		fmt.Println("DEBUG: Waiting 10 seconds for device to establish stable EdgeView connection...")
-		time.Sleep(10 * time.Second)
+		// Give device MORE time to establish stable connection
+		// Native Terminal.app connects immediately, so we need enough time for device to come online
+		fmt.Println("DEBUG: Requesting EdgeView session...")
+		// No artificial delay - rely on retries in StartProxy
+
 	}
 
 	// Infer protocol if not specified
