@@ -26,17 +26,20 @@ API call error: Error: missing tunnel ID
 + multiple icons are rotating when either of Connect options is selected (TCP/VNC/SSH)
 + And VNC connection is still failing BTW:
 + noVNC wiring?
++ app need to live in the tray
++ No number of allowed connections anymore?
++ !!!save config does not work in windows 
 
-
-- app need to live in the tray
 - settings to be stored securely (use keyring or other relevant OS features)
 
 + auto day/night scheme in line with OS ??? Need to test
 - ? need an option to select preferred terminal app
 - ? Helper strings to show how to connect to a tunnel/platform dependent
-- No number of allowed connections anymore?
+- number of available connections/instances?
+- remove Standard window headers/menus in Windows
+- remove chromium menu items (devtools, etc)
 
-- !!!save config does not work in windows 
+
 
 - >>>Antigravity>>> instead of checking cluster access for validity, which always fails, explore if we can display cluster access token validity time (if available/readable from token or API) and mark it red if expired - can we fetch this info from API? -check https://zedcontrol.zededa.net/api/v1/docs/?urls.primaryName=ZEDEDA%20IAM%20Service#/IdentityAccessManagement/IdentityAccessManagement_GetUserSession /v1/sessions/token/{sessionToken.base64}
 

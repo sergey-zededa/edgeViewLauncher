@@ -33,9 +33,37 @@ const VncViewer = ({ url, onClose, password = '' }) => {
             // If we had a password prompt UI, we'd handle it here
         });
 
+        // Handle Server -> Client Clipboard
+        rfb.addEventListener("clipboard", (e) => {
+            if (e.detail.text) {
+                navigator.clipboard.writeText(e.detail.text).catch(err => {
+                    console.error("Failed to write to clipboard:", err);
+                });
+            }
+        });
+
         rfbRef.current = rfb;
 
+        // Handle Client -> Server Clipboard (Paste)
+        const handlePaste = (e) => {
+            const ctrlOrCmd = e.ctrlKey || e.metaKey;
+            const key = e.key.toLowerCase();
+
+            if (ctrlOrCmd && key === 'v') {
+                navigator.clipboard.readText().then(text => {
+                    if (rfbRef.current) {
+                        rfbRef.current.clipboardPaste(text);
+                    }
+                }).catch(err => {
+                    console.error("Failed to read clipboard:", err);
+                });
+            }
+        };
+
+        window.addEventListener('keydown', handlePaste);
+
         return () => {
+            window.removeEventListener('keydown', handlePaste);
             if (rfbRef.current) {
                 rfbRef.current.disconnect();
             }

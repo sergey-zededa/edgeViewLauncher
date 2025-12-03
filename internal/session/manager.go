@@ -329,36 +329,42 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 		// Setup failed - check if it's "no device online" error
 		if setupErr == ErrNoDeviceOnline {
 			fmt.Printf("DEBUG: Device is not online (attempt %d/%d). The device may not be connected to EdgeView yet.\n", attempt, maxRetries)
-		} else if setupErr == ErrBusyInstance {
-			fmt.Printf("DEBUG: Instance %d is busy (attempt %d/%d).\n", currentInstID, attempt, maxRetries)
-
-			// Try to find an untried instance before applying backoff
-			if config.MaxInst > 1 {
-				foundAlternative := false
-				for instID := 0; instID < config.MaxInst; instID++ {
-					if !triedInstances[instID] {
-						currentInstID = instID
-						foundAlternative = true
-						fmt.Printf("DEBUG: Trying alternative instance %d...\n", currentInstID)
-						break
-					}
-				}
-
-				if foundAlternative {
-					// Close current connection and try the alternative instance immediately
-					wsConn.Close()
-					wsConn = nil
-					lastErr = setupErr
-					continue // Skip the backoff wait and try immediately
-				}
-
-				// All instances tried - reset for next full round
-				fmt.Printf("DEBUG: All %d instances have been tried. Will retry with backoff.\n", config.MaxInst)
-				triedInstances = make(map[int]bool)
-				currentInstID = initialInstID
-			}
 		} else {
 			fmt.Printf("DEBUG: Tunnel setup failed: %v (attempt %d/%d)\n", setupErr, attempt, maxRetries)
+		}
+
+		// Try to find an untried instance before applying backoff
+		// We do this for ANY error, not just ErrBusyInstance, because sometimes the server
+		// just closes the connection without sending a specific error if the instance is busy
+		if config.MaxInst > 1 {
+			foundAlternative := false
+			// Try next instance in round-robin fashion starting from current+1
+			for i := 1; i < config.MaxInst; i++ {
+				nextInstID := (currentInstID + i) % config.MaxInst
+				if !triedInstances[nextInstID] {
+					currentInstID = nextInstID
+					foundAlternative = true
+					fmt.Printf("DEBUG: Switching to alternative instance %d (previous failed)...\n", currentInstID)
+					break
+				}
+			}
+
+			if foundAlternative {
+				// Close current connection and try the alternative instance immediately
+				wsConn.Close()
+				wsConn = nil
+				lastErr = setupErr
+				continue // Skip the backoff wait and try immediately
+			}
+
+			// All instances tried - reset for next full round
+			fmt.Printf("DEBUG: All %d instances have been tried. Will retry with backoff.\n", config.MaxInst)
+			triedInstances = make(map[int]bool)
+			// Don't reset currentInstID to initial, just keep going round-robin or stay on current
+			// But to be safe and consistent, let's reset triedInstances and let the loop continue
+			// The next iteration will use currentInstID (which is the last one tried)
+			// If we want to start over from initial, we can:
+			// currentInstID = initialInstID
 		}
 
 		// Setup failed - retry
