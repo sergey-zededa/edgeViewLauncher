@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { SearchNodes, ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken } from './electronAPI';
-import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight } from 'lucide-react';
+import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
 import Tooltip from './components/Tooltip';
+import About from './components/About';
 import './components/Tooltip.css';
 import './App.css';
 
@@ -13,6 +14,7 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showAbout, setShowAbout] = useState(false);
   const [selectedNode, setSelectedNode] = useState(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [enterprise, setEnterprise] = useState(null);
@@ -841,8 +843,13 @@ function App() {
             onChange={(e) => setQuery(e.target.value)}
           />
         )}
-        <Settings className="settings-icon" size={20} onClick={() => setShowSettings(!showSettings)} />
+        <div className="header-actions">
+          <Info className="settings-icon" size={20} onClick={() => setShowAbout(true)} />
+          <Settings className="settings-icon" size={20} onClick={() => setShowSettings(!showSettings)} />
+        </div>
       </div>
+
+      {showAbout && <About onClose={() => setShowAbout(false)} />}
 
       <div className="main-content">
         {showSettings ? (

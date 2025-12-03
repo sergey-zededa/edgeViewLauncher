@@ -237,6 +237,16 @@ function startGoBackend() {
 }
 
 app.whenReady().then(() => {
+    // Configure About Panel
+    app.setAboutPanelOptions({
+        applicationName: 'EdgeView Launcher',
+        applicationVersion: '1.0.0',
+        copyright: 'Copyright © 2025 ZEDEDA',
+        version: '1.0.0',
+        credits: 'Powered by ZEDEDA',
+        website: 'https://zededa.com'
+    });
+
     startGoBackend();
     createTray();
 

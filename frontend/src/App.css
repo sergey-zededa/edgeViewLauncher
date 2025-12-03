@@ -77,11 +77,18 @@ body {
     color: var(--text-placeholder);
 }
 
+.header-actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    -webkit-app-region: no-drag;
+}
+
 .settings-icon {
     color: var(--text-secondary);
     cursor: pointer;
     -webkit-app-region: no-drag;
-    margin-left: auto;
 }
 
 .settings-icon:hover {
