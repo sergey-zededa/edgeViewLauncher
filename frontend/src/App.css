@@ -514,7 +514,8 @@ body {
 }
 
 .status-grid {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
     gap: 20px;
     margin-bottom: 12px;
 }

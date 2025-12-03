@@ -226,20 +226,19 @@ type cmdOpt struct {
 // 3. Start accepting TCP clients that multiplex over the shared WebSocket
 // Returns the local port number and tunnel ID.
 func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, nodeID string, target string, protocol string) (int, string, error) {
-	// Respect the device's MaxInst limit from the JWT token
-	// For single-instance devices (MaxInst=1), use InstID=0
-	// For multi-instance devices (MaxInst>1), use InstID=1 to avoid conflict with reference client
+	// Determine the initial instance ID based on MaxInst
+	initialInstID := config.InstID
 	if config.MaxInst == 1 {
 		// Single instance device - must use InstID 0
-		config.InstID = 0
+		initialInstID = 0
 		fmt.Printf("DEBUG: Device supports single instance only (MaxInst=1), using InstID=0\n")
 	} else if config.MaxInst > 1 {
-		// Multi-instance device - use InstID 1 (reference client typically uses 0 or 1)
-		config.InstID = 1
-		fmt.Printf("DEBUG: Device supports %d instances (MaxInst=%d), using InstID=1\n", config.MaxInst, config.MaxInst)
+		// Multi-instance device - start with InstID 1 (reference client typically uses 0 or 1)
+		initialInstID = 1
+		fmt.Printf("DEBUG: Device supports %d instances (MaxInst=%d), starting with InstID=1\n", config.MaxInst, config.MaxInst)
 	} else {
 		// Fallback: if MaxInst is not set properly, default to 0
-		config.InstID = 0
+		initialInstID = 0
 		fmt.Printf("DEBUG: MaxInst not set, defaulting to InstID=0\n")
 	}
 
@@ -270,10 +269,18 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 	var clientIP string
 	var lastErr error
 
+	// Track which instances we've tried in the current attempt
+	triedInstances := make(map[int]bool)
+	currentInstID := initialInstID
+
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		if attempt > 1 {
 			fmt.Printf("DEBUG: Retry attempt %d/%d for tunnel setup...\n", attempt, maxRetries)
 		}
+
+		// Set the instance ID for this attempt
+		config.InstID = currentInstID
+		triedInstances[currentInstID] = true
 
 		// Connect to EdgeView
 		wsConn, clientIP, err = m.connectToEdgeView(config)
@@ -323,9 +330,33 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 		if setupErr == ErrNoDeviceOnline {
 			fmt.Printf("DEBUG: Device is not online (attempt %d/%d). The device may not be connected to EdgeView yet.\n", attempt, maxRetries)
 		} else if setupErr == ErrBusyInstance {
-			fmt.Printf("DEBUG: Device is busy (attempt %d/%d). Previous session might still be active.\n", attempt, maxRetries)
-			// For single instance devices, we just have to wait.
-			// For multi-instance, we could try another instance, but for now let's just wait/retry.
+			fmt.Printf("DEBUG: Instance %d is busy (attempt %d/%d).\n", currentInstID, attempt, maxRetries)
+
+			// Try to find an untried instance before applying backoff
+			if config.MaxInst > 1 {
+				foundAlternative := false
+				for instID := 0; instID < config.MaxInst; instID++ {
+					if !triedInstances[instID] {
+						currentInstID = instID
+						foundAlternative = true
+						fmt.Printf("DEBUG: Trying alternative instance %d...\n", currentInstID)
+						break
+					}
+				}
+
+				if foundAlternative {
+					// Close current connection and try the alternative instance immediately
+					wsConn.Close()
+					wsConn = nil
+					lastErr = setupErr
+					continue // Skip the backoff wait and try immediately
+				}
+
+				// All instances tried - reset for next full round
+				fmt.Printf("DEBUG: All %d instances have been tried. Will retry with backoff.\n", config.MaxInst)
+				triedInstances = make(map[int]bool)
+				currentInstID = initialInstID
+			}
 		} else {
 			fmt.Printf("DEBUG: Tunnel setup failed: %v (attempt %d/%d)\n", setupErr, attempt, maxRetries)
 		}

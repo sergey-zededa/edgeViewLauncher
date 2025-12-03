@@ -668,6 +668,8 @@ type SSHStatus struct {
 	MaxSessions int    `json:"maxSessions,omitempty"`
 	Expiry      string `json:"expiry,omitempty"`
 	DebugKnob   bool   `json:"debugKnob"`
+	InstID      int    `json:"instID,omitempty"`
+	MaxInst     int    `json:"maxInst,omitempty"`
 }
 
 // GetSSHStatus checks the SSH status of the device
@@ -690,6 +692,11 @@ func (a *App) GetSSHStatus(nodeID string) SSHStatus {
 	if cached, ok := a.sessionManager.GetCachedSession(nodeID); ok {
 		if time.Now().Before(cached.ExpiresAt) {
 			status.Expiry = fmt.Sprintf("%d", cached.ExpiresAt.Unix())
+		}
+		// Populate instance information from session config
+		if cached.Config != nil {
+			status.InstID = cached.Config.InstID
+			status.MaxInst = cached.Config.MaxInst
 		}
 	}
 

@@ -1144,24 +1144,30 @@ function App() {
                           {sshStatus.status.charAt(0).toUpperCase() + sshStatus.status.slice(1)}
                         </div>
                       </div>
+                      {(sshStatus.instID !== undefined || sshStatus.maxInst !== undefined) && (
+                        <div className="status-item">
+                          <div className="status-label">INSTANCE</div>
+                          <div className="status-value">
+                            {sshStatus.instID !== undefined && sshStatus.maxInst !== undefined
+                              ? `${sshStatus.instID}/${sshStatus.maxInst}`
+                              : '-'}
+                          </div>
+                        </div>
+                      )}
+                      {sshStatus.maxSessions > 0 && (
+                        <div className="status-item">
+                          <div className="status-label">MAX SESSIONS</div>
+                          <div className="status-value">{sshStatus.maxSessions}</div>
+                        </div>
+                      )}
                       <div className="status-item">
                         <div className="status-label">SESSION</div>
-                        <div className={`status-value ${isSessionConnected ? 'success' : 'error'}`} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <span>
-                            {isSessionConnected ? (
-                              <><Check size={14} /> Activated</>
-                            ) : (
-                              <><X size={14} /> Inactive</>
-                            )}
-                          </span>
-                          <button
-                            className="inline-icon-btn"
-                            title="Reset EdgeView session"
-                            onClick={handleResetEdgeView}
-                            style={{ marginLeft: 'auto' }}
-                          >
-                            <RefreshCw size={14} />
-                          </button>
+                        <div className={`status-value ${isSessionConnected ? 'success' : 'error'}`}>
+                          {isSessionConnected ? (
+                            <><Check size={14} /> Activated</>
+                          ) : (
+                            <><X size={14} /> Inactive</>
+                          )}
                         </div>
                       </div>
                       <div className="status-item">
