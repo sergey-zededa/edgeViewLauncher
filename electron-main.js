@@ -206,7 +206,13 @@ ipcMain.handle('open-vnc-window', async (event, options) => {
 });
 
 // Open Terminal Window
-ipcMain.handle('open-terminal-window', async (event, port) => {
+ipcMain.handle('open-terminal-window', async (event, options) => {
+    // Support both old format (just port) and new format (options object)
+    const port = typeof options === 'number' ? options : options.port;
+    const nodeName = typeof options === 'object' ? options.nodeName : 'Unknown Device';
+    const targetInfo = typeof options === 'object' ? options.targetInfo : 'SSH';
+    const tunnelId = typeof options === 'object' ? options.tunnelId : '';
+
     const termWindow = new BrowserWindow({
         width: 800,
         height: 600,
@@ -215,16 +221,50 @@ ipcMain.handle('open-terminal-window', async (event, port) => {
             contextIsolation: true,
             nodeIntegration: false
         },
-        title: 'SSH Terminal',
-        backgroundColor: '#1e1e1e'
+        title: `SSH - ${nodeName}`,
+        backgroundColor: '#1e1e1e',
+        ...(process.platform === 'darwin' ? {
+            titleBarStyle: 'hiddenInset',
+            frame: false
+        } : {})
+    });
+
+    // Build URL with connection parameters
+    const params = new URLSearchParams({
+        mode: 'terminal',
+        port,
+        nodeName,
+        targetInfo,
+        tunnelId: tunnelId || ''
     });
 
     if (process.env.NODE_ENV === 'development') {
-        termWindow.loadURL(`http://localhost:5173?mode=terminal&port=${port}`);
+        termWindow.loadURL(`http://localhost:5173?${params}`);
     } else {
         const indexPath = path.join(__dirname, 'frontend', 'dist', 'index.html');
-        termWindow.loadURL(`file://${indexPath}?mode=terminal&port=${port}`);
+        termWindow.loadFile(indexPath, { search: params.toString() }).catch(err => {
+            console.error('Failed to load terminal window:', err);
+        });
     }
+
+    termWindow.once('ready-to-show', () => {
+        termWindow.show();
+    });
+
+    termWindow.on('closed', () => {
+        // Window closed, cleanup tunnel
+        console.log(`Terminal window closed for ${nodeName}`);
+        if (tunnelId) {
+            // Close the tunnel via API
+            fetch(`http://localhost:8080/api/tunnel/${tunnelId}`, {
+                method: 'DELETE'
+            }).then(() => {
+                console.log(`Tunnel ${tunnelId} closed`);
+            }).catch(err => {
+                console.error(`Failed to close tunnel ${tunnelId}:`, err);
+            });
+        }
+    });
 
     return true;
 });

@@ -1,7 +1,8 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { WebLinksAddon } from 'xterm-addon-web-links';
+import { X } from 'lucide-react';
 import 'xterm/css/xterm.css';
 
 const TerminalView = ({ port }) => {
@@ -9,6 +10,21 @@ const TerminalView = ({ port }) => {
     const wsRef = useRef(null);
     const xtermRef = useRef(null);
     const fitAddonRef = useRef(null);
+    const [isConnected, setIsConnected] = useState(false);
+    const [status, setStatus] = useState('Connecting...');
+    const [connectionInfo, setConnectionInfo] = useState({
+        nodeName: 'Unknown Device',
+        targetInfo: 'EVE-OS SSH'
+    });
+
+    useEffect(() => {
+        // Read connection info from URL parameters
+        const params = new URLSearchParams(window.location.search);
+        setConnectionInfo({
+            nodeName: params.get('nodeName') || 'Unknown Device',
+            targetInfo: params.get('targetInfo') || 'EVE-OS SSH'
+        });
+    }, []);
 
     useEffect(() => {
         if (!port) return;
@@ -40,6 +56,8 @@ const TerminalView = ({ port }) => {
         wsRef.current = ws;
 
         ws.onopen = () => {
+            setStatus('Connected');
+            setIsConnected(true);
             term.writeln('\x1b[1;32mConnected to EdgeView SSH Proxy...\x1b[0m');
             // Send resize event immediately
             const dims = { cols: term.cols, rows: term.rows };
@@ -51,10 +69,14 @@ const TerminalView = ({ port }) => {
         };
 
         ws.onclose = () => {
+            setStatus('Disconnected');
+            setIsConnected(false);
             term.writeln('\r\n\x1b[1;31mConnection closed.\x1b[0m');
         };
 
         ws.onerror = (error) => {
+            setStatus('Error');
+            setIsConnected(false);
             term.writeln(`\r\n\x1b[1;31mWebSocket Error: ${error}\x1b[0m`);
         };
 
@@ -85,6 +107,14 @@ const TerminalView = ({ port }) => {
         };
     }, [port]);
 
+    const handleClose = () => {
+        if (window.electronAPI && window.electronAPI.closeWindow) {
+            window.electronAPI.closeWindow();
+        } else {
+            window.close();
+        }
+    };
+
     return (
         <div
             style={{
@@ -96,17 +126,66 @@ const TerminalView = ({ port }) => {
                 boxSizing: 'border-box',
                 overflow: 'hidden',
                 display: 'flex',
-                flexDirection: 'column',
-                textAlign: 'left'
+                flexDirection: 'column'
             }}
         >
+            {/* Toolbar */}
+            <div className="terminal-toolbar" style={{
+                padding: '10px',
+                paddingLeft: '80px',
+                backgroundColor: '#1a1a1a',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                borderBottom: '1px solid #333',
+                WebkitAppRegion: 'drag',
+                position: 'relative'
+            }}>
+                <div style={{
+                    color: '#999',
+                    fontSize: '13px',
+                    flex: 1
+                }}>
+                    {connectionInfo.nodeName} • {connectionInfo.targetInfo}
+                </div>
+                <div className="terminal-status" style={{
+                    position: 'absolute',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    color: isConnected ? '#4caf50' : '#ff9800',
+                    whiteSpace: 'nowrap',
+                    fontSize: '13px'
+                }}>
+                    <span style={{ marginRight: '8px' }}>●</span>
+                    {status}
+                </div>
+                <div className="terminal-controls" style={{
+                    display: 'flex',
+                    gap: '10px',
+                    WebkitAppRegion: 'no-drag',
+                    flex: 1,
+                    justifyContent: 'flex-end'
+                }}>
+                    <button
+                        onClick={handleClose}
+                        className="icon-btn"
+                        title="Close Terminal"
+                        style={{ color: '#fff' }}
+                    >
+                        <X size={20} />
+                    </button>
+                </div>
+            </div>
+
+            {/* Terminal Container */}
             <div
                 ref={terminalRef}
                 style={{
                     flex: 1,
                     width: '100%',
                     textAlign: 'left',
-                    display: 'block'
+                    display: 'block',
+                    padding: '10px'
                 }}
             />
         </div>
