@@ -55,6 +55,7 @@ body {
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border-color);
     -webkit-app-region: drag;
+    position: relative;
 }
 
 .search-icon {
@@ -80,6 +81,7 @@ body {
     color: var(--text-secondary);
     cursor: pointer;
     -webkit-app-region: no-drag;
+    margin-left: auto;
 }
 
 .settings-icon:hover {
@@ -98,10 +100,14 @@ body {
 }
 
 .selected-node-header {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
     display: flex;
     align-items: center;
     gap: 10px;
-    flex: 1;
+    white-space: nowrap;
 }
 
 /* Main Content Area */
