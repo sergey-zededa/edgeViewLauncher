@@ -51,7 +51,9 @@
       "electron-main.js",
       "electron-preload.js",
       "backendClient.js",
-      "frontend/dist/**/*"
+      "frontend/dist/**/*",
+      "icon.icns",
+      "icon_final_cropped.png"
     ],
     "directories": {
       "output": "dist-electron"

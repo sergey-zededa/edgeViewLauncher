@@ -1,11 +1,64 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const { callJSON } = require('./backendClient');
 
 let mainWindow;
+let tray;
+let isQuitting = false;
 let goBackend;
 const BACKEND_PORT = 8080;
+
+function createTray() {
+    // Try using the PNG first, it's often better for tray icons
+    const iconPath = path.join(__dirname, 'icon_final_cropped.png');
+    console.log('Creating tray with icon:', iconPath);
+
+    let trayIcon = nativeImage.createFromPath(iconPath);
+
+    if (trayIcon.isEmpty()) {
+        console.error('Tray icon is empty! Trying .icns fallback');
+        trayIcon = nativeImage.createFromPath(path.join(__dirname, 'icon.icns'));
+    }
+
+    // Resize to appropriate size for tray (16x16 is standard for macOS menu bar)
+    trayIcon = trayIcon.resize({ width: 16, height: 16 });
+
+    tray = new Tray(trayIcon);
+    tray.setToolTip('EdgeView Launcher');
+    console.log('Tray created successfully');
+
+    const contextMenu = Menu.buildFromTemplate([
+        {
+            label: 'Open EdgeView Launcher',
+            click: () => {
+                if (mainWindow) {
+                    mainWindow.show();
+                    mainWindow.focus();
+                } else {
+                    createWindow();
+                }
+            }
+        },
+        { type: 'separator' },
+        {
+            label: 'Quit',
+            click: () => {
+                isQuitting = true;
+                app.quit();
+            }
+        }
+    ]);
+
+    tray.setContextMenu(contextMenu);
+
+    tray.on('double-click', () => {
+        if (mainWindow) {
+            mainWindow.show();
+            mainWindow.focus();
+        }
+    });
+}
 
 function createWindow() {
     // Platform-specific window options
@@ -36,6 +89,15 @@ function createWindow() {
         mainWindow.show();
     });
 
+    // Handle window close - hide instead of quit unless quitting
+    mainWindow.on('close', (event) => {
+        if (!isQuitting) {
+            event.preventDefault();
+            mainWindow.hide();
+            return false;
+        }
+    });
+
     // Handle errors
     mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
         console.error('Failed to load:', errorCode, errorDescription);
@@ -58,6 +120,26 @@ function createWindow() {
         console.log('Renderer:', message);
     });
 }
+
+// ... (createVncWindow and startGoBackend functions remain unchanged) ...
+
+// We need to keep the original functions but I'm replacing the top block, so I'll skip re-pasting them here 
+// and just continue with the app lifecycle events which are at the bottom of the replaced block in the original file.
+// Wait, I need to be careful not to delete createVncWindow and startGoBackend.
+// The StartLine is 1 and EndLine is 181. This covers everything up to app.on('before-quit').
+// So I need to include createVncWindow and startGoBackend in the replacement or adjust the range.
+// Adjusting range to only cover the top part and the app lifecycle events separately is safer, 
+// but the instruction says "Implement system tray and modify window close behavior".
+// Let's replace the top part (imports, vars, createWindow) and then the bottom part (app events).
+
+// ACTUALLY, I will replace the whole file content for the top part and the bottom part in one go if possible, 
+// but the tool limits me to a contiguous block.
+// Lines 1-60 cover imports, vars, and createWindow.
+// Lines 157-181 cover app lifecycle.
+// I'll do this in two steps or use multi_replace.
+
+// Let's use multi_replace_file_content to be safe and precise.
+
 
 function createVncWindow(options) {
     const { port, nodeName, appName, tunnelId } = options;
@@ -156,6 +238,7 @@ function startGoBackend() {
 
 app.whenReady().then(() => {
     startGoBackend();
+    createTray();
 
     // Give backend a moment to start
     setTimeout(createWindow, 1000);
@@ -163,17 +246,18 @@ app.whenReady().then(() => {
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) {
             createWindow();
+        } else if (mainWindow) {
+            mainWindow.show();
         }
     });
 });
 
 app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') {
-        app.quit();
-    }
+    // Do nothing - keep app running in tray
 });
 
 app.on('before-quit', () => {
+    isQuitting = true;
     // Kill Go backend
     if (goBackend) {
         goBackend.kill();
