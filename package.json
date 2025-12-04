@@ -21,6 +21,7 @@
     "appId": "com.edgeview.launcher",
     "productName": "EdgeView Launcher",
     "win": {
+      "icon": "icon.ico",
       "extraResources": [
         {
           "from": "edgeview-backend.exe",
@@ -40,6 +41,7 @@
       ]
     },
     "linux": {
+      "icon": "icon.png",
       "extraResources": [
         {
           "from": "edgeview-backend",
@@ -53,7 +55,8 @@
       "backendClient.js",
       "frontend/dist/**/*",
       "icon.icns",
-      "icon_final_cropped.png"
+      "icon.ico",
+      "icon.png"
     ],
     "directories": {
       "output": "dist-electron"
