@@ -247,8 +247,8 @@ function startGoBackend() {
     // Platform-specific executable name
     const exeName = process.platform === 'win32' ? 'edgeview-backend.exe' : 'edgeview-backend';
     const goExecutable = process.env.NODE_ENV === 'development'
-        ? path.join(__dirname, 'edgeViewLauncher')
-        : path.join(process.resourcesPath, 'edgeViewLauncher');
+        ? path.join(__dirname, exeName)
+        : path.join(process.resourcesPath, exeName);
 
     console.log('[Go Backend] Starting Go backend:', goExecutable);
 

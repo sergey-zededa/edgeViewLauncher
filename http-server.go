@@ -420,7 +420,7 @@ func (s *HTTPServer) Start() {
 
 	// Get the actual port (useful if s.port was 0)
 	actualPort := listener.Addr().(*net.TCPAddr).Port
-	log.Printf("EdgeView HTTP Server starting on :%d\n", actualPort)
+	fmt.Printf("EdgeView HTTP Server starting on :%d\n", actualPort)
 
 	log.Fatal(http.Serve(listener, handler))
 }
