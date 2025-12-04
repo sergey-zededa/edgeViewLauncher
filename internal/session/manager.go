@@ -1056,6 +1056,68 @@ func (m *Manager) connectToEdgeView(config *zededa.SessionConfig) (*websocket.Co
 	return wsConn, clientIP, nil
 }
 
+// attemptTunnelReconnect tries to re-establish the WebSocket connection for a tunnel
+// when the device goes offline. Returns true if successful.
+func (m *Manager) attemptTunnelReconnect(tunnel *Tunnel) bool {
+	const maxReconnectAttempts = 3
+	const reconnectDelay = 2 * time.Second
+
+	for attempt := 1; attempt <= maxReconnectAttempts; attempt++ {
+		fmt.Printf("TUNNEL[%s] Reconnect attempt %d/%d\n", tunnel.ID, attempt, maxReconnectAttempts)
+
+		// Close old connection
+		tunnel.wsMu.Lock()
+		if tunnel.wsConn != nil {
+			tunnel.wsConn.Close()
+			tunnel.wsConn = nil
+		}
+		tunnel.wsMu.Unlock()
+
+		// Wait before reconnecting
+		time.Sleep(reconnectDelay * time.Duration(attempt))
+
+		// Try to establish new connection
+		wsConn, clientIP, err := m.connectToEdgeView(tunnel.config)
+		if err != nil {
+			fmt.Printf("TUNNEL[%s] Reconnect failed: %v\n", tunnel.ID, err)
+			continue
+		}
+
+		// Send TCP tunnel command
+		query := cmdOpt{
+			Version:      edgeViewVersion,
+			ClientEPAddr: clientIP,
+			Network:      "tcp/" + tunnel.TargetIP,
+			IsJSON:       false,
+		}
+		queryBytes, _ := json.Marshal(query)
+
+		if err := sendWrappedMessage(wsConn, queryBytes, tunnel.config.Key, websocket.TextMessage); err != nil {
+			fmt.Printf("TUNNEL[%s] Reconnect: failed to send tcp command: %v\n", tunnel.ID, err)
+			wsConn.Close()
+			continue
+		}
+
+		// Wait for tcpSetupOK
+		if err := m.waitForTcpSetupOK(wsConn, tunnel.config.Key, 30*time.Second); err != nil {
+			fmt.Printf("TUNNEL[%s] Reconnect: tcpSetupOK failed: %v\n", tunnel.ID, err)
+			wsConn.Close()
+			continue
+		}
+
+		// Success! Update tunnel with new connection
+		tunnel.wsMu.Lock()
+		tunnel.wsConn = wsConn
+		tunnel.clientIP = clientIP
+		tunnel.wsMu.Unlock()
+
+		fmt.Printf("TUNNEL[%s] Reconnect successful!\n", tunnel.ID)
+		return true
+	}
+
+	return false
+}
+
 // tunnelKeepAlive sends periodic ping messages to keep the WebSocket connection alive
 func (m *Manager) tunnelKeepAlive(ctx context.Context, tunnel *Tunnel) {
 	ticker := time.NewTicker(5 * time.Second)
@@ -1117,12 +1179,20 @@ func (m *Manager) tunnelWSReader(ctx context.Context, tunnel *Tunnel) {
 
 			payload, err := unwrapMessage(msg, tunnel.config.Key)
 			if err != nil {
-				// Check for plain-text errors but DON'T terminate - reference implementation
-				// shows "no device online" is a transient message that should be logged and continued
+				// Check for 'no device online' - this means the EdgeView dispatcher
+				// lost connection to the device. We need to attempt reconnection.
 				if strings.Contains(string(msg), "no device online") {
-					fmt.Printf("TUNNEL[%s] Received 'no device online' message (transient, continuing)\n", tunnel.ID)
-					// Reference implementation just logs and continues, doesn't terminate
-					continue
+					fmt.Printf("TUNNEL[%s] Device offline, attempting reconnection...\n", tunnel.ID)
+
+					// Try to reconnect
+					if m.attemptTunnelReconnect(tunnel) {
+						fmt.Printf("TUNNEL[%s] Reconnection successful, resuming\n", tunnel.ID)
+						continue
+					} else {
+						fmt.Printf("TUNNEL[%s] Reconnection failed, closing tunnel\n", tunnel.ID)
+						m.FailTunnel(tunnel.ID, ErrNoDeviceOnline)
+						return
+					}
 				}
 				continue
 			}
