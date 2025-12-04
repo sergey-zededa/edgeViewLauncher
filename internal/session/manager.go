@@ -418,8 +418,13 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 	// Start keep-alive loop
 	go m.tunnelKeepAlive(tunnelCtx, tunnel)
 
+	// Handle protocol-specific logic
+	// "vnc" -> WebSocket listener (for in-app noVNC)
+	// "vnc-tcp" -> TCP listener (for external VNC) but set Type="VNC" to send init packet
+	// "ssh", "tcp" -> TCP listener
+
 	if protocol == "vnc" {
-		// Start HTTP server for WebSocket upgrades
+		// Start HTTP server for WebSocket upgrades (In-App VNC)
 		server := &http.Server{
 			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				upgrader := websocket.Upgrader{
@@ -449,7 +454,15 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 			server.Close()
 		}()
 	} else {
-		// Start accepting TCP client connections
+		// Start accepting TCP client connections (SSH, TCP, VNC-TCP)
+		// For vnc-tcp, we already set Type="VNC" (via ToUpper of protocol? No, wait)
+
+		// Fix: If protocol was "vnc-tcp", we want the tunnel.Type to be "VNC" so that
+		// handleSharedTunnelConnection sends the init packet.
+		if protocol == "vnc-tcp" {
+			tunnel.Type = "VNC"
+		}
+
 		go m.tunnelAcceptLoop(tunnelCtx, listener, tunnel)
 	}
 
@@ -1200,6 +1213,11 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 	// For protocols like VNC that don't send data first, send an empty init packet
 	// to trigger the server-side Dial()
 	if tunnel.Type == "VNC" {
+		// Wait a bit to ensure the device has finished setting up the TCP server structures
+		// after sending tcpSetupOK. This avoids a race condition where the init packet
+		// arrives before the device is ready to handle it, potentially causing a crash.
+		time.Sleep(200 * time.Millisecond)
+
 		initData := tcpData{
 			Version:   0,
 			MappingID: 1,
