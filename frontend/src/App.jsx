@@ -1444,7 +1444,7 @@ function App() {
                                               setTunnelLoadingMessage(`Starting VNC tunnel to localhost:${app.vncPort}...`);
                                               const vncTarget = 'localhost';
                                               addLog(`Starting VNC tunnel to ${vncTarget}:${app.vncPort}...`, 'info');
-                                              const result = await StartTunnel(selectedNode.id, vncTarget, app.vncPort, 'tcp');
+                                              const result = await StartTunnel(selectedNode.id, vncTarget, app.vncPort, 'vnc-tcp');
                                               const port = result.port || result;
                                               const tunnelId = result.tunnelId;
                                               addLog(`VNC tunnel active on localhost:${port}`, 'success');
