@@ -639,6 +639,92 @@ func (c *Client) AddSSHKeyToDevice(nodeID, publicKey string) error {
 	return nil
 }
 
+// SetVGAEnabled enables or disables VGA access on the device
+func (c *Client) SetVGAEnabled(nodeID string, enabled bool) error {
+	// 1. Get Device
+	device, err := c.GetDevice(nodeID)
+	if err != nil {
+		return fmt.Errorf("failed to get device: %w", err)
+	}
+
+	// 2. Update Config Items
+	configItems, ok := device["configItem"].([]interface{})
+	if !ok {
+		configItems = []interface{}{}
+	}
+
+	keyFound := false
+	for i, item := range configItems {
+		if cfg, ok := item.(map[string]interface{}); ok {
+			if cfg["key"] == "debug.enable.vga" {
+				cfg["boolValue"] = enabled
+				configItems[i] = cfg
+				keyFound = true
+				break
+			}
+		}
+	}
+
+	if !keyFound {
+		configItems = append(configItems, map[string]interface{}{
+			"key":       "debug.enable.vga",
+			"boolValue": enabled,
+		})
+	}
+
+	device["configItem"] = configItems
+
+	// 3. Update Device
+	if err := c.UpdateDevice(nodeID, device); err != nil {
+		return fmt.Errorf("failed to update device config: %w", err)
+	}
+
+	return nil
+}
+
+// SetUSBEnabled enables or disables USB access on the device
+func (c *Client) SetUSBEnabled(nodeID string, enabled bool) error {
+	// 1. Get Device
+	device, err := c.GetDevice(nodeID)
+	if err != nil {
+		return fmt.Errorf("failed to get device: %w", err)
+	}
+
+	// 2. Update Config Items
+	configItems, ok := device["configItem"].([]interface{})
+	if !ok {
+		configItems = []interface{}{}
+	}
+
+	keyFound := false
+	for i, item := range configItems {
+		if cfg, ok := item.(map[string]interface{}); ok {
+			if cfg["key"] == "debug.enable.usb" {
+				cfg["boolValue"] = enabled
+				configItems[i] = cfg
+				keyFound = true
+				break
+			}
+		}
+	}
+
+	if !keyFound {
+		configItems = append(configItems, map[string]interface{}{
+			"key":       "debug.enable.usb",
+			"boolValue": enabled,
+		})
+	}
+
+	device["configItem"] = configItems
+
+	// 3. Update Device
+	if err := c.UpdateDevice(nodeID, device); err != nil {
+		return fmt.Errorf("failed to update device config: %w", err)
+	}
+
+	return nil
+}
+
 // GetSSHKeyFromDevice returns the current SSH public key on the device, if any
 func (c *Client) GetSSHKeyFromDevice(nodeID string) (string, error) {
 	device, err := c.GetDevice(nodeID)
@@ -672,6 +758,8 @@ type EdgeViewStatus struct {
 	MaxSessions int
 	Expiry      string
 	DebugKnob   bool
+	VGAEnabled  bool
+	USBEnabled  bool
 }
 
 // GetEdgeViewStatus returns the detailed EdgeView status from the device
@@ -715,6 +803,23 @@ func (c *Client) GetEdgeViewStatus(nodeID string) (*EdgeViewStatus, error) {
 	// 3. Check Debug Knob
 	if knob, ok := device["debugKnob"].(bool); ok {
 		status.DebugKnob = knob
+	}
+
+	// 4. Get VGA and USB status from ConfigItems
+	if configItems, ok := device["configItem"].([]interface{}); ok {
+		for _, item := range configItems {
+			if cfg, ok := item.(map[string]interface{}); ok {
+				if cfg["key"] == "debug.enable.vga" {
+					if val, ok := cfg["boolValue"].(bool); ok {
+						status.VGAEnabled = val
+					}
+				} else if cfg["key"] == "debug.enable.usb" {
+					if val, ok := cfg["boolValue"].(bool); ok {
+						status.USBEnabled = val
+					}
+				}
+			}
+		}
 	}
 
 	return status, nil

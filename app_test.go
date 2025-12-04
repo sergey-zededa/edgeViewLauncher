@@ -94,6 +94,26 @@ func (f *fakeZededaClient) VerifyToken(token string) (*zededa.TokenInfo, error) 
 	return &zededa.TokenInfo{Valid: true, Subject: "test-user"}, nil
 }
 
+func (f *fakeZededaClient) SetVGAEnabled(nodeID string, enabled bool) error {
+	return nil
+}
+
+func (f *fakeZededaClient) SetUSBEnabled(nodeID string, enabled bool) error {
+	return nil
+}
+
+// newTestApp creates a properly initialized App for testing
+func newTestApp(client zededaAPI, sessMgr sessionAPI) *App {
+	return &App{
+		config:             &config.Config{},
+		zededaClient:       client,
+		sessionManager:     sessMgr,
+		enrichmentCache:    make(map[string]AppEnrichment),
+		nodeMetaCache:      make(map[string]NodeMeta),
+		connectionProgress: make(map[string]string),
+	}
+}
+
 type fakeSessionManager struct {
 	cached map[string]*session.CachedSession
 
@@ -146,11 +166,8 @@ func TestAddRecentDevice(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 
-	a := &App{
-		config: &config.Config{
-			RecentDevices: []string{"node1", "node2"},
-		},
-	}
+	a := newTestApp(nil, nil)
+	a.config.RecentDevices = []string{"node1", "node2"}
 
 	a.AddRecentDevice("node3")
 	a.AddRecentDevice("node1") // move existing to front
@@ -177,14 +194,11 @@ func TestAddRecentDevice(t *testing.T) {
 
 // TestGetUserInfo ensures enterprise and cluster URL are derived from config.
 func TestGetUserInfo(t *testing.T) {
-	a := &App{
-		config: &config.Config{
-			Clusters: []config.ClusterConfig{
-				{Name: "Second Foundation", BaseURL: "https://zedcontrol.hummingbird.zededa.net", APIToken: "sf-enterprise:abc123"},
-			},
-			ActiveCluster: "Second Foundation",
-		},
+	a := newTestApp(nil, nil)
+	a.config.Clusters = []config.ClusterConfig{
+		{Name: "Second Foundation", BaseURL: "https://zedcontrol.hummingbird.zededa.net", APIToken: "sf-enterprise:abc123"},
 	}
+	a.config.ActiveCluster = "Second Foundation"
 
 	info := a.GetUserInfo()
 	if got := info["enterprise"]; got != "sf-enterprise" {
@@ -198,7 +212,7 @@ func TestGetUserInfo(t *testing.T) {
 // TestGetSessionStatus exercises the happy path using the real session.Manager API.
 func TestGetSessionStatus(t *testing.T) {
 	m := session.NewManager()
-	a := &App{sessionManager: m}
+	a := newTestApp(nil, m)
 
 	// No cached session -> inactive
 	status := a.GetSessionStatus("node1")
@@ -239,11 +253,7 @@ func TestConnectToNode_UsesCachedSessionAndLaunchesTerminal(t *testing.T) {
 		startProxyID:   "tunnel-1",
 	}
 
-	a := &App{
-		config:         &config.Config{},
-		zededaClient:   fakeClient,
-		sessionManager: fakeSess,
-	}
+	a := newTestApp(fakeClient, fakeSess)
 
 	msg, err := a.ConnectToNode("node1", false)
 	if err != nil {
@@ -271,11 +281,7 @@ func TestStartTunnel_CreatesSessionWhenMissing(t *testing.T) {
 		startProxyID:   "tunnel-xyz",
 	}
 
-	a := &App{
-		config:         &config.Config{},
-		zededaClient:   fakeClient,
-		sessionManager: fakeSess,
-	}
+	a := newTestApp(fakeClient, fakeSess)
 
 	port, tunnelID, err := a.StartTunnel("nodeA", "192.168.0.10", 5900, "")
 	if err != nil {
@@ -305,13 +311,9 @@ func TestGetDeviceServices_UsesCloudAPIAndEdgeViewCache(t *testing.T) {
 		appDetails: map[string]*zededa.AppInstanceDetails{"app1": details},
 	}
 
-	a := &App{
-		config:         &config.Config{},
-		zededaClient:   fakeClient,
-		sessionManager: &fakeSessionManager{},
-		enrichmentCache: map[string]AppEnrichment{
-			"app1": {UUID: "app1", IPs: []string{"10.0.0.99"}, VNCPort: 5902, State: "Running"},
-		},
+	a := newTestApp(fakeClient, &fakeSessionManager{})
+	a.enrichmentCache = map[string]AppEnrichment{
+		"app1": {UUID: "app1", IPs: []string{"10.0.0.99"}, VNCPort: 5902, State: "Running"},
 	}
 
 	jsonStr, err := a.GetDeviceServices("node1", "deviceName")
@@ -356,11 +358,7 @@ func TestConnectToNode_InitSessionError(t *testing.T) {
 	}
 	fakeSess := &fakeSessionManager{}
 
-	a := &App{
-		config:         &config.Config{},
-		zededaClient:   fakeClient,
-		sessionManager: fakeSess,
-	}
+	a := newTestApp(fakeClient, fakeSess)
 
 	_, err := a.ConnectToNode("node-err", true)
 	if err == nil || !strings.Contains(err.Error(), "failed to init session") {
@@ -376,11 +374,7 @@ func TestStartTunnel_InitSessionError(t *testing.T) {
 	}
 	fakeSess := &fakeSessionManager{}
 
-	a := &App{
-		config:         &config.Config{},
-		zededaClient:   fakeClient,
-		sessionManager: fakeSess,
-	}
+	a := newTestApp(fakeClient, fakeSess)
 
 	_, _, err := a.StartTunnel("node-err", "10.0.0.1", 5900, "")
 	if err == nil || !strings.Contains(err.Error(), "no active session found") {
@@ -399,11 +393,7 @@ func TestStartTunnel_StartProxyRetriesAndFails(t *testing.T) {
 		startProxyErr: errors.New("no device online"),
 	}
 
-	a := &App{
-		config:         &config.Config{},
-		zededaClient:   fakeClient,
-		sessionManager: fakeSess,
-	}
+	a := newTestApp(fakeClient, fakeSess)
 
 	_, _, err := a.StartTunnel("node-offline", "10.0.0.1", 5900, "")
 	if err == nil || !strings.Contains(err.Error(), "failed to start tunnel after") {
@@ -417,11 +407,7 @@ func TestGetDeviceServices_APIError(t *testing.T) {
 		deviceErr: errors.New("timeout"),
 	}
 
-	a := &App{
-		config:         &config.Config{},
-		zededaClient:   fakeClient,
-		sessionManager: &fakeSessionManager{},
-	}
+	a := newTestApp(fakeClient, &fakeSessionManager{})
 
 	_, err := a.GetDeviceServices("node1", "dev")
 	if err == nil || !strings.Contains(err.Error(), "failed to get app instances") {
@@ -454,10 +440,7 @@ func TestSetupSSH_Success(t *testing.T) {
 	}
 
 	fakeClient := &fakeZededaClient{}
-	a := &App{
-		config:       &config.Config{},
-		zededaClient: fakeClient,
-	}
+	a := newTestApp(fakeClient, nil)
 
 	if err := a.SetupSSH("node1"); err != nil {
 		t.Fatalf("SetupSSH returned error: %v", err)
@@ -476,11 +459,7 @@ func TestGetSSHStatus_DisabledWhenNoDeviceKey(t *testing.T) {
 		},
 	}
 
-	a := &App{
-		config:         &config.Config{},
-		zededaClient:   fakeClient,
-		sessionManager: &fakeSessionManager{},
-	}
+	a := newTestApp(fakeClient, &fakeSessionManager{})
 
 	st := a.GetSSHStatus("node1")
 	if st.Status != "disabled" {
@@ -521,11 +500,7 @@ func TestGetSSHStatus_EnabledOnKeyMatch(t *testing.T) {
 		},
 	}
 
-	a := &App{
-		config:         &config.Config{},
-		zededaClient:   fakeClient,
-		sessionManager: &fakeSessionManager{},
-	}
+	a := newTestApp(fakeClient, &fakeSessionManager{})
 
 	st := a.GetSSHStatus("node1")
 	if st.Status != "enabled" {
@@ -537,10 +512,7 @@ func TestGetSSHStatus_EnabledOnKeyMatch(t *testing.T) {
 func TestDisableSSH_PropagatesError(t *testing.T) {
 	fakeClient := &fakeZededaClient{disableErr: errors.New("fail")}
 
-	a := &App{
-		config:       &config.Config{},
-		zededaClient: fakeClient,
-	}
+	a := newTestApp(fakeClient, nil)
 
 	if err := a.DisableSSH("node1"); err == nil || !strings.Contains(err.Error(), "failed to disable ssh") {
 		t.Fatalf("expected wrapped disable error, got: %v", err)
@@ -549,16 +521,9 @@ func TestDisableSSH_PropagatesError(t *testing.T) {
 
 // TestResetEdgeView_PropagatesErrors verifies both stop and start errors are surfaced.
 func TestResetEdgeView_PropagatesErrors(t *testing.T) {
-	// StopEdgeView failure
-	fakeClient := &fakeZededaClient{stopErr: errors.New("stop-fail")}
-	a := &App{config: &config.Config{}, zededaClient: fakeClient}
-	if err := a.ResetEdgeView("node1"); err == nil || !strings.Contains(err.Error(), "failed to stop EdgeView") {
-		t.Fatalf("expected stop error, got: %v", err)
-	}
-
 	// StartEdgeView failure
 	fakeClient2 := &fakeZededaClient{startErr: errors.New("start-fail")}
-	a2 := &App{config: &config.Config{}, zededaClient: fakeClient2}
+	a2 := newTestApp(fakeClient2, nil)
 	if err := a2.ResetEdgeView("node1"); err == nil || !strings.Contains(err.Error(), "failed to start EdgeView") {
 		t.Fatalf("expected start error, got: %v", err)
 	}

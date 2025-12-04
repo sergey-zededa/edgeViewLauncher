@@ -27,6 +27,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     closeTunnel: (tunnelId) => ipcRenderer.invoke('api-call', `/api/tunnel/${tunnelId}`, 'DELETE'),
     listTunnels: (nodeId) => ipcRenderer.invoke('api-call', `/api/tunnels?nodeId=${nodeId}`, 'GET'),
     getConnectionProgress: (nodeId) => ipcRenderer.invoke('api-call', `/api/connection-progress?nodeId=${nodeId}`, 'GET'),
+    setVGAEnabled: (nodeId, enabled) => ipcRenderer.invoke('api-call', '/api/set-vga', 'POST', { nodeId, enabled }),
+    setUSBEnabled: (nodeId, enabled) => ipcRenderer.invoke('api-call', '/api/set-usb', 'POST', { nodeId, enabled }),
     openTerminalWindow: (port) => ipcRenderer.invoke('open-terminal-window', port),
     openVncWindow: (options) => ipcRenderer.invoke('open-vnc-window', options),
     openExternal: (url) => ipcRenderer.invoke('open-external', url),

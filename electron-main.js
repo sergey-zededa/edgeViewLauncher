@@ -86,8 +86,28 @@ function createWindow() {
 
     mainWindow = new BrowserWindow(windowOptions);
 
-    // Remove the default menu (File, Edit, View, etc.) to look more native
-    Menu.setApplicationMenu(null);
+    // Remove/minimize the default menu
+    if (process.platform === 'darwin') {
+        // macOS requires at least an app menu, create minimal menu without dev tools
+        const template = [
+            {
+                label: app.name,
+                submenu: [
+                    { role: 'about' },
+                    { type: 'separator' },
+                    { role: 'hide' },
+                    { role: 'hideOthers' },
+                    { role: 'unhide' },
+                    { type: 'separator' },
+                    { role: 'quit' }
+                ]
+            }
+        ];
+        Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+    } else {
+        // Windows/Linux: Remove menu completely
+        Menu.setApplicationMenu(null);
+    }
 
     // Show window when ready
     mainWindow.once('ready-to-show', () => {

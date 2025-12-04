@@ -26,6 +26,8 @@ type zededaAPI interface {
 	DisableSSH(nodeID string) error
 	StopEdgeView(nodeID string) error
 	StartEdgeView(nodeID string) error
+	SetVGAEnabled(nodeID string, enabled bool) error
+	SetUSBEnabled(nodeID string, enabled bool) error
 	GetDeviceAppInstances(deviceID string) ([]zededa.AppInstance, error)
 	GetAppInstanceDetails(appInstanceID string) (*zededa.AppInstanceDetails, error)
 	GetDevice(nodeID string) (map[string]interface{}, error)
@@ -662,6 +664,16 @@ func (a *App) SetupSSH(nodeID string) error {
 	return nil
 }
 
+// SetVGAEnabled enables or disables VGA access on a device
+func (a *App) SetVGAEnabled(nodeID string, enabled bool) error {
+	return a.zededaClient.SetVGAEnabled(nodeID, enabled)
+}
+
+// SetUSBEnabled enables or disables USB access on a device
+func (a *App) SetUSBEnabled(nodeID string, enabled bool) error {
+	return a.zededaClient.SetUSBEnabled(nodeID, enabled)
+}
+
 type SSHStatus struct {
 	Status      string `json:"status"` // e.g., "disabled", "enabled", "mismatch", "error"
 	Details     string `json:"details,omitempty"`
@@ -670,6 +682,8 @@ type SSHStatus struct {
 	DebugKnob   bool   `json:"debugKnob"`
 	InstID      int    `json:"instID,omitempty"`
 	MaxInst     int    `json:"maxInst,omitempty"`
+	VGAEnabled  bool   `json:"vgaEnabled"`
+	USBEnabled  bool   `json:"usbEnabled"`
 }
 
 // GetSSHStatus checks the SSH status of the device
@@ -702,6 +716,14 @@ func (a *App) GetSSHStatus(nodeID string) SSHStatus {
 
 	if deviceKey == "" {
 		status.Status = "disabled"
+		status.MaxInst = evStatus.MaxSessions
+	}
+
+	// Include VGA and USB status
+	status.VGAEnabled = evStatus.VGAEnabled
+	status.USBEnabled = evStatus.USBEnabled
+
+	if status.Status == "disabled" {
 		return status
 	}
 
