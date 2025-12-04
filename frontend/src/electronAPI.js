@@ -50,6 +50,10 @@ export const SetUSBEnabled = (nodeId, enabled) => {
     return api.setUSBEnabled(nodeId, enabled).then(res => res.data);
 };
 
+export const SetConsoleEnabled = (nodeId, enabled) => {
+    return api.setConsoleEnabled(nodeId, enabled).then(res => res.data);
+};
+
 export const DisableSSH = (nodeId) => {
     return api.disableSSH(nodeId).then(res => res.data);
 };

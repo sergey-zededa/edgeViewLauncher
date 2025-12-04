@@ -240,6 +240,27 @@ func (s *HTTPServer) handleSetUSBEnabled(w http.ResponseWriter, r *http.Request)
 	s.sendSuccess(w, map[string]bool{"usbEnabled": req.Enabled})
 }
 
+type SetConsoleEnabledRequest struct {
+	NodeID  string `json:"nodeId"`
+	Enabled bool   `json:"enabled"`
+}
+
+func (s *HTTPServer) handleSetConsoleEnabled(w http.ResponseWriter, r *http.Request) {
+	var req SetConsoleEnabledRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, err)
+		return
+	}
+
+	err := s.app.SetConsoleEnabled(req.NodeID, req.Enabled)
+	if err != nil {
+		s.sendError(w, err)
+		return
+	}
+
+	s.sendSuccess(w, map[string]bool{"consoleEnabled": req.Enabled})
+}
+
 func (s *HTTPServer) handleResetEdgeView(w http.ResponseWriter, r *http.Request) {
 	var req NodeIDRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -380,6 +401,7 @@ func (s *HTTPServer) Start() {
 	router.HandleFunc("/api/verify-token", s.handleVerifyToken)
 	router.HandleFunc("/api/set-vga", s.handleSetVGAEnabled)
 	router.HandleFunc("/api/set-usb", s.handleSetUSBEnabled)
+	router.HandleFunc("/api/set-console", s.handleSetConsoleEnabled)
 
 	// Health check
 	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {

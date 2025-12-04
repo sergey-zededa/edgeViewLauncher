@@ -88,7 +88,7 @@ function createWindow() {
 
     // Remove/minimize the default menu
     if (process.platform === 'darwin') {
-        // macOS requires at least an app menu, create minimal menu without dev tools
+        // macOS requires at least an app menu, create menu with Edit commands for paste support
         const template = [
             {
                 label: app.name,
@@ -100,6 +100,20 @@ function createWindow() {
                     { role: 'unhide' },
                     { type: 'separator' },
                     { role: 'quit' }
+                ]
+            },
+            {
+                label: 'Edit',
+                submenu: [
+                    { role: 'undo' },
+                    { role: 'redo' },
+                    { type: 'separator' },
+                    { role: 'cut' },
+                    { role: 'copy' },
+                    { role: 'paste' },
+                    { role: 'pasteAndMatchStyle' },
+                    { role: 'delete' },
+                    { role: 'selectAll' }
                 ]
             }
         ];

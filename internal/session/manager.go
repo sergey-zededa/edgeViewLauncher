@@ -1128,15 +1128,15 @@ func (m *Manager) tunnelWSReader(ctx context.Context, tunnel *Tunnel) {
 
 			// Check for control messages
 			payloadStr := string(payload)
-			if strings.Contains(payloadStr, "+++Done+++") {
-				fmt.Printf("TUNNEL[%s] Received +++Done+++, closing\n", tunnel.ID)
+			if strings.Contains(payloadStr, "+++Done+++") || strings.Contains(payloadStr, "+++tcpDone+++") {
+				fmt.Printf("TUNNEL[%s] Received Done message, closing\n", tunnel.ID)
 				return
 			}
 
 			// Parse tcpData
 			var td tcpData
 			if err := json.Unmarshal(payload, &td); err != nil {
-				fmt.Printf("TUNNEL[%s] Failed to parse tcpData: %v\n", tunnel.ID, err)
+				fmt.Printf("TUNNEL[%s] Failed to parse tcpData: %v. Payload: %q\n", tunnel.ID, err, payloadStr)
 				continue // Not tcpData, skip
 			}
 			// Data received for channel

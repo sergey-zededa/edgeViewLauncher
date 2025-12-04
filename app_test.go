@@ -102,6 +102,10 @@ func (f *fakeZededaClient) SetUSBEnabled(nodeID string, enabled bool) error {
 	return nil
 }
 
+func (f *fakeZededaClient) SetConsoleEnabled(nodeID string, enabled bool) error {
+	return nil
+}
+
 // newTestApp creates a properly initialized App for testing
 func newTestApp(client zededaAPI, sessMgr sessionAPI) *App {
 	return &App{
