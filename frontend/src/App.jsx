@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { SearchNodes, ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken } from './electronAPI';
+import { SearchNodes, ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken } from './electronAPI';
 import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
 import Tooltip from './components/Tooltip';
@@ -650,6 +650,32 @@ function App() {
     }
   };
 
+  const handleToggleVGA = async (enabled) => {
+    if (!selectedNode) return;
+    setLoadingSSH(true);
+    try {
+      await SetVGAEnabled(selectedNode.id, enabled);
+      loadSSHStatus(selectedNode.id);  // Refresh to get updated status
+      addLog(`VGA access ${enabled ? 'enabled' : 'disabled'}`, 'success');
+    } catch (err) {
+      alert("Failed to toggle VGA: " + err);
+      setLoadingSSH(false);
+    }
+  };
+
+  const handleToggleUSB = async (enabled) => {
+    if (!selectedNode) return;
+    setLoadingSSH(true);
+    try {
+      await SetUSBEnabled(selectedNode.id, enabled);
+      loadSSHStatus(selectedNode.id);  // Refresh to get updated status
+      addLog(`USB access ${enabled ? 'enabled' : 'disabled'}`, 'success');
+    } catch (err) {
+      alert("Failed to toggle USB: " + err);
+      setLoadingSSH(false);
+    }
+  };
+
   const handleResetEdgeView = async () => {
     if (!selectedNode) {
       setError({ type: 'error', message: "No node selected for reset." });
@@ -1230,6 +1256,38 @@ function App() {
                           </button>
                         </div>
                       )}
+                    </div>
+
+                    {/* VGA Access Control */}
+                    <div className="ssh-controls" style={{ borderTop: '1px solid #333', paddingTop: '15px', marginTop: '15px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                        <div className={`status-badge ${sshStatus.vgaEnabled ? 'enabled' : 'disabled'}`}>
+                          <Monitor size={14} /> VGA {sshStatus.vgaEnabled ? 'Enabled' : 'Disabled'}
+                        </div>
+                        <button
+                          className={`action-link ${sshStatus.vgaEnabled ? 'danger' : ''}`}
+                          onClick={() => handleToggleVGA(!sshStatus.vgaEnabled)}
+                          title={sshStatus.vgaEnabled ? "Disable VGA display output" : "Enable VGA display output"}
+                        >
+                          {sshStatus.vgaEnabled ? 'Disable VGA' : 'Enable VGA'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* USB Access Control */}
+                    <div className="ssh-controls" style={{ borderTop: '1px solid #333', paddingTop: '15px', marginTop: '15px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                        <div className={`status-badge ${sshStatus.usbEnabled ? 'enabled' : 'disabled'}`}>
+                          <Activity size={14} /> USB {sshStatus.usbEnabled ? 'Enabled' : 'Disabled'}
+                        </div>
+                        <button
+                          className={`action-link ${sshStatus.usbEnabled ? 'danger' : ''}`}
+                          onClick={() => handleToggleUSB(!sshStatus.usbEnabled)}
+                          title={sshStatus.usbEnabled ? "Disable USB keyboard access" : "Enable USB keyboard access"}
+                        >
+                          {sshStatus.usbEnabled ? 'Disable USB' : 'Enable USB'}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ) : (

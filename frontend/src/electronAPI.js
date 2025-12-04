@@ -42,6 +42,14 @@ export const GetSSHStatus = (nodeId) => {
     return api.getSSHStatus(nodeId).then(res => res.data);
 };
 
+export const SetVGAEnabled = (nodeId, enabled) => {
+    return api.setVGAEnabled(nodeId, enabled).then(res => res.data);
+};
+
+export const SetUSBEnabled = (nodeId, enabled) => {
+    return api.setUSBEnabled(nodeId, enabled).then(res => res.data);
+};
+
 export const DisableSSH = (nodeId) => {
     return api.disableSSH(nodeId).then(res => res.data);
 };

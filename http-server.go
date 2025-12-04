@@ -51,6 +51,16 @@ type NodeIDRequest struct {
 	NodeName string `json:"nodeName"` // Optional, used for some API calls
 }
 
+type SetVGAEnabledRequest struct {
+	NodeID  string `json:"nodeId"`
+	Enabled bool   `json:"enabled"`
+}
+
+type SetUSBEnabledRequest struct {
+	NodeID  string `json:"nodeId"`
+	Enabled bool   `json:"enabled"`
+}
+
 type APIResponse struct {
 	Success bool        `json:"success"`
 	Data    interface{} `json:"data,omitempty"`
@@ -198,6 +208,38 @@ func (s *HTTPServer) handleDisableSSH(w http.ResponseWriter, r *http.Request) {
 	s.sendSuccess(w, map[string]bool{"disabled": true})
 }
 
+func (s *HTTPServer) handleSetVGAEnabled(w http.ResponseWriter, r *http.Request) {
+	var req SetVGAEnabledRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, err)
+		return
+	}
+
+	err := s.app.SetVGAEnabled(req.NodeID, req.Enabled)
+	if err != nil {
+		s.sendError(w, err)
+		return
+	}
+
+	s.sendSuccess(w, map[string]bool{"vgaEnabled": req.Enabled})
+}
+
+func (s *HTTPServer) handleSetUSBEnabled(w http.ResponseWriter, r *http.Request) {
+	var req SetUSBEnabledRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, err)
+		return
+	}
+
+	err := s.app.SetUSBEnabled(req.NodeID, req.Enabled)
+	if err != nil {
+		s.sendError(w, err)
+		return
+	}
+
+	s.sendSuccess(w, map[string]bool{"usbEnabled": req.Enabled})
+}
+
 func (s *HTTPServer) handleResetEdgeView(w http.ResponseWriter, r *http.Request) {
 	var req NodeIDRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -336,6 +378,8 @@ func (s *HTTPServer) Start() {
 	router.HandleFunc("/api/ssh/term", s.handleSSHTerminal)
 	router.HandleFunc("/api/connection-progress", s.handleGetConnectionProgress)
 	router.HandleFunc("/api/verify-token", s.handleVerifyToken)
+	router.HandleFunc("/api/set-vga", s.handleSetVGAEnabled)
+	router.HandleFunc("/api/set-usb", s.handleSetUSBEnabled)
 
 	// Health check
 	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
