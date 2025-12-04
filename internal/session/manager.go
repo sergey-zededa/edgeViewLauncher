@@ -1127,10 +1127,18 @@ func (m *Manager) tunnelWSReader(ctx context.Context, tunnel *Tunnel) {
 			}
 
 			// Check for control messages
+			// NOTE: We only close on +++tcpDone+++ which is the TCP-specific termination signal.
+			// +++Done+++ is a generic command output marker and should be IGNORED for TCP tunnels.
+			// The info banner from EdgeView ends with +++Done+++ but that does NOT mean the tunnel should close.
 			payloadStr := string(payload)
-			if strings.Contains(payloadStr, "+++Done+++") || strings.Contains(payloadStr, "+++tcpDone+++") {
-				fmt.Printf("TUNNEL[%s] Received Done message, closing\n", tunnel.ID)
+			if strings.Contains(payloadStr, "+++tcpDone+++") {
+				fmt.Printf("TUNNEL[%s] Received tcpDone message, closing\n", tunnel.ID)
 				return
+			}
+			// Log when we see +++Done+++ but explicitly ignore it for TCP tunnels
+			if strings.Contains(payloadStr, "+++Done+++") {
+				fmt.Printf("TUNNEL[%s] Ignoring +++Done+++ message (not +++tcpDone+++)\n", tunnel.ID)
+				continue
 			}
 
 			// Parse tcpData

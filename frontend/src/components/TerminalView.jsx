@@ -83,49 +83,64 @@ const TerminalView = ({ port }) => {
         fitAddonRef.current = fitAddon;
 
         // Connect to WebSocket
-        const wsUrl = `ws://localhost:8080/api/ssh/term?port=${port}`;
-        const ws = new WebSocket(wsUrl);
-        wsRef.current = ws;
+        const connectWebSocket = async () => {
+            try {
+                let backendPort = 8080; // Default fallback
+                if (window.electronAPI && window.electronAPI.getBackendPort) {
+                    const port = await window.electronAPI.getBackendPort();
+                    if (port) backendPort = port;
+                }
 
-        ws.onopen = () => {
-            setStatus('Connected');
-            setIsConnected(true);
-            term.writeln('\x1b[1;32mConnected to EdgeView SSH Proxy...\x1b[0m');
-            // Send resize event immediately
-            const dims = { cols: term.cols, rows: term.rows };
-            ws.send(JSON.stringify({ type: 'resize', ...dims }));
-            term.focus();
-        };
+                const wsUrl = `ws://localhost:${backendPort}/api/ssh/term?port=${port}`;
+                const ws = new WebSocket(wsUrl);
+                wsRef.current = ws;
 
-        ws.onmessage = (event) => {
-            term.write(event.data);
-        };
+                ws.onopen = () => {
+                    setStatus('Connected');
+                    setIsConnected(true);
+                    term.writeln('\x1b[1;32mConnected to EdgeView SSH Proxy...\x1b[0m');
+                    // Send resize event immediately
+                    const dims = { cols: term.cols, rows: term.rows };
+                    ws.send(JSON.stringify({ type: 'resize', ...dims }));
+                    term.focus();
+                };
 
-        ws.onclose = () => {
-            setStatus('Disconnected');
-            setIsConnected(false);
-            term.writeln('\r\n\x1b[1;31mConnection closed.\x1b[0m');
-        };
+                ws.onmessage = (event) => {
+                    term.write(event.data);
+                };
 
-        ws.onerror = (error) => {
-            setStatus('Error');
-            setIsConnected(false);
-            term.writeln(`\r\n\x1b[1;31mWebSocket Error: ${error}\x1b[0m`);
-        };
+                ws.onclose = () => {
+                    setStatus('Disconnected');
+                    setIsConnected(false);
+                    term.writeln('\r\n\x1b[1;31mConnection closed.\x1b[0m');
+                };
 
-        // Terminal -> WebSocket
-        term.onData((data) => {
-            if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'input', data }));
+                ws.onerror = (error) => {
+                    setStatus('Error');
+                    setIsConnected(false);
+                    term.writeln(`\r\n\x1b[1;31mWebSocket Error: ${error}\x1b[0m`);
+                };
+
+                // Terminal -> WebSocket
+                term.onData((data) => {
+                    if (ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ type: 'input', data }));
+                    }
+                });
+            } catch (err) {
+                console.error('Failed to connect to backend:', err);
+                term.writeln(`\r\n\x1b[1;31mFailed to connect to backend: ${err}\x1b[0m`);
             }
-        });
+        };
+
+        connectWebSocket();
 
         // Handle Resize
         const handleResize = () => {
             fitAddon.fit();
-            if (ws.readyState === WebSocket.OPEN) {
+            if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
                 const dims = { cols: term.cols, rows: term.rows };
-                ws.send(JSON.stringify({ type: 'resize', ...dims }));
+                wsRef.current.send(JSON.stringify({ type: 'resize', ...dims }));
             }
         };
 
@@ -133,8 +148,8 @@ const TerminalView = ({ port }) => {
 
         return () => {
             window.removeEventListener('resize', handleResize);
-            if (ws.readyState === WebSocket.OPEN) {
-                ws.close();
+            if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                wsRef.current.close();
             }
             term.dispose();
         };

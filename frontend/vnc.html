@@ -188,6 +188,70 @@
                 rfb.scaleViewport = false;
                 rfb.resizeSession = false;
 
+                const resizeWindowToFit = () => {
+                    if (!rfb) return;
+
+                    // Get remote screen dimensions from noVNC
+                    // noVNC stores the display in rfb._display (internal property)
+                    let width = 0;
+                    let height = 0;
+
+                    // Try accessing the internal _display property which has the framebuffer dimensions
+                    if (rfb._display && rfb._display._fb_width && rfb._display._fb_height) {
+                        width = rfb._display._fb_width;
+                        height = rfb._display._fb_height;
+                        console.log(`Got dimensions from _display: ${width}x${height}`);
+                    }
+
+                    // Fallback: try to get from the canvas element
+                    if (!width || !height) {
+                        const canvasElem = document.querySelector('#vnc-canvas canvas');
+                        if (canvasElem) {
+                            width = canvasElem.width;
+                            height = canvasElem.height;
+                            console.log(`Got dimensions from canvas: ${width}x${height}`);
+                        }
+                    }
+
+                    // Another fallback: try rfb._screen if it exists
+                    if (!width || !height) {
+                        if (rfb._screen) {
+                            const rect = rfb._screen.getBoundingClientRect();
+                            if (rect.width && rect.height) {
+                                width = rect.width;
+                                height = rect.height;
+                                console.log(`Got dimensions from _screen rect: ${width}x${height}`);
+                            }
+                        }
+                    }
+
+                    if (width && height) {
+                        // Calculate total size including header and controls
+                        const header = document.getElementById('vnc-header');
+                        const controls = document.getElementById('vnc-controls');
+
+                        const headerHeight = header ? header.offsetHeight : 40;
+                        const controlsHeight = controls ? controls.offsetHeight : 40;
+
+                        // Enforce a minimum width to ensure controls don't wrap
+                        const minWidth = 680;
+                        const totalWidth = Math.max(width, minWidth);
+
+                        // Add buffer for borders/shadows/rounding
+                        const heightBuffer = 10;
+                        const totalHeight = Math.ceil(height + headerHeight + controlsHeight + heightBuffer);
+                        const totalWidthInt = Math.ceil(totalWidth);
+
+                        console.log(`Resizing window to ${totalWidthInt}x${totalHeight} (Remote: ${width}x${height}, Header: ${headerHeight}, Controls: ${controlsHeight})`);
+
+                        if (window.electronAPI && window.electronAPI.resizeWindow) {
+                            window.electronAPI.resizeWindow(totalWidthInt, totalHeight);
+                        }
+                    } else {
+                        console.warn('Could not determine remote screen dimensions');
+                    }
+                };
+
                 rfb.addEventListener("connect", () => {
                     if (loading && loading.parentNode) {
                         loading.remove();
@@ -197,6 +261,14 @@
                     statusDot.classList.add('connected');
                     rfb.focus();
                     retryCount = 0; // Reset retry count on successful connection
+
+                    // Attempt resize after a short delay to ensure display is ready
+                    setTimeout(resizeWindowToFit, 500);
+                });
+
+                rfb.addEventListener("desktopresize", () => {
+                    console.log("Desktop resized");
+                    resizeWindowToFit();
                 });
 
                 rfb.addEventListener("disconnect", (e) => {
