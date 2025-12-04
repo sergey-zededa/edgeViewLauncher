@@ -35,6 +35,7 @@ Is there any additional info we need to get from parsing the script which we don
 + Options to enable USB, VGA and console
 + fix the back arrow overlapping with traffic lights on the device details page header
 + add status message on failing to connect to the controller/cluster when receiving the list of devices
++ make the backend port dynamic? Not hard coded 8080
 
 
 + auto day/night scheme in line with OS ??? Need to test
@@ -44,12 +45,13 @@ Is there any additional info we need to get from parsing the script which we don
 - remove Standard window headers/menus in Windows
 
 UI:
+- Autosize VNC window to fit all the original remote screen content and our added UI elements (i.e. keyboard options, etc.)
 - when Application Window closes I need App Icon to disappear from MacOS dock only leaving it present/resident in the system tray
 - System tray menu is to show minimalistic list of currently established global connections and some other useful info similar to Tailscale menu
-- Autosize VNC window to fit all the original remote screen content and our added UI elements (i.e. keyboard options, etc.)
+- make sure Activity log captures all necessary events/messages
+
 
 Tunneling/EdgeView
-- make sure Activity log captures all necessary events/messages
 - Ensure stable VNC connection
 - Indicate VNC/SSH/TCP tunnel status/liveliness (running, data is transferring, etc) in per device and global tunnel lists. Do not overcomplicate or over engineer, I need user some clear indication if data is flowing over the tunnel and it looks alive or not (like traffic light blinking or brief info about connection speed in kbps or something similar per best practices).
 - Need to implement "collect info" edge view function with capability to locally download the generated TAR file with proper progress display.
@@ -57,7 +59,6 @@ Tunneling/EdgeView
 - secure edgeview support?
 
 Core:
-! make the backend port dynamic? Not hard coded 8080
 - settings to be stored securely (use keyring or other relevant OS features)
 
 

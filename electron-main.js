@@ -189,6 +189,7 @@ function createVncWindow(options) {
         title: `VNC - ${nodeName}`,
         show: false,
         webPreferences: {
+            preload: path.join(__dirname, 'electron-preload.js'),
             contextIsolation: true,
             nodeIntegration: false
         },
@@ -226,7 +227,9 @@ function createVncWindow(options) {
         console.log(`VNC window closed for ${nodeName}`);
         if (tunnelId) {
             // Close the tunnel via API
-            fetch(`http://localhost:8080/api/tunnel/${tunnelId}`, {
+            // Use the dynamic BACKEND_PORT if available, otherwise fallback to 8080 or log error
+            const port = BACKEND_PORT || 8080;
+            fetch(`http://localhost:${port}/api/tunnel/${tunnelId}`, {
                 method: 'DELETE'
             }).then(() => {
                 console.log(`Tunnel ${tunnelId} closed`);
@@ -410,7 +413,8 @@ ipcMain.handle('open-terminal-window', async (event, options) => {
         console.log(`Terminal window closed for ${nodeName}`);
         if (tunnelId) {
             // Close the tunnel via API
-            fetch(`http://localhost:8080/api/tunnel/${tunnelId}`, {
+            const port = BACKEND_PORT || 8080;
+            fetch(`http://localhost:${port}/api/tunnel/${tunnelId}`, {
                 method: 'DELETE'
             }).then(() => {
                 console.log(`Tunnel ${tunnelId} closed`);
@@ -428,6 +432,45 @@ ipcMain.handle('open-external', async (event, url) => {
     const { shell } = require('electron');
     await shell.openExternal(url);
     return true;
+});
+
+// Resize Window
+ipcMain.handle('resize-window', async (event, { width, height }) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win) {
+        // Add some padding for window decorations if needed, though we use frame: false
+        // But we might want to ensure it fits within the screen work area
+        const currentScreen = require('electron').screen.getDisplayMatching(win.getBounds());
+        const workArea = currentScreen.workArea;
+
+        // Limit to screen size with some margin
+        const maxWidth = workArea.width - 40;
+        const maxHeight = workArea.height - 40;
+
+        const newWidth = Math.min(width, maxWidth);
+        const newHeight = Math.min(height, maxHeight);
+
+        // Animate the resize for a smoother feel
+        // Use setContentSize to be explicit about the client area
+        win.setContentSize(Math.ceil(newWidth), Math.ceil(newHeight), true);
+        win.center(); // Optional: re-center window after resize
+    }
+    return true;
+});
+
+// Get Backend Port
+ipcMain.handle('get-backend-port', async () => {
+    // Wait for backend port to be ready if it's not yet
+    if (!BACKEND_PORT) {
+        const maxWait = 5000;
+        const interval = 100;
+        let waited = 0;
+        while (!BACKEND_PORT && waited < maxWait) {
+            await new Promise(resolve => setTimeout(resolve, interval));
+            waited += interval;
+        }
+    }
+    return BACKEND_PORT;
 });
 
 // Get System Time Format (12h vs 24h)
