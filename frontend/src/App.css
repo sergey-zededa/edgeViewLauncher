@@ -38,8 +38,8 @@ body {
 
 /* Header & Search */
 .cluster-info {
-    padding: 28px 100px 8px 100px;
-    /* Balanced left/right padding for centered text (left accounts for traffic lights) */
+    padding: 28px 16px 8px 16px;
+    /* Balanced padding now that all platforms use frameless windows */
     background: var(--bg-primary);
     color: var(--text-secondary);
     font-size: 12px;
@@ -51,7 +51,7 @@ body {
 .search-bar {
     display: flex;
     align-items: center;
-    padding: 12px 16px 12px 100px;
+    padding: 12px 16px;
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border-color);
     -webkit-app-region: drag;
