@@ -11,7 +11,7 @@ const BACKEND_PORT = 8080;
 
 function createTray() {
     // Try using the PNG first, it's often better for tray icons
-    const iconPath = path.join(__dirname, 'icon_final_cropped.png');
+    const iconPath = path.join(__dirname, 'icon.png');
     console.log('Creating tray with icon:', iconPath);
 
     let trayIcon = nativeImage.createFromPath(iconPath);
@@ -66,23 +66,28 @@ function createWindow() {
         width: 800,
         height: 600,
         show: false, // Hide until ready
+        frame: false, // Remove native frame on all platforms for custom look
         webPreferences: {
             preload: path.join(__dirname, 'electron-preload.js'),
             contextIsolation: true,
             nodeIntegration: false
-        },
-        icon: path.join(__dirname, 'icon.icns')
+        }
     };
 
-    // macOS-specific: Use hidden title bar with inset traffic lights
-    if (process.platform === 'darwin') {
+    // Set platform-specific icon
+    if (process.platform === 'win32') {
+        windowOptions.icon = path.join(__dirname, 'icon.ico');
+    } else if (process.platform === 'darwin') {
+        windowOptions.icon = path.join(__dirname, 'icon.icns');
         windowOptions.titleBarStyle = 'hiddenInset';
-        windowOptions.frame = false;
+    } else {
+        windowOptions.icon = path.join(__dirname, 'icon.png');
     }
-    // Windows/Linux: Use standard frame with menu bar hidden
-    // (frame: true is default, so we don't need to set it)
 
     mainWindow = new BrowserWindow(windowOptions);
+
+    // Remove the default menu (File, Edit, View, etc.) to look more native
+    Menu.setApplicationMenu(null);
 
     // Show window when ready
     mainWindow.once('ready-to-show', () => {
@@ -106,7 +111,7 @@ function createWindow() {
     // Load the React app
     if (process.env.NODE_ENV === 'development') {
         mainWindow.loadURL('http://localhost:5173');
-        mainWindow.webContents.openDevTools();
+        // DevTools can still be opened with Ctrl+Shift+I or Cmd+Option+I
     } else {
         // In production, frontend files are in frontend/dist (per package.json files config)
         const indexPath = path.join(__dirname, 'frontend', 'dist', 'index.html');

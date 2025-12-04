@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-SOURCE="Gemini_Generated_Image_fxqnkffxqnkffxqn_alpha.png"
+SOURCE="build/icon_final_cropped.png"
 ICONSET="build/icon.iconset"
 
 # Ensure source exists
@@ -17,7 +17,7 @@ mkdir -p "$ICONSET"
 # Convert to base PNG 1024x1024
 sips -s format png -z 1024 1024 "$SOURCE" --out "$ICONSET/icon_512x512@2x.png"
 
-# Generate other sizes
+# Generate other sizes for ICNS
 sips -s format png -z 16 16     "$ICONSET/icon_512x512@2x.png" --out "$ICONSET/icon_16x16.png"
 sips -s format png -z 32 32     "$ICONSET/icon_512x512@2x.png" --out "$ICONSET/icon_16x16@2x.png"
 sips -s format png -z 32 32     "$ICONSET/icon_512x512@2x.png" --out "$ICONSET/icon_32x32.png"
@@ -29,6 +29,24 @@ sips -s format png -z 512 512   "$ICONSET/icon_512x512@2x.png" --out "$ICONSET/i
 sips -s format png -z 512 512   "$ICONSET/icon_512x512@2x.png" --out "$ICONSET/icon_512x512.png"
 
 # Create ICNS
+echo "Generating icon.icns..."
 iconutil -c icns "$ICONSET" -o build/icon.icns
 
-echo "Icon generated successfully at build/icon.icns"
+# Create ICO (requires ImageMagick)
+echo "Generating icon.ico..."
+if command -v magick &> /dev/null; then
+    magick "$ICONSET/icon_512x512@2x.png" -define icon:auto-resize=256,128,64,48,32,16 build/icon.ico
+else
+    echo "Warning: ImageMagick (magick) not found. Skipping .ico generation."
+fi
+
+# Move to root
+echo "Copying icons to root..."
+cp build/icon.icns icon.icns
+[ -f build/icon.ico ] && cp build/icon.ico icon.ico
+cp "$SOURCE" icon.png
+
+echo "Icons generated successfully:"
+echo "  - icon.icns"
+echo "  - icon.ico"
+echo "  - icon.png"
