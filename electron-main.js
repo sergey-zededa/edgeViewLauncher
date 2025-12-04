@@ -7,7 +7,7 @@ let mainWindow;
 let tray;
 let isQuitting = false;
 let goBackend;
-const BACKEND_PORT = 8080;
+let BACKEND_PORT = null; // Will be set dynamically when Go backend starts
 
 function createTray() {
     // Try using the PNG first, it's often better for tray icons
@@ -246,24 +246,29 @@ function startGoBackend() {
 
     // Platform-specific executable name
     const exeName = process.platform === 'win32' ? 'edgeview-backend.exe' : 'edgeview-backend';
+    const goExecutable = process.env.NODE_ENV === 'development'
+        ? path.join(__dirname, 'edgeViewLauncher')
+        : path.join(process.resourcesPath, 'edgeViewLauncher');
 
-    const goExecutable = isDev
-        ? path.join(__dirname, exeName)
-        : path.join(process.resourcesPath, exeName);
+    console.log('[Go Backend] Starting Go backend:', goExecutable);
 
-    console.log('Starting Go backend from:', goExecutable);
-    console.log('isDev:', isDev);
-    console.log('__dirname:', __dirname);
-    console.log('process.resourcesPath:', process.resourcesPath);
-
-    goBackend = spawn(goExecutable, ['-port', BACKEND_PORT.toString()]);
+    // Start with port 0 to let OS assign an available port
+    goBackend = spawn(goExecutable, ['-port', '0']);
 
     goBackend.stdout.on('data', (data) => {
-        console.log(`[Go Backend] ${data}`);
+        const output = data.toString();
+        console.log('[Go Backend]', output);
+
+        // Parse the port from the Go backend's startup message
+        const portMatch = output.match(/HTTP Server starting on :(\d+)/);
+        if (portMatch && !BACKEND_PORT) {
+            BACKEND_PORT = parseInt(portMatch[1], 10);
+            console.log(`[Go Backend] Detected backend port: ${BACKEND_PORT}`);
+        }
     });
 
     goBackend.stderr.on('data', (data) => {
-        console.error(`[Go Backend Error] ${data}`);
+        console.error('[Go Backend Error]', data.toString());
     });
 
     goBackend.on('error', (error) => {
@@ -315,6 +320,21 @@ app.on('before-quit', () => {
 
 // IPC Handlers - Forward to Go backend
 ipcMain.handle('api-call', async (event, endpoint, method, body) => {
+    // Wait for backend port to be ready
+    if (!BACKEND_PORT) {
+        // Poll for up to 5 seconds for the port to be set
+        const maxWait = 5000;
+        const interval = 100;
+        let waited = 0;
+        while (!BACKEND_PORT && waited < maxWait) {
+            await new Promise(resolve => setTimeout(resolve, interval));
+            waited += interval;
+        }
+        if (!BACKEND_PORT) {
+            throw new Error('Backend port not ready');
+        }
+    }
+
     const url = `http://localhost:${BACKEND_PORT}${endpoint}`;
 
     try {

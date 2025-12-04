@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -412,8 +413,16 @@ func (s *HTTPServer) Start() {
 	handler := corsMiddleware(router)
 
 	addr := fmt.Sprintf(":%d", s.port)
-	log.Printf("EdgeView HTTP Server starting on %s\n", addr)
-	log.Fatal(http.ListenAndServe(addr, handler))
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("Failed to listen on %s: %v", addr, err)
+	}
+
+	// Get the actual port (useful if s.port was 0)
+	actualPort := listener.Addr().(*net.TCPAddr).Port
+	log.Printf("EdgeView HTTP Server starting on :%d\n", actualPort)
+
+	log.Fatal(http.Serve(listener, handler))
 }
 
 // handleStartTunnel starts a tunnel to a target IP and port on a node
