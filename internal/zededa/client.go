@@ -652,12 +652,43 @@ func (c *Client) AddSSHKeyToDevice(nodeID, publicKey string) error {
 
 	device["configItem"] = configItems
 
+	// Clean all boolean config items before sending to API
+	cleanBooleanConfigItems(configItems)
+
 	// 3. Update Device
 	if err := c.UpdateDevice(nodeID, device); err != nil {
 		return fmt.Errorf("failed to update device config: %w", err)
 	}
 
 	return nil
+}
+
+// cleanBooleanConfigItems removes extraneous fields from boolean config items
+// This ensures that items set by previous versions don't cause parsing errors
+func cleanBooleanConfigItems(configItems []interface{}) {
+	booleanKeys := []string{"debug.enable.vga", "debug.enable.usb", "debug.enable.console"}
+
+	for i, item := range configItems {
+		if cfg, ok := item.(map[string]interface{}); ok {
+			key, _ := cfg["key"].(string)
+
+			// Check if this is one of our boolean config items
+			for _, boolKey := range booleanKeys {
+				if key == boolKey {
+					// Get the current boolean value from stringValue field
+					strVal, hasStr := cfg["stringValue"].(string)
+					if hasStr && (strVal == "true" || strVal == "false") {
+						// Replace with clean config item using stringValue
+						configItems[i] = map[string]interface{}{
+							"key":         key,
+							"stringValue": strVal,
+						}
+					}
+					break
+				}
+			}
+		}
+	}
 }
 
 // SetVGAEnabled enables or disables VGA access on the device
@@ -678,8 +709,17 @@ func (c *Client) SetVGAEnabled(nodeID string, enabled bool) error {
 	for i, item := range configItems {
 		if cfg, ok := item.(map[string]interface{}); ok {
 			if cfg["key"] == "debug.enable.vga" {
-				cfg["boolValue"] = enabled
-				configItems[i] = cfg
+				// Replace with a clean config item using stringValue for booleans
+				var strVal string
+				if enabled {
+					strVal = "true"
+				} else {
+					strVal = "false"
+				}
+				configItems[i] = map[string]interface{}{
+					"key":         "debug.enable.vga",
+					"stringValue": strVal,
+				}
 				keyFound = true
 				break
 			}
@@ -687,13 +727,22 @@ func (c *Client) SetVGAEnabled(nodeID string, enabled bool) error {
 	}
 
 	if !keyFound {
+		var strVal string
+		if enabled {
+			strVal = "true"
+		} else {
+			strVal = "false"
+		}
 		configItems = append(configItems, map[string]interface{}{
-			"key":       "debug.enable.vga",
-			"boolValue": enabled,
+			"key":         "debug.enable.vga",
+			"stringValue": strVal,
 		})
 	}
 
 	device["configItem"] = configItems
+
+	// Clean all boolean config items before sending to API
+	cleanBooleanConfigItems(configItems)
 
 	// 3. Update Device
 	if err := c.UpdateDevice(nodeID, device); err != nil {
@@ -721,8 +770,78 @@ func (c *Client) SetUSBEnabled(nodeID string, enabled bool) error {
 	for i, item := range configItems {
 		if cfg, ok := item.(map[string]interface{}); ok {
 			if cfg["key"] == "debug.enable.usb" {
-				cfg["boolValue"] = enabled
-				configItems[i] = cfg
+				// Replace with a clean config item using stringValue for booleans
+				var strVal string
+				if enabled {
+					strVal = "true"
+				} else {
+					strVal = "false"
+				}
+				configItems[i] = map[string]interface{}{
+					"key":         "debug.enable.usb",
+					"stringValue": strVal,
+				}
+				keyFound = true
+				break
+			}
+		}
+	}
+
+	if !keyFound {
+		var strVal string
+		if enabled {
+			strVal = "true"
+		} else {
+			strVal = "false"
+		}
+		configItems = append(configItems, map[string]interface{}{
+			"key":         "debug.enable.usb",
+			"stringValue": strVal,
+		})
+	}
+
+	device["configItem"] = configItems
+
+	// Clean all boolean config items before sending to API
+	cleanBooleanConfigItems(configItems)
+
+	// 3. Update Device
+	if err := c.UpdateDevice(nodeID, device); err != nil {
+		return fmt.Errorf("failed to update device config: %w", err)
+	}
+
+	return nil
+}
+
+// SetConsoleEnabled enables or disables Console access on the device
+func (c *Client) SetConsoleEnabled(nodeID string, enabled bool) error {
+	// 1. Get Device
+	device, err := c.GetDevice(nodeID)
+	if err != nil {
+		return fmt.Errorf("failed to get device: %w", err)
+	}
+
+	// 2. Update Config Items
+	configItems, ok := device["configItem"].([]interface{})
+	if !ok {
+		configItems = []interface{}{}
+	}
+
+	keyFound := false
+	for i, item := range configItems {
+		if cfg, ok := item.(map[string]interface{}); ok {
+			if cfg["key"] == "debug.enable.console" {
+				// Replace with a clean config item using stringValue for booleans
+				var strVal string
+				if enabled {
+					strVal = "true"
+				} else {
+					strVal = "false"
+				}
+				configItems[i] = map[string]interface{}{
+					"key":         "debug.enable.console",
+					"stringValue": strVal,
+				}
 				keyFound = true
 				break
 			}
@@ -731,12 +850,15 @@ func (c *Client) SetUSBEnabled(nodeID string, enabled bool) error {
 
 	if !keyFound {
 		configItems = append(configItems, map[string]interface{}{
-			"key":       "debug.enable.usb",
+			"key":       "debug.enable.console",
 			"boolValue": enabled,
 		})
 	}
 
 	device["configItem"] = configItems
+
+	// Clean all boolean config items before sending to API
+	cleanBooleanConfigItems(configItems)
 
 	// 3. Update Device
 	if err := c.UpdateDevice(nodeID, device); err != nil {
@@ -775,12 +897,13 @@ func (c *Client) GetSSHKeyFromDevice(nodeID string) (string, error) {
 
 // EdgeViewStatus contains detailed status of the EdgeView session
 type EdgeViewStatus struct {
-	SSHKey      string
-	MaxSessions int
-	Expiry      string
-	DebugKnob   bool
-	VGAEnabled  bool
-	USBEnabled  bool
+	SSHKey         string
+	MaxSessions    int
+	Expiry         string
+	DebugKnob      bool
+	VGAEnabled     bool
+	USBEnabled     bool
+	ConsoleEnabled bool
 }
 
 // GetEdgeViewStatus returns the detailed EdgeView status from the device
@@ -826,17 +949,22 @@ func (c *Client) GetEdgeViewStatus(nodeID string) (*EdgeViewStatus, error) {
 		status.DebugKnob = knob
 	}
 
-	// 4. Get VGA and USB status from ConfigItems
+	// 4. Get VGA, USB, and Console status from ConfigItems
 	if configItems, ok := device["configItem"].([]interface{}); ok {
 		for _, item := range configItems {
 			if cfg, ok := item.(map[string]interface{}); ok {
 				if cfg["key"] == "debug.enable.vga" {
-					if val, ok := cfg["boolValue"].(bool); ok {
-						status.VGAEnabled = val
+					// Controller uses stringValue for boolean config items
+					if val, ok := cfg["stringValue"].(string); ok {
+						status.VGAEnabled = (val == "true")
 					}
 				} else if cfg["key"] == "debug.enable.usb" {
-					if val, ok := cfg["boolValue"].(bool); ok {
-						status.USBEnabled = val
+					if val, ok := cfg["stringValue"].(string); ok {
+						status.USBEnabled = (val == "true")
+					}
+				} else if cfg["key"] == "debug.enable.console" {
+					if val, ok := cfg["stringValue"].(string); ok {
+						status.ConsoleEnabled = (val == "true")
 					}
 				}
 			}

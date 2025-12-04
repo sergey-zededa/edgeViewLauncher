@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { SearchNodes, ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken } from './electronAPI';
+import { SearchNodes, ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken } from './electronAPI';
 import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
 import Tooltip from './components/Tooltip';
@@ -13,6 +13,7 @@ function App() {
   const [nodes, setNodes] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [authError, setAuthError] = useState(false); // Track authentication failures
   const [showSettings, setShowSettings] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
   const [selectedNode, setSelectedNode] = useState(null);
@@ -52,6 +53,7 @@ function App() {
   const [editingCluster, setEditingCluster] = useState({ name: '', baseUrl: '', apiToken: '' });
   const [saveStatus, setSaveStatus] = useState('');
   const [tokenStatus, setTokenStatus] = useState(null);
+  const [settingsError, setSettingsError] = useState(null); // Track settings save errors
 
   const handleTokenPaste = (token) => {
     setEditingCluster({ ...editingCluster, apiToken: token });
@@ -415,6 +417,7 @@ function App() {
       }
     } catch (err) {
       console.log('Error loading user info:', err);
+      throw err; // Re-throw to propagate error to saveSettings
     }
   };
 
@@ -443,13 +446,19 @@ function App() {
   useEffect(() => {
     const search = async () => {
       setLoading(true);
+      setAuthError(false); // Clear auth error before attempting
       try {
         const results = await SearchNodes(query);
         setNodes(results || []);
         setSelectedIndex(0);
+        setAuthError(false); // Clear any previous auth errors on success
       } catch (err) {
         console.error(err);
         setNodes([]);
+        // Check if this is an authentication error (401)
+        if (err.message && (err.message.includes('401') || err.message.includes('unauthorized'))) {
+          setAuthError(true);
+        }
       } finally {
         setLoading(false);
       }
@@ -676,6 +685,19 @@ function App() {
     }
   };
 
+  const handleToggleConsole = async (enabled) => {
+    if (!selectedNode) return;
+    setLoadingSSH(true);
+    try {
+      await SetConsoleEnabled(selectedNode.id, enabled);
+      loadSSHStatus(selectedNode.id);  // Refresh to get updated status
+      addLog(`Console access ${enabled ? 'enabled' : 'disabled'}`, 'success');
+    } catch (err) {
+      alert("Failed to toggle Console: " + err);
+      setLoadingSSH(false);
+    }
+  };
+
   const handleResetEdgeView = async () => {
     if (!selectedNode) {
       setError({ type: 'error', message: "No node selected for reset." });
@@ -777,6 +799,9 @@ function App() {
   };
 
   const saveSettings = async () => {
+    setSettingsError(null); // Clear previous errors
+    setSaveStatus('Saving...');
+
     try {
       let clustersToSave = [...config.clusters];
       let activeToSave = config.activeCluster;
@@ -795,10 +820,7 @@ function App() {
       }
 
       await SaveSettings(clustersToSave, activeToSave);
-      setShowSettings(false);
-      setNodes([]);
-      setProjects([]);
-      setEnterprise(null);
+
       const settings = await GetSettings();
       if (settings) {
         const newConfig = {
@@ -809,27 +831,56 @@ function App() {
           recentDevices: settings.recentDevices || []
         };
         setConfig(newConfig);
+
+        // Test the token by trying to load user info
         const active = newConfig.clusters.find(c => c.name === newConfig.activeCluster);
         if (active && active.apiToken) {
-          loadUserInfo();
+          try {
+            await loadUserInfo();
+            // If user info loads successfully, token is valid
+            setSaveStatus('Settings saved successfully!');
+            setTimeout(() => {
+              setSaveStatus('');
+              setShowSettings(false); // Only close on success
+            }, 1500);
+          } catch (err) {
+            // Check if this is an authentication error
+            if (err.message && (err.message.includes('401') || err.message.includes('unauthorized'))) {
+              setSettingsError('Authentication failed. Please check your API token and Base URL.');
+              setSaveStatus('');
+              return; // Don't close settings
+            }
+            throw err; // Re-throw if it's a different error
+          }
+        } else {
+          setSaveStatus('Settings saved successfully!');
+          setTimeout(() => {
+            setSaveStatus('');
+            setShowSettings(false);
+          }, 1500);
         }
       }
+
+      setNodes([]);
+      setProjects([]);
+      setEnterprise(null);
+
       if (query) {
         const currentQuery = query;
         setQuery('');
         setTimeout(() => setQuery(currentQuery), 100);
       } else {
-        setLoading(true);
-        SearchNodes('').then(results => {
+        try {
+          const results = await SearchNodes('');
           setNodes(results || []);
-          setSelectedIndex(0);
-        }).catch(err => {
-          console.error("Failed to fetch nodes after save:", err);
-          setNodes([]);
-        }).finally(() => setLoading(false));
+        } catch (err) {
+          console.error('Failed to fetch nodes after save:', err);
+        }
       }
     } catch (err) {
       console.error("Failed to save settings:", err);
+      setSettingsError('Failed to save settings: ' + (err.message || 'Unknown error'));
+      setSaveStatus('');
     }
   };
 
@@ -847,7 +898,7 @@ function App() {
           })()}
         </div>
       )}
-      <div className="search-bar">
+      <div className="search-bar" style={selectedNode ? { paddingLeft: '80px' } : {}}>
         {selectedNode ? (
           <ArrowLeft className="back-icon" size={20} onClick={handleBack} />
         ) : (
@@ -874,6 +925,28 @@ function App() {
           <Settings className="settings-icon" size={20} onClick={() => setShowSettings(!showSettings)} />
         </div>
       </div>
+
+      {/* Authentication Error Banner */}
+      {authError && !showSettings && (
+        <div className="auth-error-banner">
+          <div className="auth-error-content">
+            <AlertTriangle size={20} />
+            <div className="auth-error-text">
+              <strong>Authentication Failed</strong>
+              <span>Your API token is expired or invalid. Please update it in settings.</span>
+            </div>
+            <button
+              className="auth-error-button"
+              onClick={() => {
+                setShowSettings(true);
+                setAuthError(false);
+              }}
+            >
+              Open Settings
+            </button>
+          </div>
+        </div>
+      )}
 
       {showAbout && <About onClose={() => setShowAbout(false)} />}
 
@@ -952,6 +1025,15 @@ function App() {
                     </div>
                   )}
                 </div>
+
+                {/* Settings Error Banner */}
+                {settingsError && (
+                  <div className="settings-error-banner">
+                    <AlertTriangle size={16} />
+                    <span>{settingsError}</span>
+                  </div>
+                )}
+
                 <div className="settings-actions">
                   {saveStatus && (
                     <span className={`status-text ${saveStatus.includes('Success') ? 'success' : 'muted'}`}>
@@ -1168,15 +1250,6 @@ function App() {
                 ) : sshStatus ? (
                   <div className="ssh-details">
                     <div className="status-grid">
-                      <div className="status-item">
-                        <span className="status-label">SSH Status</span>
-                        <div className={`status-value ${sshStatus.status}`}>
-                          {sshStatus.status === 'enabled' ? <Unlock size={14} /> :
-                            sshStatus.status === 'mismatch' ? <AlertTriangle size={14} /> :
-                              sshStatus.status === 'error' ? <AlertCircle size={14} /> : <Lock size={14} />}
-                          {sshStatus.status.charAt(0).toUpperCase() + sshStatus.status.slice(1)}
-                        </div>
-                      </div>
                       {(sshStatus.instID !== undefined || sshStatus.maxInst !== undefined) && (
                         <div className="status-item">
                           <div className="status-label">INSTANCE</div>
@@ -1221,72 +1294,84 @@ function App() {
                         </div>
                       </div>
                     </div>
-                    <div className="ssh-controls" style={{ borderTop: '1px solid #333', paddingTop: '15px', marginTop: '5px' }}>
-                      {sshStatus.status === 'enabled' ? (
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-                          <div className="status-badge enabled">
-                            <Unlock size={14} /> SSH Enabled
-                          </div>
-                          <button className="action-link danger" onClick={handleDisableSSH} title="Remove public key and disable SSH access on the device">
-                            Disable EVE-OS SSH
-                          </button>
-                        </div>
-                      ) : sshStatus.status === 'mismatch' ? (
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-                          <div className="status-badge warning" title="Key on device does not match local key">
-                            <AlertTriangle size={14} /> Key Mismatch
-                          </div>
-                          <div className="ssh-actions-row">
-                            <button className="action-link danger" onClick={handleDisableSSH} title="Remove public key and disable SSH access on the device">
-                              Disable SSH
-                            </button>
-                            <span className="separator">•</span>
-                            <button className="action-link" onClick={handleSetupSSH} title="Replace device's SSH public key with your local key">
-                              Re-enable SSH
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-                          <div className="status-badge disabled">
-                            <Lock size={14} /> Disabled
-                          </div>
-                          <button className="action-link" onClick={handleSetupSSH} title="Install your local SSH public key on the device">
-                            Enable EVE-OS SSH
-                          </button>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* VGA Access Control */}
-                    <div className="ssh-controls" style={{ borderTop: '1px solid #333', paddingTop: '15px', marginTop: '15px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-                        <div className={`status-badge ${sshStatus.vgaEnabled ? 'enabled' : 'disabled'}`}>
-                          <Monitor size={14} /> VGA {sshStatus.vgaEnabled ? 'Enabled' : 'Disabled'}
-                        </div>
-                        <button
-                          className={`action-link ${sshStatus.vgaEnabled ? 'danger' : ''}`}
-                          onClick={() => handleToggleVGA(!sshStatus.vgaEnabled)}
-                          title={sshStatus.vgaEnabled ? "Disable VGA display output" : "Enable VGA display output"}
-                        >
-                          {sshStatus.vgaEnabled ? 'Disable VGA' : 'Enable VGA'}
-                        </button>
+                    {/* Configuration Controls */}
+                    <div className="config-container" style={{ marginTop: '15px', borderTop: '1px solid #333', paddingTop: '15px' }}>
+                      <div style={{ fontSize: '12px', color: '#888', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                        Device Configuration
                       </div>
-                    </div>
 
-                    {/* USB Access Control */}
-                    <div className="ssh-controls" style={{ borderTop: '1px solid #333', paddingTop: '15px', marginTop: '15px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-                        <div className={`status-badge ${sshStatus.usbEnabled ? 'enabled' : 'disabled'}`}>
-                          <Activity size={14} /> USB {sshStatus.usbEnabled ? 'Enabled' : 'Disabled'}
-                        </div>
-                        <button
-                          className={`action-link ${sshStatus.usbEnabled ? 'danger' : ''}`}
-                          onClick={() => handleToggleUSB(!sshStatus.usbEnabled)}
-                          title={sshStatus.usbEnabled ? "Disable USB keyboard access" : "Enable USB keyboard access"}
+                      <div className="config-row" style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', justifyContent: 'space-between' }}>
+
+                        {/* SSH Control */}
+                        <div
+                          className={`config-chip ${sshStatus.status === 'enabled' ? 'enabled' : sshStatus.status === 'mismatch' ? 'warning' : 'disabled'}`}
+                          onClick={sshStatus.status === 'enabled' ? handleDisableSSH : handleSetupSSH}
+                          title={sshStatus.status === 'enabled' ? "SSH Enabled - Click to Disable" : sshStatus.status === 'mismatch' ? "Key Mismatch - Click to Fix" : "SSH Disabled - Click to Enable"}
+                          style={{
+                            display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
+                            fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
+                            backgroundColor: sshStatus.status === 'enabled' ? 'rgba(35, 134, 54, 0.2)' : sshStatus.status === 'mismatch' ? 'rgba(210, 153, 34, 0.2)' : 'rgba(218, 54, 51, 0.2)',
+                            color: sshStatus.status === 'enabled' ? '#238636' : sshStatus.status === 'mismatch' ? '#d29922' : '#da3633',
+                            border: 'none'
+                          }}
                         >
-                          {sshStatus.usbEnabled ? 'Disable USB' : 'Enable USB'}
-                        </button>
+                          {sshStatus.status === 'enabled' ? <Unlock size={13} style={{ marginRight: '6px' }} /> :
+                            sshStatus.status === 'mismatch' ? <AlertTriangle size={13} style={{ marginRight: '6px' }} /> :
+                              <Lock size={13} style={{ marginRight: '6px' }} />}
+                          SSH {sshStatus.status === 'enabled' ? 'Enabled' : sshStatus.status === 'mismatch' ? 'Key Mismatch' : 'Disabled'}
+                        </div>
+
+                        {/* VGA Control */}
+                        <div
+                          className={`config-chip ${sshStatus.vgaEnabled ? 'enabled' : 'disabled'}`}
+                          onClick={() => handleToggleVGA(!sshStatus.vgaEnabled)}
+                          title={sshStatus.vgaEnabled ? "VGA Enabled - Click to Disable" : "VGA Disabled - Click to Enable"}
+                          style={{
+                            display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
+                            fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
+                            backgroundColor: sshStatus.vgaEnabled ? 'rgba(35, 134, 54, 0.2)' : 'rgba(218, 54, 51, 0.2)',
+                            color: sshStatus.vgaEnabled ? '#238636' : '#da3633',
+                            border: 'none'
+                          }}
+                        >
+                          <Monitor size={13} style={{ marginRight: '6px' }} />
+                          VGA {sshStatus.vgaEnabled ? 'Enabled' : 'Disabled'}
+                        </div>
+
+                        {/* USB Control */}
+                        <div
+                          className={`config-chip ${sshStatus.usbEnabled ? 'enabled' : 'disabled'}`}
+                          onClick={() => handleToggleUSB(!sshStatus.usbEnabled)}
+                          title={sshStatus.usbEnabled ? "USB Enabled - Click to Disable" : "USB Disabled - Click to Enable"}
+                          style={{
+                            display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
+                            fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
+                            backgroundColor: sshStatus.usbEnabled ? 'rgba(35, 134, 54, 0.2)' : 'rgba(218, 54, 51, 0.2)',
+                            color: sshStatus.usbEnabled ? '#238636' : '#da3633',
+                            border: 'none'
+                          }}
+                        >
+                          <Activity size={13} style={{ marginRight: '6px' }} />
+                          USB {sshStatus.usbEnabled ? 'Enabled' : 'Disabled'}
+                        </div>
+
+                        {/* Console Control */}
+                        <div
+                          className={`config-chip ${sshStatus.consoleEnabled ? 'enabled' : 'disabled'}`}
+                          onClick={() => handleToggleConsole(!sshStatus.consoleEnabled)}
+                          title={sshStatus.consoleEnabled ? "Console Enabled - Click to Disable" : "Console Disabled - Click to Enable"}
+                          style={{
+                            display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
+                            fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
+                            backgroundColor: sshStatus.consoleEnabled ? 'rgba(35, 134, 54, 0.2)' : 'rgba(218, 54, 51, 0.2)',
+                            color: sshStatus.consoleEnabled ? '#238636' : '#da3633',
+                            border: 'none'
+                          }}
+                        >
+                          <Terminal size={13} style={{ marginRight: '6px' }} />
+                          Console {sshStatus.consoleEnabled ? 'Enabled' : 'Disabled'}
+                        </div>
+
                       </div>
                     </div>
                   </div>

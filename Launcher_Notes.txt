@@ -30,7 +30,10 @@ API call error: Error: missing tunnel ID
 + No number of allowed connections anymore?
 + !!!save config does not work in windows 
 + remove chromium menu items (devtools, etc)
-
++ I noted are we requesting for an edge view script "[Go Backend] Waiting for EdgeView script...", don't we receive token info already here: "[Go Backend] DEBUG: edgeviewconfig: map[appPolicy:map[allowApp:true] devPolicy:map[allowDev:true] extPolicy:map[allowExt:false] generationId:4 jwtInfo:map[allowSec:18000 authen:EvAuth_TYPE_UNSPECIFIED dispUrl:https://zedcloud.hummingbird.zededa.net/api/v1/edge-view encrypt:false expireSec:1764541644 numInst:3] requireControllerAuthen:false token:eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdXQiOjAsImRlcCI6Imh0dHBzOi8vemVkY2xvdWQuaHVtbWluZ2JpcmQuemVkZWRhLm5ldC9hcGkvdjEvZWRnZS12aWV3IiwiZW5jIjpmYWxzZSwiZXhwIjoxNzY0NTQxNjQ0LCJrZXkiOiJja3ZrbHFxamJnc3QiLCJudW0iOjMsInN1YiI6ImU5YzJjMTlkLWNlNWEtNGE5NC1hMDYzLTExYTYwNDU2ZjFhNCJ9.SI_fXL-TJqOebZCtlqQQtn26ixFUnodbFFYoQD_qTBaNPTqHUUhdhD039myLubo097SAV1WHDmldxgRyWNyZxA]"
+Is there any additional info we need to get from parsing the script which we don't receive from the API already?
++ Options to enable USB, VGA and console
++ fix the back arrow overlapping with traffic lights on the device details page header
 
 - settings to be stored securely (use keyring or other relevant OS features)
 
@@ -40,21 +43,18 @@ API call error: Error: missing tunnel ID
 - number of AVAILABLE connections/instances?
 - remove Standard window headers/menus in Windows
 - secure edgeview support?
-- Options to enable USB and VGA
+
 - when Application Window closes I need App Icon to disappear from MacOS dock only leaving it present/resident in the system tray
 - System tray menu is to show minimalistic list of currently established global connections and some other useful info similar to Tailscale menu
-- add debug.enable.console:true
 - make sure Activity log captures all necessary events/messages
-- Autosize VNC window to fit all the original remote script content and our added UI elements (i.e. keyboard options, etc.)
+- Autosize VNC window to fit all the original remote screen content and our added UI elements (i.e. keyboard options, etc.)
+- make the backend port dynamic? Not hard coded 8080
 
 
 
 - >>>Antigravity>>> instead of checking cluster access for validity, which always fails, explore if we can display cluster access token validity time (if available/readable from token or API) and mark it red if expired - can we fetch this info from API? -check https://zedcontrol.zededa.net/api/v1/docs/?urls.primaryName=ZEDEDA%20IAM%20Service#/IdentityAccessManagement/IdentityAccessManagement_GetUserSession /v1/sessions/token/{sessionToken.base64}
 
 - add status message on failing to connect to the controller/cluster when receiving the list of devices
-
-- I noted are we requesting for an edge view script "[Go Backend] Waiting for EdgeView script...", don't we receive token info already here: "[Go Backend] DEBUG: edgeviewconfig: map[appPolicy:map[allowApp:true] devPolicy:map[allowDev:true] extPolicy:map[allowExt:false] generationId:4 jwtInfo:map[allowSec:18000 authen:EvAuth_TYPE_UNSPECIFIED dispUrl:https://zedcloud.hummingbird.zededa.net/api/v1/edge-view encrypt:false expireSec:1764541644 numInst:3] requireControllerAuthen:false token:eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdXQiOjAsImRlcCI6Imh0dHBzOi8vemVkY2xvdWQuaHVtbWluZ2JpcmQuemVkZWRhLm5ldC9hcGkvdjEvZWRnZS12aWV3IiwiZW5jIjpmYWxzZSwiZXhwIjoxNzY0NTQxNjQ0LCJrZXkiOiJja3ZrbHFxamJnc3QiLCJudW0iOjMsInN1YiI6ImU5YzJjMTlkLWNlNWEtNGE5NC1hMDYzLTExYTYwNDU2ZjFhNCJ9.SI_fXL-TJqOebZCtlqQQtn26ixFUnodbFFYoQD_qTBaNPTqHUUhdhD039myLubo097SAV1WHDmldxgRyWNyZxA]"
-Is there any additional info we need to get from parsing the script which we don't receive from the API already?
 
 
 - Indicate VNC/SSH/TCP tunnel status/liveliness (running, data is transferring, etc) in per device and global tunnel lists. Do not overcomplicate or over engineer, I need user some clear indication if data is flowing over the tunnel and it looks alive or not (like traffic light blinking or brief info about connection speed in kbps or something similar per best practices).

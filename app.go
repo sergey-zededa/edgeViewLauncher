@@ -28,6 +28,7 @@ type zededaAPI interface {
 	StartEdgeView(nodeID string) error
 	SetVGAEnabled(nodeID string, enabled bool) error
 	SetUSBEnabled(nodeID string, enabled bool) error
+	SetConsoleEnabled(nodeID string, enabled bool) error
 	GetDeviceAppInstances(deviceID string) ([]zededa.AppInstance, error)
 	GetAppInstanceDetails(appInstanceID string) (*zededa.AppInstanceDetails, error)
 	GetDevice(nodeID string) (map[string]interface{}, error)
@@ -674,93 +675,74 @@ func (a *App) SetUSBEnabled(nodeID string, enabled bool) error {
 	return a.zededaClient.SetUSBEnabled(nodeID, enabled)
 }
 
-type SSHStatus struct {
-	Status      string `json:"status"` // e.g., "disabled", "enabled", "mismatch", "error"
-	Details     string `json:"details,omitempty"`
-	MaxSessions int    `json:"maxSessions,omitempty"`
-	Expiry      string `json:"expiry,omitempty"`
-	DebugKnob   bool   `json:"debugKnob"`
-	InstID      int    `json:"instID,omitempty"`
-	MaxInst     int    `json:"maxInst,omitempty"`
-	VGAEnabled  bool   `json:"vgaEnabled"`
-	USBEnabled  bool   `json:"usbEnabled"`
+// SetConsoleEnabled enables or disables Console access on the device
+func (a *App) SetConsoleEnabled(nodeID string, enabled bool) error {
+	return a.zededaClient.SetConsoleEnabled(nodeID, enabled)
 }
 
-// GetSSHStatus checks the SSH status of the device
-func (a *App) GetSSHStatus(nodeID string) SSHStatus {
-	// 1. Get EdgeView Status
+type SSHStatus struct {
+	Status         string `json:"status"`
+	PublicKey      string `json:"publicKey"`
+	MaxSessions    int    `json:"maxSessions"`
+	Expiry         string `json:"expiry"`
+	DebugKnob      bool   `json:"debugKnob"`
+	VGAEnabled     bool   `json:"vgaEnabled"`
+	USBEnabled     bool   `json:"usbEnabled"`
+	ConsoleEnabled bool   `json:"consoleEnabled"`
+}
+
+// GetSSHStatus returns the current SSH status of the node
+func (a *App) GetSSHStatus(nodeID string) *SSHStatus {
+	// Get detailed status from ZEDEDA
 	evStatus, err := a.zededaClient.GetEdgeViewStatus(nodeID)
 	if err != nil {
-		return SSHStatus{Status: "error", Details: err.Error()}
+		fmt.Printf("Error getting EdgeView status: %v\n", err)
+		return &SSHStatus{Status: "unknown"}
 	}
 
-	deviceKey := evStatus.SSHKey
-	status := SSHStatus{
-		MaxSessions: evStatus.MaxSessions,
-		Expiry:      evStatus.Expiry,
-		DebugKnob:   evStatus.DebugKnob,
+	status := "disabled"
+	if evStatus.SSHKey != "" {
+		status = "enabled"
+	}
+
+	// Check for key mismatch
+	if status == "enabled" {
+		_, localPubKey, err := ssh.EnsureSSHKey()
+		if err == nil {
+			// Normalize keys for comparison (trim whitespace)
+			deviceKey := strings.TrimSpace(evStatus.SSHKey)
+			localKey := strings.TrimSpace(localPubKey)
+
+			// Simple comparison - if they don't match, it's a mismatch
+			// Note: This assumes the key type and content are identical strings.
+			// For more robust comparison we might need to parse them, but exact string match is usually sufficient for keys generated/managed by this tool.
+			if deviceKey != localKey {
+				status = "mismatch"
+			}
+		} else {
+			fmt.Printf("Warning: Failed to get local SSH key for comparison: %v\n", err)
+		}
+	}
+
+	sshStatus := &SSHStatus{
+		Status:         status,
+		PublicKey:      evStatus.SSHKey,
+		MaxSessions:    evStatus.MaxSessions,
+		Expiry:         evStatus.Expiry,
+		DebugKnob:      evStatus.DebugKnob,
+		VGAEnabled:     evStatus.VGAEnabled,
+		USBEnabled:     evStatus.USBEnabled,
+		ConsoleEnabled: evStatus.ConsoleEnabled,
 	}
 
 	// Override expiry with cached session if available and valid
-	// This prevents showing "Expired" when we just created a new session but API hasn't updated yet
 	if cached, ok := a.sessionManager.GetCachedSession(nodeID); ok {
 		if time.Now().Before(cached.ExpiresAt) {
-			status.Expiry = fmt.Sprintf("%d", cached.ExpiresAt.Unix())
-		}
-		// Populate instance information from session config
-		if cached.Config != nil {
-			status.InstID = cached.Config.InstID
-			status.MaxInst = cached.Config.MaxInst
+			sshStatus.Expiry = fmt.Sprintf("%d", cached.ExpiresAt.Unix())
 		}
 	}
 
-	if deviceKey == "" {
-		status.Status = "disabled"
-		status.MaxInst = evStatus.MaxSessions
-	}
-
-	// Include VGA and USB status
-	status.VGAEnabled = evStatus.VGAEnabled
-	status.USBEnabled = evStatus.USBEnabled
-
-	if status.Status == "disabled" {
-		return status
-	}
-
-	// 2. Get All Local Keys
-	localKeys, err := ssh.GetAllPublicKeys()
-	if err != nil {
-		status.Status = "error"
-		status.Details = "Failed to load local keys: " + err.Error()
-		return status
-	}
-
-	// 3. Match
-	// Clean up device key (remove newlines, extra spaces)
-	cleanDeviceKey := strings.TrimSpace(deviceKey)
-
-	for _, key := range localKeys {
-		cleanLocalKey := strings.TrimSpace(key.PublicKey)
-
-		// Simple string comparison
-		if cleanDeviceKey == cleanLocalKey {
-			status.Status = "enabled"
-			return status
-		}
-
-		// Try matching just the key parts (ignoring comments)
-		deviceParts := strings.Fields(cleanDeviceKey)
-		localParts := strings.Fields(cleanLocalKey)
-		if len(deviceParts) >= 2 && len(localParts) >= 2 {
-			if deviceParts[0] == localParts[0] && deviceParts[1] == localParts[1] {
-				status.Status = "enabled"
-				return status
-			}
-		}
-	}
-
-	status.Status = "mismatch"
-	return status
+	return sshStatus
 }
 
 // DisableSSH disables SSH access on the device
