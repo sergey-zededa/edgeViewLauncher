@@ -43,6 +43,9 @@ API call error: Error: missing tunnel ID
 - Options to enable USB and VGA
 - when Application Window closes I need App Icon to disappear from MacOS dock only leaving it present/resident in the system tray
 - System tray menu is to show minimalistic list of currently established global connections and some other useful info similar to Tailscale menu
+- add debug.enable.console:true
+- make sure Activity log captures all necessary events/messages
+- Autosize VNC window to fit all the original remote script content and our added UI elements (i.e. keyboard options, etc.)
 
 
 

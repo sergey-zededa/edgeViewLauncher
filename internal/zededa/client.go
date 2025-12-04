@@ -422,24 +422,9 @@ type SessionConfig struct {
 	Key     string // JWT Key (Nonce)
 }
 
-// ParseEdgeViewScript extracts the WebSocket URL, Token, and Session Details from the script
-func (c *Client) ParseEdgeViewScript(script string) (*SessionConfig, error) {
-	// 1. Extract Token
-	tokenRegex := regexp.MustCompile(`-token\s+([a-zA-Z0-9\-\._~+/]+=*)`)
-	tokenMatches := tokenRegex.FindStringSubmatch(script)
-
-	if len(tokenMatches) < 2 {
-		// Fallback
-		tokenRegex = regexp.MustCompile(`Authorization: Bearer ([a-zA-Z0-9\-\._~+/]+=*)`)
-		tokenMatches = tokenRegex.FindStringSubmatch(script)
-	}
-
-	if len(tokenMatches) < 2 {
-		return nil, fmt.Errorf("could not find auth token in script")
-	}
-	token := tokenMatches[1]
-
-	// 2. Extract Details from Token (JWT)
+// ParseEdgeViewToken extracts Session Details from the JWT token
+func (c *Client) ParseEdgeViewToken(token string) (*SessionConfig, error) {
+	// Extract Details from Token (JWT)
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		return nil, fmt.Errorf("invalid token format (not JWT)")
@@ -503,6 +488,26 @@ func (c *Client) ParseEdgeViewScript(script string) (*SessionConfig, error) {
 	}, nil
 }
 
+// ParseEdgeViewScript extracts the WebSocket URL, Token, and Session Details from the script
+func (c *Client) ParseEdgeViewScript(script string) (*SessionConfig, error) {
+	// 1. Extract Token
+	tokenRegex := regexp.MustCompile(`-token\s+([a-zA-Z0-9\-\._~+/]+=*)`)
+	tokenMatches := tokenRegex.FindStringSubmatch(script)
+
+	if len(tokenMatches) < 2 {
+		// Fallback
+		tokenRegex = regexp.MustCompile(`Authorization: Bearer ([a-zA-Z0-9\-\._~+/]+=*)`)
+		tokenMatches = tokenRegex.FindStringSubmatch(script)
+	}
+
+	if len(tokenMatches) < 2 {
+		return nil, fmt.Errorf("could not find auth token in script")
+	}
+	token := tokenMatches[1]
+
+	return c.ParseEdgeViewToken(token)
+}
+
 func (c *Client) InitSession(targetID string) (string, error) {
 	// 1. Enable EdgeView
 	fmt.Printf("Enabling EdgeView for %s...\n", targetID)
@@ -510,8 +515,8 @@ func (c *Client) InitSession(targetID string) (string, error) {
 		return "", err
 	}
 
-	// 2. Poll for script
-	fmt.Printf("Waiting for EdgeView script...\n")
+	// 2. Poll for edgeviewconfig in device details
+	fmt.Printf("Waiting for EdgeView token...\n")
 	timeout := time.After(30 * time.Second)
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -519,11 +524,27 @@ func (c *Client) InitSession(targetID string) (string, error) {
 	for {
 		select {
 		case <-timeout:
-			return "", fmt.Errorf("timeout waiting for EdgeView script")
+			return "", fmt.Errorf("timeout waiting for EdgeView token")
 		case <-ticker.C:
-			script, err := c.GetEdgeViewScript(targetID)
-			if err == nil && script != "" {
-				return script, nil
+			device, err := c.GetDevice(targetID)
+			if err != nil {
+				continue
+			}
+
+			if evConfig, ok := device["edgeviewconfig"].(map[string]interface{}); ok {
+				if token, ok := evConfig["token"].(string); ok && token != "" {
+					// We have the token, we can return it directly.
+					// The caller expects the "script", but actually the caller (main.go)
+					// immediately calls ParseEdgeViewScript.
+					// To maintain compatibility without changing main.go yet, we can construct a fake script
+					// OR better, we should update the caller to handle the token directly.
+					// However, InitSession returns (string, error).
+					// If we return the token, ParseEdgeViewScript needs to handle it.
+					// Let's check if we can just return the token and have ParseEdgeViewScript handle it?
+					// ParseEdgeViewScript expects regex match.
+					// Let's return a dummy script string that ParseEdgeViewScript can parse.
+					return fmt.Sprintf("edge-view -token %s", token), nil
+				}
 			}
 		}
 	}
