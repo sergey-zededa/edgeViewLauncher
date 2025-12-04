@@ -1117,11 +1117,12 @@ func (m *Manager) tunnelWSReader(ctx context.Context, tunnel *Tunnel) {
 
 			payload, err := unwrapMessage(msg, tunnel.config.Key)
 			if err != nil {
-				// Check for plain-text errors
+				// Check for plain-text errors but DON'T terminate - reference implementation
+				// shows "no device online" is a transient message that should be logged and continued
 				if strings.Contains(string(msg), "no device online") {
-					fmt.Printf("TUNNEL[%s] Device offline\n", tunnel.ID)
-					m.FailTunnel(tunnel.ID, ErrNoDeviceOnline)
-					return
+					fmt.Printf("TUNNEL[%s] Received 'no device online' message (transient, continuing)\n", tunnel.ID)
+					// Reference implementation just logs and continues, doesn't terminate
+					continue
 				}
 				continue
 			}
