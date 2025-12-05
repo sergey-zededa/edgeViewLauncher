@@ -1131,6 +1131,11 @@ func (m *Manager) tunnelKeepAlive(ctx context.Context, tunnel *Tunnel) {
 			return
 		case <-ticker.C:
 			tunnel.wsMu.Lock()
+			if tunnel.wsConn == nil {
+				tunnel.wsMu.Unlock()
+				// Connection is being re-established, skip ping
+				continue
+			}
 			// Send a standard WebSocket Ping message
 			err := tunnel.wsConn.WriteMessage(websocket.PingMessage, []byte{})
 			tunnel.wsMu.Unlock()
@@ -1210,6 +1215,26 @@ func (m *Manager) tunnelWSReader(ctx context.Context, tunnel *Tunnel) {
 			if strings.Contains(payloadStr, "+++Done+++") {
 				fmt.Printf("TUNNEL[%s] Ignoring +++Done+++ message (not +++tcpDone+++)\n", tunnel.ID)
 				continue
+			}
+
+			// Check for 'Device IPs:' banner which indicates session reset/info
+			// If we receive this in the middle of a session, it means the session likely reset
+			// and we need to re-establish the tunnel logic.
+			if strings.Contains(payloadStr, "Device IPs:") {
+				fmt.Printf("TUNNEL[%s] Detected session banner (Device IPs), treating as session reset. Attempting reconnection...\n", tunnel.ID)
+
+				// Small delay to prevent tight loops if the device keeps resetting
+				time.Sleep(1 * time.Second)
+
+				// Try to reconnect
+				if m.attemptTunnelReconnect(tunnel) {
+					fmt.Printf("TUNNEL[%s] Reconnection successful, resuming\n", tunnel.ID)
+					continue
+				} else {
+					fmt.Printf("TUNNEL[%s] Reconnection failed, closing tunnel\n", tunnel.ID)
+					m.FailTunnel(tunnel.ID, ErrNoDeviceOnline)
+					return
+				}
 			}
 
 			// Parse tcpData
@@ -1373,6 +1398,15 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 				tdBytes, _ := json.Marshal(td)
 
 				tunnel.wsMu.Lock()
+				// Check if connection is being re-established
+				if tunnel.wsConn == nil {
+					tunnel.wsMu.Unlock()
+					fmt.Printf("TUNNEL[%s] ChanNum=%d: WS connection is nil (reconnecting), dropping packet\n", tunnel.ID, chanNum)
+					// We could retry, but for VNC dropping a frame/packet during reset is acceptable
+					// as the client will request update or the server will send full frame.
+					// Just continue to read loop.
+					continue
+				}
 				err := sendWrappedMessage(tunnel.wsConn, tdBytes, tunnel.config.Key, websocket.BinaryMessage)
 				tunnel.wsMu.Unlock()
 				if err != nil {

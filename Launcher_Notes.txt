@@ -45,6 +45,7 @@ x number of AVAILABLE connections/instances? - not possible
 + Adjust VNC Window size to exactly match screen size
 + when Application Window closes I need App Icon to disappear from MacOS dock only leaving it present/resident in the system tray
 + System tray menu is to show minimalistic list of currently established global connections and some other useful info similar to Tailscale menu
++ Reduce Debug logging ("TUNNEL[tunnel-1764919396970952000] Failed to parse tcpData")
 
 
 
@@ -54,14 +55,17 @@ UI:
 + auto day/night scheme in line with OS ??? Need to test - currently not working
 - make sure Activity log captures all necessary events/messages
 - Add logged in user info on the top of device search page (token owner) - zedcloud is failing with 504, to be tested later
+- Need to make UI more intuitive when recreating edge view session and displaying 10 sec delay, need to keep something spinning or show progress somehow in a more obvious way.
+- Add show Window for active connection in the tray menu if it is opened with built-in viewer
+- Add options to use built-in viewer native terminal as well as just open tunnel to use terminal app on user's choice for application SSH connection.
 
 Tunneling/EdgeView
 - Ensure stable VNC connection
-- Reduce Debug logging ("TUNNEL[tunnel-1764919396970952000] Failed to parse tcpData")
 - Indicate VNC/SSH/TCP tunnel status/liveliness (running, data is transferring, etc) in per device and global tunnel lists. Do not overcomplicate or over engineer, I need user some clear indication if data is flowing over the tunnel and it looks alive or not (like traffic light blinking or brief info about connection speed in kbps or something similar per best practices).
 - Need to implement "collect info" edge view function with capability to locally download the generated TAR file with proper progress display.
 - file transfers?
 - secure edgeview support?
+- when we close tunnels do we execute it gracefully from the remote end perspective? Do we send necessary closures/etc? 
 
 Core:
 - settings to be stored securely (use keyring or other relevant OS features)
