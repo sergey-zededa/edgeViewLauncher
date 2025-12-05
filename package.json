@@ -6,9 +6,10 @@
   "scripts": {
     "start": "electron .",
     "prebuild": "node scripts/generate-build-info.js",
-    "build": "npm run build:frontend && npm run build:backend && electron-builder",
+    "build": "npm run build:mac",
+    "build:mac": "npm run build:frontend && npm run build:backend:mac && electron-builder --mac --arm64",
     "build:frontend": "cd frontend && npm run build",
-    "build:backend": "go build -o edgeview-backend http-server.go app.go",
+    "build:backend:mac": "GOOS=darwin GOARCH=arm64 go build -o edgeview-backend http-server.go app.go",
     "build:backend:windows": "GOOS=windows GOARCH=amd64 go build -o edgeview-backend.exe http-server.go app.go",
     "build:windows": "npm run build:frontend && npm run build:backend:windows && electron-builder --win --x64",
     "test": "cd frontend && npm test"
@@ -42,7 +43,14 @@
     },
     "mac": {
       "category": "public.app-category.developer-tools",
-      "target": "dmg",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
       "icon": "icon.icns",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
