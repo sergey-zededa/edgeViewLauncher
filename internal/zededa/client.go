@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -1024,10 +1023,11 @@ type TokenInfo struct {
 
 // VerifyToken checks if a session token is valid by calling the IAM API
 func (c *Client) VerifyToken(token string) (*TokenInfo, error) {
-	// Token is likely already base64/base64url. Do not double-encode.
-	// Just escape it for safety in the URL path.
-	encodedToken := url.PathEscape(token)
-	url := fmt.Sprintf("%s/api/v1/sessions/token/%s", c.BaseURL, encodedToken)
+	// Use the /self endpoint to get current session info
+	url := fmt.Sprintf("%s/api/v1/sessions/token/self", c.BaseURL)
+
+	// Debug: Print curl command for manual testing
+	// fmt.Printf("DEBUG: VerifyToken curl command:\ncurl -X GET '%s' -H 'Authorization: Bearer %s'\n", url, token)
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -1037,6 +1037,7 @@ func (c *Client) VerifyToken(token string) (*TokenInfo, error) {
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
+		// fmt.Printf("DEBUG: VerifyToken HTTP error: %v\n", err)
 		return nil, err
 	}
 	defer resp.Body.Close()
@@ -1046,17 +1047,12 @@ func (c *Client) VerifyToken(token string) (*TokenInfo, error) {
 	}
 
 	// Response structure from ZEDEDA IAM API
-	// { "token": "...", "expiresAt": "...", "subject": "..." }
-	// We need to map the actual JSON response.
-	// Based on standard ZEDEDA API, let's assume a structure or try to decode generic map first if uncertain.
-	// But the user provided a link: /v1/sessions/token/{sessionToken.base64}
-	// Let's define a struct that matches likely response.
-
 	var result struct {
 		Token     string `json:"token"`
 		ExpiresAt string `json:"expiresAt"` // RFC3339
 		Subject   string `json:"subject"`
-		// Add other fields if known
+		Email     string `json:"email"` // Try email field too
+		Username  string `json:"username"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -1066,18 +1062,23 @@ func (c *Client) VerifyToken(token string) (*TokenInfo, error) {
 	// Parse expiry
 	var expiresAt time.Time
 	if result.ExpiresAt != "" {
-		// Try standard formats
 		if t, err := time.Parse(time.RFC3339, result.ExpiresAt); err == nil {
 			expiresAt = t
-		} else {
-			// Try other formats if needed
-			fmt.Printf("Warning: failed to parse expiry %s: %v\n", result.ExpiresAt, err)
 		}
+	}
+
+	// Use subject, or fallback to email or username
+	subject := result.Subject
+	if subject == "" {
+		subject = result.Email
+	}
+	if subject == "" {
+		subject = result.Username
 	}
 
 	return &TokenInfo{
 		Valid:     true,
 		ExpiresAt: expiresAt,
-		Subject:   result.Subject,
+		Subject:   subject,
 	}, nil
 }
