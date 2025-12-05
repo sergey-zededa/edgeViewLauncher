@@ -163,6 +163,7 @@ func (a *App) SaveSettings(clusters []config.ClusterConfig, activeCluster string
 // GetUserInfo returns cluster URL and enterprise for display
 func (a *App) GetUserInfo() map[string]string {
 	enterprise := "Unknown"
+	tokenOwner := ""
 
 	// Get active cluster details
 	var apiToken, baseURL string
@@ -180,12 +181,20 @@ func (a *App) GetUserInfo() map[string]string {
 		if len(parts) >= 2 {
 			enterprise = parts[0]
 		}
+
+		// Try to get token owner (user email) from API
+		// Use the existing client which is already configured
+		tokenInfo, err := a.zededaClient.VerifyToken(apiToken)
+		if err == nil && tokenInfo != nil && tokenInfo.Subject != "" {
+			tokenOwner = tokenInfo.Subject
+		}
 	}
 
 	return map[string]string{
 		"clusterUrl":  baseURL,
 		"enterprise":  enterprise,
 		"clusterName": a.config.ActiveCluster,
+		"tokenOwner":  tokenOwner,
 	}
 }
 

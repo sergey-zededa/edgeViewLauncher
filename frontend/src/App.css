@@ -46,6 +46,15 @@ body {
     text-align: center;
     -webkit-app-region: drag;
     font-weight: 500;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.cluster-info .user-email {
+    font-size: 11px;
+    color: var(--text-placeholder);
+    font-weight: 400;
 }
 
 .search-bar {

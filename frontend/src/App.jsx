@@ -19,6 +19,7 @@ function App() {
   const [selectedNode, setSelectedNode] = useState(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [enterprise, setEnterprise] = useState(null);
+  const [userInfo, setUserInfo] = useState(null);
   const [projects, setProjects] = useState([]);
 
   // Device Details State
@@ -415,6 +416,9 @@ function App() {
         projList.forEach(p => { map[p.id] = p.name; });
         setProjects(map);
       }
+      // Fetch user info (token owner)
+      const info = await GetUserInfo();
+      setUserInfo(info);
     } catch (err) {
       console.log('Error loading user info:', err);
       throw err; // Re-throw to propagate error to saveSettings
@@ -894,7 +898,13 @@ function App() {
             if (!active || !active.baseUrl) return null;
             const entName = enterprise ? enterprise.name : (active.apiToken && active.apiToken.includes(':') ? active.apiToken.split(':')[0] : '');
             const url = active.baseUrl.replace('https://', '').replace('http://', '');
-            return `${entName} • ${url}`;
+            const tokenOwner = userInfo?.tokenOwner;
+            return (
+              <>
+                <span>{entName} • {url}</span>
+                {tokenOwner && <span className="user-email">{tokenOwner}</span>}
+              </>
+            );
           })()}
         </div>
       )}

@@ -273,17 +273,17 @@
                         const header = document.getElementById('vnc-header');
                         const controls = document.getElementById('vnc-controls');
 
-                        const headerHeight = header ? header.offsetHeight : 40;
-                        const controlsHeight = controls ? controls.offsetHeight : 40;
+                        // Use getBoundingClientRect for precise measurements including borders
+                        const headerHeight = header ? header.getBoundingClientRect().height : 40;
+                        const controlsHeight = controls ? controls.getBoundingClientRect().height : 40;
 
                         // Enforce a minimum width to ensure controls don't wrap
                         const minWidth = 680;
                         const totalWidth = Math.max(width, minWidth);
 
-                        // Add buffer for borders/shadows/rounding
-                        const heightBuffer = 10;
-                        const totalHeight = Math.ceil(height + headerHeight + controlsHeight + heightBuffer);
-                        const totalWidthInt = Math.ceil(totalWidth);
+                        // Use exact measurements - no extra buffer needed
+                        const totalHeight = Math.round(height + headerHeight + controlsHeight);
+                        const totalWidthInt = Math.round(totalWidth);
 
                         console.log(`Resizing window to ${totalWidthInt}x${totalHeight} (Remote: ${width}x${height}, Header: ${headerHeight}, Controls: ${controlsHeight})`);
 
