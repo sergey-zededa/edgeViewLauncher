@@ -9,6 +9,8 @@
     "build": "npm run build:frontend && npm run build:backend && electron-builder",
     "build:frontend": "cd frontend && npm run build",
     "build:backend": "go build -o edgeview-backend http-server.go app.go",
+    "build:backend:windows": "GOOS=windows GOARCH=amd64 go build -o edgeview-backend.exe http-server.go app.go",
+    "build:windows": "npm run build:frontend && npm run build:backend:windows && electron-builder --win",
     "test": "cd frontend && npm test"
   },
   "keywords": [],
