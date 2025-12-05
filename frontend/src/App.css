@@ -55,6 +55,12 @@ body {
     font-size: 11px;
     color: var(--text-placeholder);
     font-weight: 400;
+    cursor: default;
+}
+
+.cluster-info .user-email.expiring-soon {
+    color: #ff6b6b;
+    font-weight: 500;
 }
 
 .search-bar {
@@ -1057,6 +1063,62 @@ body {
 .token-status.expired {
     color: #da3633;
     background: rgba(218, 54, 51, 0.1);
+}
+
+/* Token Info Section */
+.token-info-section {
+    margin-top: 16px;
+    padding: 12px;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+}
+
+.token-info-section label {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.token-info-content {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.token-info-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+}
+
+.token-info-label {
+    color: var(--text-secondary);
+    min-width: 60px;
+}
+
+.token-info-value {
+    color: var(--text-primary);
+}
+
+.token-info-value.expired {
+    color: #da3633;
+    font-weight: 500;
+}
+
+.token-info-value.expiring {
+    color: #ff6b6b;
+    font-weight: 500;
+}
+
+.token-expiry-date {
+    color: var(--text-placeholder);
+    font-size: 11px;
+    margin-left: 6px;
 }
 
 .save-btn:hover {

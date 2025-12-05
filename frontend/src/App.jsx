@@ -899,10 +899,41 @@ function App() {
             const entName = enterprise ? enterprise.name : (active.apiToken && active.apiToken.includes(':') ? active.apiToken.split(':')[0] : '');
             const url = active.baseUrl.replace('https://', '').replace('http://', '');
             const tokenOwner = userInfo?.tokenOwner;
+            const tokenExpiry = userInfo?.tokenExpiry;
+
+            // Calculate if token is expiring soon (less than 1 hour)
+            let isExpiringSoon = false;
+            let expiryText = '';
+            if (tokenExpiry) {
+              const expiryDate = new Date(tokenExpiry);
+              const now = new Date();
+              const hoursLeft = (expiryDate - now) / (1000 * 60 * 60);
+              isExpiringSoon = hoursLeft < 1 && hoursLeft > 0;
+
+              if (hoursLeft <= 0) {
+                expiryText = 'Token expired';
+                isExpiringSoon = true;
+              } else if (hoursLeft < 1) {
+                const minutesLeft = Math.round(hoursLeft * 60);
+                expiryText = `Token expires in ${minutesLeft} min`;
+              } else if (hoursLeft < 24) {
+                expiryText = `Token expires in ${Math.round(hoursLeft)} hours`;
+              } else {
+                const daysLeft = Math.round(hoursLeft / 24);
+                expiryText = `Token expires in ${daysLeft} days`;
+              }
+            }
+
             return (
               <>
                 <span>{entName} • {url}</span>
-                {tokenOwner && <span className="user-email">{tokenOwner}</span>}
+                {tokenOwner && (
+                  <Tooltip content={expiryText || 'Token expiry unknown'}>
+                    <span className={`user-email ${isExpiringSoon ? 'expiring-soon' : ''}`}>
+                      {tokenOwner}
+                    </span>
+                  </Tooltip>
+                )}
               </>
             );
           })()}
@@ -1035,6 +1066,55 @@ function App() {
                     </div>
                   )}
                 </div>
+
+                {/* Token Info - only show for active cluster when userInfo is loaded */}
+                {userInfo && editingCluster.name === config.activeCluster && (userInfo.tokenOwner || userInfo.tokenExpiry) && (
+                  <div className="token-info-section">
+                    <label>Token Status</label>
+                    <div className="token-info-content">
+                      {userInfo.tokenOwner && (
+                        <div className="token-info-row">
+                          <span className="token-info-label">Owner:</span>
+                          <span className="token-info-value">{userInfo.tokenOwner}</span>
+                        </div>
+                      )}
+                      {userInfo.tokenExpiry && (() => {
+                        const expiryDate = new Date(userInfo.tokenExpiry);
+                        const now = new Date();
+                        const hoursLeft = (expiryDate - now) / (1000 * 60 * 60);
+                        const isExpired = hoursLeft <= 0;
+                        const isExpiringSoon = hoursLeft < 1 && hoursLeft > 0;
+
+                        let statusText = '';
+                        let statusClass = '';
+                        if (isExpired) {
+                          statusText = 'Expired';
+                          statusClass = 'expired';
+                        } else if (isExpiringSoon) {
+                          statusText = `Expires in ${Math.round(hoursLeft * 60)} min`;
+                          statusClass = 'expiring';
+                        } else if (hoursLeft < 24) {
+                          statusText = `Expires in ${Math.round(hoursLeft)} hours`;
+                          statusClass = '';
+                        } else {
+                          const daysLeft = Math.round(hoursLeft / 24);
+                          statusText = `Expires in ${daysLeft} days`;
+                          statusClass = '';
+                        }
+
+                        return (
+                          <div className="token-info-row">
+                            <span className="token-info-label">Validity:</span>
+                            <span className={`token-info-value ${statusClass}`}>
+                              {statusText}
+                              <span className="token-expiry-date">({expiryDate.toLocaleDateString()} {expiryDate.toLocaleTimeString()})</span>
+                            </span>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                )}
 
                 {/* Settings Error Banner */}
                 {settingsError && (

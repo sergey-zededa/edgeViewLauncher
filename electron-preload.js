@@ -43,12 +43,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     // Window Controls
     closeWindow: () => {
-        const { getCurrentWindow } = require('@electron/remote') || {};
-        if (getCurrentWindow) {
-            getCurrentWindow().close();
-        } else {
-            // Fallback: send IPC to close window
-            ipcRenderer.invoke('close-current-window');
+        try {
+            const { getCurrentWindow } = require('@electron/remote');
+            if (getCurrentWindow) {
+                getCurrentWindow().close();
+                return;
+            }
+        } catch (e) {
+            // Ignore error and use fallback
         }
+        // Fallback: send IPC to close window
+        ipcRenderer.invoke('close-current-window');
     }
 });
