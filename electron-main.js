@@ -498,6 +498,15 @@ ipcMain.handle('resize-window', async (event, { width, height }) => {
     return true;
 });
 
+// Close Current Window
+ipcMain.handle('close-current-window', async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win) {
+        win.close();
+    }
+    return true;
+});
+
 // Get Backend Port
 ipcMain.handle('get-backend-port', async () => {
     // Wait for backend port to be ready if it's not yet

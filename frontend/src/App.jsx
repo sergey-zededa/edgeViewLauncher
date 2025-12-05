@@ -1115,7 +1115,7 @@ function App() {
             {/* Global tunnels view (all devices) */}
             {showGlobalTunnels && activeTunnels.filter(t => t.status !== 'failed').length > 0 && (
               <div className="active-tunnels-section global">
-                <div className="section-title">Global Active Tunnels</div>
+                <div className="section-title">All Active Tunnels</div>
                 <div className="tunnel-list">
                   {activeTunnels.filter(t => t.status !== 'failed').map(tunnel => (
                     <div key={tunnel.id} className="tunnel-item">
@@ -1831,12 +1831,14 @@ function App() {
             <span>{config.apiToken || (config.clusters && config.clusters.some(c => c.name === config.activeCluster && c.apiToken)) ? "Ready" : "Setup Required"}</span>
           </div>
           <div className="status-item">
-            <button
-              className="link-button"
-              onClick={() => setShowGlobalTunnels(prev => !prev)}
-            >
-              {showGlobalTunnels ? 'Hide Global Tunnels' : 'Global Tunnels'}
-            </button>
+            <Tooltip text="Shows all tunnels currently open across all connected devices" position="top">
+              <button
+                className="link-button"
+                onClick={() => setShowGlobalTunnels(prev => !prev)}
+              >
+                {showGlobalTunnels ? 'Hide All Tunnels' : 'All Tunnels'}
+              </button>
+            </Tooltip>
           </div>
           <div className="status-item right">
             <span>{showSettings ? "Configuration" : selectedNode ? "Device Details" : `${nodes.length} results`}</span>

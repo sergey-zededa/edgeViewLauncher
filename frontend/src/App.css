@@ -286,6 +286,20 @@ body {
     font-style: italic;
 }
 
+.loading-state {
+    padding: 60px 40px;
+    text-align: center;
+    color: var(--text-secondary);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+}
+
+.loading-state p {
+    margin: 0;
+}
+
 /* Status Bar */
 .status-bar {
     display: flex;

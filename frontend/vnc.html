@@ -34,6 +34,40 @@
             justify-content: center;
             min-height: 40px;
             -webkit-app-region: drag;
+            position: relative;
+        }
+
+        #vnc-header-controls {
+            position: absolute;
+            right: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            display: flex;
+            gap: 8px;
+            -webkit-app-region: no-drag;
+        }
+
+        .header-btn {
+            background: transparent;
+            border: none;
+            color: #888;
+            cursor: pointer;
+            padding: 6px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+
+        .header-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+        }
+
+        .header-btn svg {
+            width: 18px;
+            height: 18px;
         }
 
         #vnc-info {
@@ -126,6 +160,15 @@
                     <span id="status-text">Connecting...</span>
                 </div>
                 <div id="vnc-details"></div>
+            </div>
+            <div id="vnc-header-controls">
+                <button class="header-btn" id="btn-close" title="Close Window">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
             </div>
         </div>
         <div id="vnc-canvas">
@@ -352,6 +395,15 @@
                 document.exitFullscreen();
             } else {
                 document.documentElement.requestFullscreen();
+            }
+        });
+
+        // Close window button
+        document.getElementById('btn-close').addEventListener('click', () => {
+            if (window.electronAPI && window.electronAPI.closeWindow) {
+                window.electronAPI.closeWindow();
+            } else {
+                window.close();
             }
         });
     </script>
