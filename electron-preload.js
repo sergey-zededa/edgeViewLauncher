@@ -39,5 +39,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     verifyToken: (token, baseUrl) => ipcRenderer.invoke('api-call', '/api/verify-token', 'POST', { token, baseUrl }),
 
     // Electron App Info (version, build number)
-    getElectronAppInfo: () => ipcRenderer.invoke('get-electron-app-info')
+    getElectronAppInfo: () => ipcRenderer.invoke('get-electron-app-info'),
+
+    // Window Controls
+    closeWindow: () => {
+        const { getCurrentWindow } = require('@electron/remote') || {};
+        if (getCurrentWindow) {
+            getCurrentWindow().close();
+        } else {
+            // Fallback: send IPC to close window
+            ipcRenderer.invoke('close-current-window');
+        }
+    }
 });
