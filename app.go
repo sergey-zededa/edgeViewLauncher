@@ -213,20 +213,22 @@ func (a *App) GetUserInfo() map[string]string {
 
 // fetchTokenInfo fetches token info in background and caches it
 func (a *App) fetchTokenInfo(apiToken string) {
-	// fmt.Printf("DEBUG: fetchTokenInfo: Calling VerifyToken in background...\n")
 	// Temporarily disabled due to cloud issue
-	// tokenInfo, err := a.zededaClient.VerifyToken(apiToken)
-	tokenInfo, err := (*zededa.TokenInfo)(nil), error(nil) // No-op replacement
-	if err != nil {
-		// fmt.Printf("DEBUG: fetchTokenInfo: VerifyToken error: %v\n", err)
-		return
-	}
-	if tokenInfo != nil {
-		// fmt.Printf("DEBUG: fetchTokenInfo: VerifyToken result: Valid=%v, Subject=%s, ExpiresAt=%v\n", tokenInfo.Valid, tokenInfo.Subject, tokenInfo.ExpiresAt)
-		a.mu.Lock()
-		a.tokenInfoCache = tokenInfo
-		a.mu.Unlock()
-	}
+	_ = apiToken // Silence unused parameter warning
+
+	/*
+		tokenInfo, err := a.zededaClient.VerifyToken(apiToken)
+		if err != nil {
+			// fmt.Printf("DEBUG: fetchTokenInfo: VerifyToken error: %v\n", err)
+			return
+		}
+		if tokenInfo != nil {
+			// fmt.Printf("DEBUG: fetchTokenInfo: VerifyToken result: Valid=%v, Subject=%s, ExpiresAt=%v\n", tokenInfo.Valid, tokenInfo.Subject, tokenInfo.ExpiresAt)
+			a.mu.Lock()
+			a.tokenInfoCache = tokenInfo
+			a.mu.Unlock()
+		}
+	*/
 }
 
 // GetEnterprise returns enterprise information

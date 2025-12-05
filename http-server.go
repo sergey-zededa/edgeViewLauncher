@@ -366,9 +366,27 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// GetFreePort asks the kernel for a free open port that is ready to use.
+func GetFreePort() (int, error) {
+	addr, err := net.ResolveTCPAddr("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+
+	l, err := net.ListenTCP("tcp", addr)
+	if err != nil {
+		return 0, err
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
 func (s *HTTPServer) Start() {
 	// Initialize app context
 	s.app.startup(context.Background())
+
+	// Log version to verify build update
+	log.Printf("EdgeView Backend Version: 2025.12.05-FIX-WINDOWS-PORT-0")
 
 	router := mux.NewRouter()
 
@@ -412,14 +430,33 @@ func (s *HTTPServer) Start() {
 
 	handler := corsMiddleware(router)
 
-	addr := fmt.Sprintf(":%d", s.port)
+	// If port is 0, find a free port explicitly first
+	// This avoids issues on some Windows systems where binding to "127.0.0.1:0"
+	// returns 0 as the port number.
+	if s.port == 0 {
+		freePort, err := GetFreePort()
+		if err != nil {
+			log.Fatalf("Failed to find a free port: %v", err)
+		}
+		s.port = freePort
+		log.Printf("Found free port: %d", s.port)
+	}
+
+	addr := fmt.Sprintf("127.0.0.1:%d", s.port)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Fatalf("Failed to listen on %s: %v", addr, err)
 	}
 
-	// Get the actual port (useful if s.port was 0)
-	actualPort := listener.Addr().(*net.TCPAddr).Port
+	// Get the actual port to be sure
+	actualAddr := listener.Addr().(*net.TCPAddr)
+	actualPort := actualAddr.Port
+
+	if actualPort == 0 {
+		listener.Close()
+		log.Fatalf("CRITICAL ERROR: Listener reported port 0 on %s. This is invalid.", addr)
+	}
+
 	// Use log.Printf (stderr) instead of fmt.Printf (stdout) for reliable
 	// output on Windows where stdout may be buffered
 	log.Printf("EdgeView HTTP Server starting on :%d", actualPort)
