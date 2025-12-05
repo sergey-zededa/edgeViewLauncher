@@ -1,6 +1,6 @@
 {
     "name": "edgeview-launcher",
-    "version": "1.0.0",
+    "version": "0.0.1",
     "description": "EdgeView Launcher - Electron Edition",
     "main": "electron-main.js",
     "scripts": {
@@ -37,7 +37,10 @@
             ]
         },
         "linux": {
-            "target": ["AppImage", "deb"],
+            "target": [
+                "AppImage",
+                "deb"
+            ],
             "category": "Development",
             "extraResources": [
                 {

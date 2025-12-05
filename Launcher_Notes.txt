@@ -49,6 +49,11 @@ UI:
 - when Application Window closes I need App Icon to disappear from MacOS dock only leaving it present/resident in the system tray
 - System tray menu is to show minimalistic list of currently established global connections and some other useful info similar to Tailscale menu
 - make sure Activity log captures all necessary events/messages
+- add close button to VNC window similar to what we have in SSH Terminal window
+- Move searching devices on app start a little lower, it is too close to window header
+- Add logged in user info on the top of device search page (token owner)
+- Rename "Global Tunnels" to "All Tunnels", add tooltip explaining this would show all tunnels opened across all the devices at the moment.
+- Reduce Debug logging ("TUNNEL[tunnel-1764919396970952000] Failed to parse tcpData")
 
 Tunneling/EdgeView
 - Ensure stable VNC connection

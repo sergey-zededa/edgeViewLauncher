@@ -36,5 +36,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getBackendPort: () => ipcRenderer.invoke('get-backend-port'),
     openExternal: (url) => ipcRenderer.invoke('open-external', url),
     getSystemTimeFormat: () => ipcRenderer.invoke('get-system-time-format'),
-    verifyToken: (token, baseUrl) => ipcRenderer.invoke('api-call', '/api/verify-token', 'POST', { token, baseUrl })
+    verifyToken: (token, baseUrl) => ipcRenderer.invoke('api-call', '/api/verify-token', 'POST', { token, baseUrl }),
+
+    // Electron App Info (version, build number)
+    getElectronAppInfo: () => ipcRenderer.invoke('get-electron-app-info')
 });
