@@ -39,7 +39,11 @@ Is there any additional info we need to get from parsing the script which we don
 + Autosize VNC window to fit all the original remote screen content and our added UI elements (i.e. keyboard options, etc.)
 x number of AVAILABLE connections/instances? - not possible
 + remove Standard window headers/menus in Windows
-
++ add close button to VNC window similar to what we have in SSH Terminal window
++ Move "Loading nodes" and animated icon on app start a little lower, it is too close to window header
++ Rename "Global Tunnels" to "All Tunnels", add tooltip explaining this would show all tunnels opened across all the devices at the moment.
++ Adjust VNC Window size to exactly match screen size
++ when Application Window closes I need App Icon to disappear from MacOS dock only leaving it present/resident in the system tray
 
 
 
@@ -47,17 +51,13 @@ UI:
 - ? need an option to select preferred terminal app
 - ? Helper strings to show how to connect to a tunnel/platform dependent
 + auto day/night scheme in line with OS ??? Need to test - currently not working
-- when Application Window closes I need App Icon to disappear from MacOS dock only leaving it present/resident in the system tray
 - System tray menu is to show minimalistic list of currently established global connections and some other useful info similar to Tailscale menu
 - make sure Activity log captures all necessary events/messages
-- add close button to VNC window similar to what we have in SSH Terminal window
-- Move "Loading nodes" and animated icon on app start a little lower, it is too close to window header
 - Add logged in user info on the top of device search page (token owner)
-- Rename "Global Tunnels" to "All Tunnels", add tooltip explaining this would show all tunnels opened across all the devices at the moment.
-- Reduce Debug logging ("TUNNEL[tunnel-1764919396970952000] Failed to parse tcpData")
 
 Tunneling/EdgeView
 - Ensure stable VNC connection
+- Reduce Debug logging ("TUNNEL[tunnel-1764919396970952000] Failed to parse tcpData")
 - Indicate VNC/SSH/TCP tunnel status/liveliness (running, data is transferring, etc) in per device and global tunnel lists. Do not overcomplicate or over engineer, I need user some clear indication if data is flowing over the tunnel and it looks alive or not (like traffic light blinking or brief info about connection speed in kbps or something similar per best practices).
 - Need to implement "collect info" edge view function with capability to locally download the generated TAR file with proper progress display.
 - file transfers?

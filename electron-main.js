@@ -35,6 +35,10 @@ function createTray() {
                 if (mainWindow) {
                     mainWindow.show();
                     mainWindow.focus();
+                    // Show dock icon on macOS when window is shown
+                    if (process.platform === 'darwin' && app.dock) {
+                        app.dock.show();
+                    }
                 } else {
                     createWindow();
                 }
@@ -56,6 +60,10 @@ function createTray() {
         if (mainWindow) {
             mainWindow.show();
             mainWindow.focus();
+            // Show dock icon on macOS when window is shown
+            if (process.platform === 'darwin' && app.dock) {
+                app.dock.show();
+            }
         }
     });
 }
@@ -133,6 +141,10 @@ function createWindow() {
         if (!isQuitting) {
             event.preventDefault();
             mainWindow.hide();
+            // Hide dock icon on macOS when window is hidden
+            if (process.platform === 'darwin' && app.dock) {
+                app.dock.hide();
+            }
             return false;
         }
     });
