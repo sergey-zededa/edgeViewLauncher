@@ -24,9 +24,9 @@ if [ $? -ne 0 ]; then
 fi
 echo "✓ Frontend built"
 
-# 3. Build Windows installer
-echo "3. Building Windows installer with electron-builder..."
-npx electron-builder --win
+# 3. Build Windows installer (x64 architecture)
+echo "3. Building Windows installer with electron-builder (x64)..."
+npx electron-builder --win --x64
 if [ $? -ne 0 ]; then
     echo "❌ Installer build failed!"
     exit 1
