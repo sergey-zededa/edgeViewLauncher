@@ -1319,32 +1319,49 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 
 	// WebSocket -> TCP (via dataChan)
 	go func() {
-		defer close(done)
+		defer func() {
+			fmt.Printf("TUNNEL[%s] ChanNum=%d: WS->TCP goroutine exiting\n", tunnel.ID, chanNum)
+			close(done)
+		}()
 		for {
 			select {
 			case data, ok := <-dataChan:
 				if !ok {
+					fmt.Printf("TUNNEL[%s] ChanNum=%d: dataChan closed, WS->TCP ending\n", tunnel.ID, chanNum)
 					return // Channel closed
 				}
 				if _, err := conn.Write(data); err != nil {
+					fmt.Printf("TUNNEL[%s] ChanNum=%d: WS->TCP write error: %v\n", tunnel.ID, chanNum, err)
 					return
 				}
 			case <-ctx.Done():
+				fmt.Printf("TUNNEL[%s] ChanNum=%d: Context done, WS->TCP ending\n", tunnel.ID, chanNum)
 				return
 			}
 		}
 	}()
 
 	// TCP -> WebSocket
+	// Note: For VNC and similar protocols, the server sends data first.
+	// The client (noVNC) may not send any data until it receives the RFB handshake.
+	// Therefore, we use a longer timeout or no timeout at all.
 	buf := make([]byte, 64*1024)
 	for {
 		select {
 		case <-ctx.Done():
+			fmt.Printf("TUNNEL[%s] ChanNum=%d: Context done in TCP->WS loop\n", tunnel.ID, chanNum)
 			return
 		case <-done:
+			fmt.Printf("TUNNEL[%s] ChanNum=%d: Done channel signaled in TCP->WS loop\n", tunnel.ID, chanNum)
 			return
 		default:
-			conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+			// For VNC tunnels, use a very long timeout (5 minutes) since the user
+			// might not interact for a while. For other protocols, 30 seconds is fine.
+			timeout := 30 * time.Second
+			if tunnel.Type == "VNC" {
+				timeout = 5 * time.Minute
+			}
+			conn.SetReadDeadline(time.Now().Add(timeout))
 			n, err := conn.Read(buf)
 			if n > 0 {
 				td := tcpData{
@@ -1369,6 +1386,8 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 				}
 				if err != io.EOF {
 					fmt.Printf("TUNNEL[%s] ChanNum=%d: TCP read error: %v\n", tunnel.ID, chanNum, err)
+				} else {
+					fmt.Printf("TUNNEL[%s] ChanNum=%d: TCP EOF (client disconnected)\n", tunnel.ID, chanNum)
 				}
 				return
 			}
