@@ -271,7 +271,15 @@ function startGoBackend() {
     });
 
     goBackend.stderr.on('data', (data) => {
-        console.error('[Go Backend Error]', data.toString());
+        const output = data.toString();
+        console.error('[Go Backend Error]', output);
+
+        // Parse the port from stderr too (log.Printf goes to stderr)
+        const portMatch = output.match(/HTTP Server starting on :(\d+)/);
+        if (portMatch && !BACKEND_PORT) {
+            BACKEND_PORT = parseInt(portMatch[1], 10);
+            console.log(`[Go Backend] Detected backend port: ${BACKEND_PORT}`);
+        }
     });
 
     goBackend.on('error', (error) => {

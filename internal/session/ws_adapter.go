@@ -1,6 +1,7 @@
 package session
 
 import (
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -34,6 +35,7 @@ func (a *WSConnAdapter) Read(b []byte) (n int, err error) {
 	if a.reader == nil {
 		messageType, reader, err := a.Conn.NextReader()
 		if err != nil {
+			fmt.Printf("WSConnAdapter: NextReader error: %v\n", err)
 			a.mu.Lock()
 			a.failed = true
 			a.mu.Unlock()
@@ -51,6 +53,7 @@ func (a *WSConnAdapter) Read(b []byte) (n int, err error) {
 		return a.Read(b)
 	}
 	if err != nil {
+		fmt.Printf("WSConnAdapter: Reader.Read error: %v\n", err)
 		a.mu.Lock()
 		a.failed = true
 		a.mu.Unlock()

@@ -36,6 +36,7 @@ Is there any additional info we need to get from parsing the script which we don
 + fix the back arrow overlapping with traffic lights on the device details page header
 + add status message on failing to connect to the controller/cluster when receiving the list of devices
 + make the backend port dynamic? Not hard coded 8080
++ Autosize VNC window to fit all the original remote screen content and our added UI elements (i.e. keyboard options, etc.)
 
 
 + auto day/night scheme in line with OS ??? Need to test
@@ -45,11 +46,9 @@ Is there any additional info we need to get from parsing the script which we don
 - remove Standard window headers/menus in Windows
 
 UI:
-- Autosize VNC window to fit all the original remote screen content and our added UI elements (i.e. keyboard options, etc.)
 - when Application Window closes I need App Icon to disappear from MacOS dock only leaving it present/resident in the system tray
 - System tray menu is to show minimalistic list of currently established global connections and some other useful info similar to Tailscale menu
 - make sure Activity log captures all necessary events/messages
-
 
 Tunneling/EdgeView
 - Ensure stable VNC connection
