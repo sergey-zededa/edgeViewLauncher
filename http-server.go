@@ -589,9 +589,15 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get username from query param (default "root")
+	user := r.URL.Query().Get("user")
+	if user == "" {
+		user = "root"
+	}
+
 	// Connect to local SSH proxy
 	config := &ssh.ClientConfig{
-		User: "root",
+		User: user,
 		Auth: []ssh.AuthMethod{
 			ssh.PublicKeys(signer),
 		},

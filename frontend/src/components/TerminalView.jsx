@@ -91,14 +91,18 @@ const TerminalView = ({ port }) => {
                     if (port) backendPort = port;
                 }
 
-                const wsUrl = `ws://localhost:${backendPort}/api/ssh/term?port=${port}`;
+                // Get username from URL params
+                const params = new URLSearchParams(window.location.search);
+                const username = params.get('username') || '';
+
+                const wsUrl = `ws://localhost:${backendPort}/api/ssh/term?port=${port}&user=${encodeURIComponent(username)}`;
                 const ws = new WebSocket(wsUrl);
                 wsRef.current = ws;
 
                 ws.onopen = () => {
                     setStatus('Connected');
                     setIsConnected(true);
-                    term.writeln('\x1b[1;32mConnected to EdgeView SSH Proxy...\x1b[0m');
+                    term.writeln(`\x1b[1;32mConnected to EdgeView SSH Proxy (User: ${username || 'root'})...\x1b[0m`);
                     // Send resize event immediately
                     const dims = { cols: term.cols, rows: term.rows };
                     ws.send(JSON.stringify({ type: 'resize', ...dims }));

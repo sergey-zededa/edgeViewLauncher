@@ -538,6 +538,7 @@ ipcMain.handle('open-terminal-window', async (event, options) => {
     const nodeName = typeof options === 'object' ? options.nodeName : 'Unknown Device';
     const targetInfo = typeof options === 'object' ? options.targetInfo : 'SSH';
     const tunnelId = typeof options === 'object' ? options.tunnelId : '';
+    const username = (typeof options === 'object' && options.username) ? options.username : '';
 
     const termWindow = new BrowserWindow({
         width: 800,
@@ -561,7 +562,8 @@ ipcMain.handle('open-terminal-window', async (event, options) => {
         port,
         nodeName,
         targetInfo,
-        tunnelId: tunnelId || ''
+        tunnelId: tunnelId || '',
+        username: username || ''
     });
 
     if (process.env.NODE_ENV === 'development') {

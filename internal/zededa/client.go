@@ -80,7 +80,7 @@ func NewClient(baseURL, token string) *Client {
 	}
 
 	return &Client{
-		BaseURL: baseURL,
+		BaseURL: strings.TrimSuffix(baseURL, "/"),
 		Token:   token,
 		HTTPClient: &http.Client{
 			Timeout:   30 * time.Second,
@@ -91,7 +91,7 @@ func NewClient(baseURL, token string) *Client {
 
 // UpdateConfig updates the client's base URL and token
 func (c *Client) UpdateConfig(baseURL, token string) {
-	c.BaseURL = baseURL
+	c.BaseURL = strings.TrimSuffix(baseURL, "/")
 	c.Token = token
 }
 
