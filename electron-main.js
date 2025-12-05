@@ -292,12 +292,24 @@ function startGoBackend() {
 }
 
 app.whenReady().then(() => {
+    // Load version from package.json
+    const pkg = require('./package.json');
+
+    // Try to load build info
+    let buildNumber = 'dev';
+    try {
+        const buildInfo = require('./build-info.json');
+        buildNumber = buildInfo.buildNumber;
+    } catch (e) {
+        // build-info.json not found (development mode)
+    }
+
     // Configure About Panel
     app.setAboutPanelOptions({
         applicationName: 'EdgeView Launcher',
-        applicationVersion: '1.0.0',
+        applicationVersion: pkg.version,
         copyright: 'Copyright © 2025 ZEDEDA',
-        version: '1.0.0',
+        version: buildNumber,
         credits: 'Powered by ZEDEDA',
         website: 'https://zededa.com'
     });
@@ -319,6 +331,26 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
     // Do nothing - keep app running in tray
+});
+
+// IPC Handler: Get Electron App Info (version, build number)
+ipcMain.handle('get-electron-app-info', async () => {
+    const pkg = require('./package.json');
+
+    // Try to load build info (generated at build time)
+    let buildInfo = { buildNumber: 'dev', buildDate: null, gitCommit: null };
+    try {
+        buildInfo = require('./build-info.json');
+    } catch (e) {
+        // build-info.json not found (development mode)
+    }
+
+    return {
+        version: pkg.version,
+        buildNumber: buildInfo.buildNumber,
+        buildDate: buildInfo.buildDate,
+        gitCommit: buildInfo.gitCommit
+    };
 });
 
 app.on('before-quit', () => {

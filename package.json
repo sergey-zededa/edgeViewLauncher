@@ -1,10 +1,11 @@
 {
   "name": "edgeview-launcher",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "description": "EdgeView Launcher - Electron Edition",
   "main": "electron-main.js",
   "scripts": {
     "start": "electron .",
+    "prebuild": "node scripts/generate-build-info.js",
     "build": "npm run build:frontend && npm run build:backend && electron-builder",
     "build:frontend": "cd frontend && npm run build",
     "build:backend": "go build -o edgeview-backend http-server.go app.go",
@@ -53,6 +54,7 @@
       "electron-main.js",
       "electron-preload.js",
       "backendClient.js",
+      "build-info.json",
       "frontend/dist/**/*",
       "icon.icns",
       "icon.ico",
