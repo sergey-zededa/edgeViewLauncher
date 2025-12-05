@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-SOURCE="build/icon_final_cropped.png"
+SOURCE="build/icon_padded.png"
 ICONSET="build/icon.iconset"
 
 # Ensure source exists

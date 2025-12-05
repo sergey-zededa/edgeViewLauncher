@@ -8,6 +8,7 @@ let tray;
 let isQuitting = false;
 let goBackend;
 let BACKEND_PORT = null; // Will be set dynamically when Go backend starts
+let trayRefreshInterval = null; // For periodic menu refresh
 
 function createTray() {
     // Try using the PNG first, it's often better for tray icons
@@ -28,33 +29,11 @@ function createTray() {
     tray.setToolTip('EdgeView Launcher');
     console.log('Tray created successfully');
 
-    const contextMenu = Menu.buildFromTemplate([
-        {
-            label: 'Open EdgeView Launcher',
-            click: () => {
-                if (mainWindow) {
-                    mainWindow.show();
-                    mainWindow.focus();
-                    // Show dock icon on macOS when window is shown
-                    if (process.platform === 'darwin' && app.dock) {
-                        app.dock.show();
-                    }
-                } else {
-                    createWindow();
-                }
-            }
-        },
-        { type: 'separator' },
-        {
-            label: 'Quit',
-            click: () => {
-                isQuitting = true;
-                app.quit();
-            }
-        }
-    ]);
+    // Initial menu (will be updated with dynamic content)
+    updateTrayMenu();
 
-    tray.setContextMenu(contextMenu);
+    // Refresh menu periodically (every 5 seconds)
+    trayRefreshInterval = setInterval(updateTrayMenu, 5000);
 
     tray.on('double-click', () => {
         if (mainWindow) {
@@ -66,6 +45,144 @@ function createTray() {
             }
         }
     });
+}
+
+// Build and set the tray context menu with dynamic content
+async function updateTrayMenu() {
+    const menuItems = [];
+
+    // Status header
+    menuItems.push({
+        label: 'EdgeView Launcher',
+        enabled: false
+    });
+
+    // Try to get user info
+    if (BACKEND_PORT) {
+        try {
+            const userInfoRes = await fetch(`http://localhost:${BACKEND_PORT}/api/user-info`);
+            const userInfoData = await userInfoRes.json();
+            if (userInfoData.success && userInfoData.data) {
+                const { tokenOwner, clusterName } = userInfoData.data;
+                if (tokenOwner) {
+                    menuItems.push({
+                        label: tokenOwner,
+                        enabled: false
+                    });
+                }
+                if (clusterName) {
+                    menuItems.push({
+                        label: `Cluster: ${clusterName}`,
+                        enabled: false
+                    });
+                }
+            }
+        } catch (e) {
+            // Silently ignore - backend might not be ready
+        }
+
+        menuItems.push({ type: 'separator' });
+
+        // Fetch active tunnels
+        try {
+            const tunnelsRes = await fetch(`http://localhost:${BACKEND_PORT}/api/tunnels`);
+            const tunnelsData = await tunnelsRes.json();
+
+            if (tunnelsData.success && Array.isArray(tunnelsData.data) && tunnelsData.data.length > 0) {
+                menuItems.push({
+                    label: 'ACTIVE CONNECTIONS',
+                    enabled: false
+                });
+
+                for (const tunnel of tunnelsData.data) {
+                    const deviceName = tunnel.NodeName || tunnel.NodeID?.substring(0, 8) || 'Unknown';
+                    const port = tunnel.LocalPort;
+                    const type = tunnel.Type || 'TCP';
+
+                    menuItems.push({
+                        label: `${deviceName} → :${port} (${type})`,
+                        submenu: [
+                            {
+                                label: `Type: ${type}`,
+                                enabled: false
+                            },
+                            {
+                                label: `Local Port: ${port}`,
+                                enabled: false
+                            },
+                            {
+                                label: `Target: ${tunnel.TargetIP}`,
+                                enabled: false
+                            },
+                            { type: 'separator' },
+                            {
+                                label: 'Close Connection',
+                                click: async () => {
+                                    try {
+                                        await fetch(`http://localhost:${BACKEND_PORT}/api/tunnel/${tunnel.ID}`, {
+                                            method: 'DELETE'
+                                        });
+                                        updateTrayMenu(); // Refresh menu
+                                    } catch (e) {
+                                        console.error('Failed to close tunnel:', e);
+                                    }
+                                }
+                            }
+                        ]
+                    });
+                }
+            } else {
+                menuItems.push({
+                    label: 'No active connections',
+                    enabled: false
+                });
+            }
+        } catch (e) {
+            menuItems.push({
+                label: 'Loading...',
+                enabled: false
+            });
+        }
+    } else {
+        menuItems.push({
+            label: 'Connecting to backend...',
+            enabled: false
+        });
+    }
+
+    menuItems.push({ type: 'separator' });
+
+    // Open app
+    menuItems.push({
+        label: 'Open EdgeView Launcher',
+        accelerator: 'CommandOrControl+O',
+        click: () => {
+            if (mainWindow) {
+                mainWindow.show();
+                mainWindow.focus();
+                if (process.platform === 'darwin' && app.dock) {
+                    app.dock.show();
+                }
+            } else {
+                createWindow();
+            }
+        }
+    });
+
+    menuItems.push({ type: 'separator' });
+
+    // Quit
+    menuItems.push({
+        label: 'Quit',
+        accelerator: 'CommandOrControl+Q',
+        click: () => {
+            isQuitting = true;
+            app.quit();
+        }
+    });
+
+    const contextMenu = Menu.buildFromTemplate(menuItems);
+    tray.setContextMenu(contextMenu);
 }
 
 function createWindow() {

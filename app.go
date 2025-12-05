@@ -68,6 +68,9 @@ type App struct {
 	// tunnel listings without repeatedly calling the Cloud API.
 	nodeMetaCache map[string]NodeMeta // Key: device/node UUID
 	nodeMetaMu    sync.RWMutex
+
+	// Cache for token info (user email, expiry)
+	tokenInfoCache *zededa.TokenInfo
 }
 
 // NewApp creates a new App application struct
@@ -164,6 +167,7 @@ func (a *App) SaveSettings(clusters []config.ClusterConfig, activeCluster string
 func (a *App) GetUserInfo() map[string]string {
 	enterprise := "Unknown"
 	tokenOwner := ""
+	tokenExpiry := ""
 
 	// Get active cluster details
 	var apiToken, baseURL string
@@ -182,11 +186,19 @@ func (a *App) GetUserInfo() map[string]string {
 			enterprise = parts[0]
 		}
 
-		// Try to get token owner (user email) from API
-		// Use the existing client which is already configured
-		tokenInfo, err := a.zededaClient.VerifyToken(apiToken)
-		if err == nil && tokenInfo != nil && tokenInfo.Subject != "" {
-			tokenOwner = tokenInfo.Subject
+		// Check if we have cached token info
+		a.mu.RLock()
+		cachedInfo := a.tokenInfoCache
+		a.mu.RUnlock()
+
+		if cachedInfo != nil && cachedInfo.Subject != "" {
+			tokenOwner = cachedInfo.Subject
+			if !cachedInfo.ExpiresAt.IsZero() {
+				tokenExpiry = cachedInfo.ExpiresAt.Format(time.RFC3339)
+			}
+		} else {
+			// Trigger async fetch if not cached
+			go a.fetchTokenInfo(apiToken)
 		}
 	}
 
@@ -195,6 +207,25 @@ func (a *App) GetUserInfo() map[string]string {
 		"enterprise":  enterprise,
 		"clusterName": a.config.ActiveCluster,
 		"tokenOwner":  tokenOwner,
+		"tokenExpiry": tokenExpiry,
+	}
+}
+
+// fetchTokenInfo fetches token info in background and caches it
+func (a *App) fetchTokenInfo(apiToken string) {
+	// fmt.Printf("DEBUG: fetchTokenInfo: Calling VerifyToken in background...\n")
+	// Temporarily disabled due to cloud issue
+	// tokenInfo, err := a.zededaClient.VerifyToken(apiToken)
+	tokenInfo, err := (*zededa.TokenInfo)(nil), error(nil) // No-op replacement
+	if err != nil {
+		// fmt.Printf("DEBUG: fetchTokenInfo: VerifyToken error: %v\n", err)
+		return
+	}
+	if tokenInfo != nil {
+		// fmt.Printf("DEBUG: fetchTokenInfo: VerifyToken result: Valid=%v, Subject=%s, ExpiresAt=%v\n", tokenInfo.Valid, tokenInfo.Subject, tokenInfo.ExpiresAt)
+		a.mu.Lock()
+		a.tokenInfoCache = tokenInfo
+		a.mu.Unlock()
 	}
 }
 

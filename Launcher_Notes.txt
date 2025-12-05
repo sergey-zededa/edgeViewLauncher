@@ -44,6 +44,7 @@ x number of AVAILABLE connections/instances? - not possible
 + Rename "Global Tunnels" to "All Tunnels", add tooltip explaining this would show all tunnels opened across all the devices at the moment.
 + Adjust VNC Window size to exactly match screen size
 + when Application Window closes I need App Icon to disappear from MacOS dock only leaving it present/resident in the system tray
++ System tray menu is to show minimalistic list of currently established global connections and some other useful info similar to Tailscale menu
 
 
 
@@ -51,9 +52,8 @@ UI:
 - ? need an option to select preferred terminal app
 - ? Helper strings to show how to connect to a tunnel/platform dependent
 + auto day/night scheme in line with OS ??? Need to test - currently not working
-- System tray menu is to show minimalistic list of currently established global connections and some other useful info similar to Tailscale menu
 - make sure Activity log captures all necessary events/messages
-- Add logged in user info on the top of device search page (token owner)
+- Add logged in user info on the top of device search page (token owner) - zedcloud is failing with 504, to be tested later
 
 Tunneling/EdgeView
 - Ensure stable VNC connection
