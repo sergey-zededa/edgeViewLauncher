@@ -563,7 +563,10 @@ ipcMain.handle('open-terminal-window', async (event, options) => {
         nodeName,
         targetInfo,
         tunnelId: tunnelId || '',
-        username: username || ''
+        targetInfo,
+        tunnelId: tunnelId || '',
+        username: username || '',
+        password: options.password || '' // Pass password to frontend
     });
 
     if (process.env.NODE_ENV === 'development') {
@@ -596,6 +599,34 @@ ipcMain.handle('open-terminal-window', async (event, options) => {
     });
 
     return true;
+});
+
+// Open External Terminal (Native)
+ipcMain.handle('open-external-terminal', async (event, command) => {
+    const { exec } = require('child_process');
+    console.log(`Opening external terminal with command: ${command}`);
+
+    try {
+        if (process.platform === 'darwin') {
+            // macOS: Open Terminal.app and run command
+            // Escape double quotes for AppleScript
+            const escapedCommand = command.replace(/"/g, '\\"');
+            const appleScript = `tell application "Terminal" to do script "${escapedCommand}" activate`;
+            exec(`osascript -e '${appleScript}'`);
+        } else if (process.platform === 'win32') {
+            // Windows: Open CMD
+            exec(`start cmd.exe /k "${command}"`);
+        } else {
+            // Linux: Try common terminals
+            // tailored for standard distros (gnome-terminal, xterm, etc)
+            const cmd = `gnome-terminal -- /bin/bash -c "${command}; exec bash" || xterm -e "${command}; exec bash"`;
+            exec(cmd);
+        }
+        return { success: true };
+    } catch (error) {
+        console.error('Failed to open external terminal:', error);
+        return { success: false, error: error.message };
+    }
 });
 
 // Open External URL (VNC, etc.)

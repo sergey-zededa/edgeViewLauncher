@@ -595,12 +595,20 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 		user = "root"
 	}
 
+	// Get password from query param
+	password := r.URL.Query().Get("password")
+
+	authMethods := []ssh.AuthMethod{
+		ssh.PublicKeys(signer),
+	}
+	if password != "" {
+		authMethods = append(authMethods, ssh.Password(password))
+	}
+
 	// Connect to local SSH proxy
 	config := &ssh.ClientConfig{
-		User: user,
-		Auth: []ssh.AuthMethod{
-			ssh.PublicKeys(signer),
-		},
+		User:            user,
+		Auth:            authMethods,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         10 * time.Second,
 	}
