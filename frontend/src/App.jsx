@@ -36,6 +36,7 @@ function App() {
   const [loadingMessage, setLoadingMessage] = useState('');
   const [tunnelLoading, setTunnelLoading] = useState(null);
   const [tunnelLoadingMessage, setTunnelLoadingMessage] = useState('');
+  const [sshUser, setSshUser] = useState('root');
   const [logs, setLogs] = useState([]);
   const [showTerminal, setShowTerminal] = useState(false);
   const [localPort, setLocalPort] = useState(null);
@@ -306,7 +307,7 @@ function App() {
   };
 
   // Tunnel management functions
-  const addTunnel = (type, targetIP, targetPort, localPort, tunnelId) => {
+  const addTunnel = (type, targetIP, targetPort, localPort, tunnelId, username = '') => {
     const tunnel = {
       id: tunnelId,
       nodeId: selectedNode?.id,
@@ -316,6 +317,7 @@ function App() {
       targetIP,
       targetPort,
       localPort,
+      username,
       createdAt: new Date().toISOString()
     };
     setActiveTunnels(prev => [...prev, tunnel]);
@@ -814,13 +816,25 @@ function App() {
       if (clustersToSave.length > 0) {
         const activeIndex = clustersToSave.findIndex(c => c.name === config.activeCluster);
         if (activeIndex !== -1) {
-          clustersToSave[activeIndex] = editingCluster;
-          activeToSave = editingCluster.name;
+          // Sanitize Base URL - remove trailing slashes
+          const sanitizedCluster = { ...editingCluster };
+          if (sanitizedCluster.baseUrl) {
+            sanitizedCluster.baseUrl = sanitizedCluster.baseUrl.replace(/\/+$/, '');
+          }
+
+          clustersToSave[activeIndex] = sanitizedCluster;
+          activeToSave = sanitizedCluster.name;
         }
       } else {
         // If no clusters exist, create one from editingCluster
-        clustersToSave = [editingCluster];
-        activeToSave = editingCluster.name;
+        // Sanitize Base URL - remove trailing slashes
+        const sanitizedCluster = { ...editingCluster };
+        if (sanitizedCluster.baseUrl) {
+          sanitizedCluster.baseUrl = sanitizedCluster.baseUrl.replace(/\/+$/, '');
+        }
+
+        clustersToSave = [sanitizedCluster];
+        activeToSave = sanitizedCluster.name;
       }
 
       await SaveSettings(clustersToSave, activeToSave);
@@ -1163,7 +1177,11 @@ function App() {
                           className="icon-btn copy-btn"
                           title="Copy address"
                           onClick={() => {
-                            navigator.clipboard.writeText(`localhost:${tunnel.localPort}`);
+                            if (tunnel.type === 'SSH') {
+                              navigator.clipboard.writeText(`ssh -p ${tunnel.localPort} ${tunnel.username || 'root'}@localhost`);
+                            } else {
+                              navigator.clipboard.writeText(`localhost:${tunnel.localPort}`);
+                            }
                           }}
                         >
                           <Copy size={12} />
@@ -1183,7 +1201,12 @@ function App() {
                           <button
                             className="icon-btn"
                             title="Open Terminal"
-                            onClick={() => window.electronAPI.openTerminalWindow(tunnel.localPort)}
+                            onClick={() => window.electronAPI.openTerminalWindow({
+                              port: tunnel.localPort,
+                              username: tunnel.username,
+                              nodeName: tunnel.nodeName,
+                              targetInfo: 'EVE-OS SSH'
+                            })}
                           >
                             <Terminal size={14} />
                           </button>
@@ -1235,7 +1258,11 @@ function App() {
                           className="icon-btn copy-btn"
                           title="Copy address"
                           onClick={() => {
-                            navigator.clipboard.writeText(`localhost:${tunnel.localPort}`);
+                            if (tunnel.type === 'SSH') {
+                              navigator.clipboard.writeText(`ssh -p ${tunnel.localPort} ${tunnel.username || 'root'}@localhost`);
+                            } else {
+                              navigator.clipboard.writeText(`localhost:${tunnel.localPort}`);
+                            }
                           }}
                         >
                           <Copy size={12} />
@@ -1255,7 +1282,12 @@ function App() {
                           <button
                             className="icon-btn"
                             title="Open Terminal"
-                            onClick={() => window.electronAPI.openTerminalWindow(tunnel.localPort)}
+                            onClick={() => window.electronAPI.openTerminalWindow({
+                              port: tunnel.localPort,
+                              username: tunnel.username,
+                              nodeName: tunnel.nodeName,
+                              targetInfo: 'EVE-OS SSH'
+                            })}
                           >
                             <Terminal size={14} />
                           </button>
@@ -1559,7 +1591,7 @@ function App() {
                                         backgroundColor: '#1e1e1e',
                                         border: '1px solid #333',
                                         borderRadius: '6px',
-                                        boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+                                        boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
                                         zIndex: 1000,
                                         minWidth: '200px'
                                       }}>
@@ -1655,42 +1687,73 @@ function App() {
                                     )}
                                   </div>
                                 )}
-                                <div
-                                  className={`option-btn ${tunnelLoading === 'ssh' ? 'loading' : ''} ${sessionExpired ? 'disabled' : ''}`}
-                                  onClick={async () => {
-                                    if (sessionExpired) {
-                                      addLog('Cannot start SSH tunnel: EdgeView session has expired. Restart the session first.', 'warning');
-                                      return;
-                                    }
-                                    if (tunnelLoading) return;
-                                    try {
-                                      setTunnelLoading('ssh');
-                                      setTunnelLoadingMessage('Starting SSH tunnel to 10.2.255.254:22...');
-                                      const sshTarget = '10.2.255.254';
-                                      addLog(`Starting SSH tunnel to ${sshTarget}:22...`, 'info');
-                                      const result = await StartTunnel(selectedNode.id, sshTarget, 22);
-                                      const localPort = result.port || result;
-                                      const tunnelId = result.tunnelId;
-                                      addLog(`SSH tunnel active on localhost:${localPort}`, 'success');
-                                      addTunnel('SSH', sshTarget, 22, localPort, tunnelId);
-                                      setHighlightTunnels(true);
-                                      setTimeout(() => setHighlightTunnels(false), 2000);
-                                      addLog(
-                                        `Connect to EVE-OS: ssh -p ${localPort} root@localhost`,
-                                        'info'
-                                      );
-                                      setExpandedServiceId(null);
-                                    } catch (err) {
-                                      console.error(err);
-                                      handleTunnelError(err);
-                                      addLog(`Failed to start SSH tunnel: ${err.message}`, 'error');
-                                    } finally {
-                                      setTunnelLoading(null);
-                                      setTunnelLoadingMessage('');
-                                    }
-                                  }}>
-                                  {tunnelLoading === 'ssh' ? <Activity size={20} className="option-icon animate-spin" /> : <Terminal size={20} className="option-icon" />}
-                                  <span className="option-label">Launch SSH</span>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+                                    <label style={{ fontSize: '10px', color: '#999', marginBottom: '2px', marginLeft: '4px' }}>Username</label>
+                                    <input
+                                      type="text"
+                                      value={sshUser}
+                                      onChange={(e) => setSshUser(e.target.value)}
+                                      placeholder="root"
+                                      style={{
+                                        backgroundColor: '#1a1a1a',
+                                        border: '1px solid #333',
+                                        borderRadius: '4px',
+                                        color: '#fff',
+                                        padding: '6px 8px',
+                                        fontSize: '12px',
+                                        outline: 'none',
+                                        width: '100px'
+                                      }}
+                                    />
+                                  </div>
+                                  <div
+                                    className={`option-btn ${tunnelLoading === 'ssh' ? 'loading' : ''} ${sessionExpired ? 'disabled' : ''}`}
+                                    style={{ flex: 1, justifyContent: 'center' }}
+                                    onClick={async () => {
+                                      if (sessionExpired) {
+                                        addLog('Cannot start SSH tunnel: EdgeView session has expired. Restart the session first.', 'warning');
+                                        return;
+                                      }
+                                      if (tunnelLoading) return;
+                                      try {
+                                        setTunnelLoading('ssh');
+                                        // Use dynamic IP from Cloud API if available, otherwise fallback to default
+                                        const sshTarget = (app.ips && app.ips.length > 0) ? app.ips[0] : '10.2.255.254';
+                                        setTunnelLoadingMessage(`Starting SSH tunnel to ${sshTarget}:22...`);
+                                        addLog(`Starting SSH tunnel to ${sshTarget}:22 as ${sshUser}...`, 'info');
+                                        const result = await StartTunnel(selectedNode.id, sshTarget, 22);
+                                        const localPort = result.port || result;
+                                        const tunnelId = result.tunnelId;
+                                        addLog(`SSH tunnel active on localhost:${localPort}`, 'success');
+                                        addTunnel('SSH', sshTarget, 22, localPort, tunnelId, sshUser);
+                                        setHighlightTunnels(true);
+                                        setTimeout(() => setHighlightTunnels(false), 2000);
+                                        addLog(
+                                          `Connect your SSH client to localhost:${localPort}`,
+                                          'info'
+                                        );
+                                        setExpandedServiceId(null);
+                                        // Open in new window
+                                        await window.electronAPI.openTerminalWindow({
+                                          port: localPort,
+                                          nodeName: selectedNode.name,
+                                          targetInfo: 'EVE-OS SSH',
+                                          tunnelId: tunnelId,
+                                          username: sshUser
+                                        });
+                                      } catch (err) {
+                                        console.error(err);
+                                        handleTunnelError(err);
+                                        addLog(`Failed to start SSH tunnel: ${err.message}`, 'error');
+                                      } finally {
+                                        setTunnelLoading(null);
+                                        setTunnelLoadingMessage('');
+                                      }
+                                    }}>
+                                    {tunnelLoading === 'ssh' ? <Activity size={20} className="option-icon animate-spin" /> : <Terminal size={20} className="option-icon" />}
+                                    <span className="option-label">Launch SSH</span>
+                                  </div>
                                 </div>
                                 <div
                                   className={`option-btn ${tunnelLoading ? 'loading' : ''} ${sessionExpired ? 'disabled' : ''}`}
@@ -1728,7 +1791,7 @@ function App() {
                     </>
                   );
                 })()}
-              </div>
+              </div >
             ) : null}
 
             {selectedNode && <ActivityLog logs={logs} />}

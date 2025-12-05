@@ -56,7 +56,7 @@ UI:
 - make sure Activity log captures all necessary events/messages
 - Add logged in user info on the top of device search page (token owner) - zedcloud is failing with 504, to be tested later
 - Need to make UI more intuitive when recreating edge view session and displaying 10 sec delay, need to keep something spinning or show progress somehow in a more obvious way.
-- Add show Window for active connection in the tray menu if it is opened with built-in viewer
+- Add "show Window for active connection" in the tray menu if it is opened with built-in viewer
 - Add options to use built-in viewer native terminal as well as just open tunnel to use terminal app on user's choice for application SSH connection.
 
 Tunneling/EdgeView
@@ -69,6 +69,7 @@ Tunneling/EdgeView
 
 Core:
 - settings to be stored securely (use keyring or other relevant OS features)
+- sanitize Base URL
 
 
 - >>>Antigravity>>> instead of checking cluster access for validity, which always fails, explore if we can display cluster access token validity time (if available/readable from token or API) and mark it red if expired - can we fetch this info from API? -check https://zedcontrol.zededa.net/api/v1/docs/?urls.primaryName=ZEDEDA%20IAM%20Service#/IdentityAccessManagement/IdentityAccessManagement_GetUserSession /v1/sessions/token/{sessionToken.base64}
