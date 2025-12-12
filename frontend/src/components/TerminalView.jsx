@@ -94,8 +94,9 @@ const TerminalView = ({ port }) => {
                 // Get username from URL params
                 const params = new URLSearchParams(window.location.search);
                 const username = params.get('username') || '';
+                const password = params.get('password') || '';
 
-                const wsUrl = `ws://localhost:${backendPort}/api/ssh/term?port=${port}&user=${encodeURIComponent(username)}`;
+                const wsUrl = `ws://localhost:${backendPort}/api/ssh/term?port=${port}&user=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
                 const ws = new WebSocket(wsUrl);
                 wsRef.current = ws;
 
@@ -208,7 +209,8 @@ const TerminalView = ({ port }) => {
                         {connectionInfo.nodeName} • {connectionInfo.targetInfo}
                     </span>
                     <span style={{
-                        color: isConnected ? '#4caf50' : '#ff9800',
+                        color: status === 'Connected' ? '#4caf50' :
+                            status === 'Connecting...' ? '#ff9800' : '#f44336',
                         display: 'flex',
                         alignItems: 'center',
                         gap: '6px'
@@ -248,7 +250,7 @@ const TerminalView = ({ port }) => {
                     padding: '10px'
                 }}
             />
-        </div>
+        </div >
     );
 };
 
