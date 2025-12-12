@@ -46,7 +46,8 @@ x number of AVAILABLE connections/instances? - not possible
 + when Application Window closes I need App Icon to disappear from MacOS dock only leaving it present/resident in the system tray
 + System tray menu is to show minimalistic list of currently established global connections and some other useful info similar to Tailscale menu
 + Reduce Debug logging ("TUNNEL[tunnel-1764919396970952000] Failed to parse tcpData")
-
++ Ensure stable VNC connection
++ Add options to use built-in viewer native terminal as well as just open tunnel to use terminal app on user's choice for application SSH connection.
 
 
 UI:
@@ -57,10 +58,8 @@ UI:
 - Add logged in user info on the top of device search page (token owner) - zedcloud is failing with 504, to be tested later
 - Need to make UI more intuitive when recreating edge view session and displaying 10 sec delay, need to keep something spinning or show progress somehow in a more obvious way.
 - Add "show Window for active connection" in the tray menu if it is opened with built-in viewer
-- Add options to use built-in viewer native terminal as well as just open tunnel to use terminal app on user's choice for application SSH connection.
 
 Tunneling/EdgeView
-- Ensure stable VNC connection
 - Indicate VNC/SSH/TCP tunnel status/liveliness (running, data is transferring, etc) in per device and global tunnel lists. Do not overcomplicate or over engineer, I need user some clear indication if data is flowing over the tunnel and it looks alive or not (like traffic light blinking or brief info about connection speed in kbps or something similar per best practices).
 - Need to implement "collect info" edge view function with capability to locally download the generated TAR file with proper progress display.
 - file transfers?
@@ -69,7 +68,7 @@ Tunneling/EdgeView
 
 Core:
 - settings to be stored securely (use keyring or other relevant OS features)
-- sanitize Base URL
+? sanitize Base URL
 
 
 - >>>Antigravity>>> instead of checking cluster access for validity, which always fails, explore if we can display cluster access token validity time (if available/readable from token or API) and mark it red if expired - can we fetch this info from API? -check https://zedcontrol.zededa.net/api/v1/docs/?urls.primaryName=ZEDEDA%20IAM%20Service#/IdentityAccessManagement/IdentityAccessManagement_GetUserSession /v1/sessions/token/{sessionToken.base64}
