@@ -597,12 +597,25 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 
 	// Get password from query param
 	password := r.URL.Query().Get("password")
+	if password != "" {
+		log.Printf("SSH: Password provided for user %s", user)
+	} else {
+		log.Printf("SSH: No password provided for user %s", user)
+	}
 
 	authMethods := []ssh.AuthMethod{
 		ssh.PublicKeys(signer),
 	}
 	if password != "" {
 		authMethods = append(authMethods, ssh.Password(password))
+		// Also add KeyboardInteractive for servers that disable PasswordAuth but use ChallengeResponse
+		authMethods = append(authMethods, ssh.KeyboardInteractive(func(user, instruction string, questions []string, echos []bool) (answers []string, err error) {
+			answers = make([]string, len(questions))
+			for i := range questions {
+				answers[i] = password
+			}
+			return answers, nil
+		}))
 	}
 
 	// Connect to local SSH proxy
@@ -626,6 +639,24 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer session.Close()
+
+	// Start a heartbeat loop to keep the connection alive
+	// The remote device seems to have a short idle timeout (~30s) and resets the tunnel
+	// if it sees no TCP data. SSH keep-alives generate encrypted traffic that counts as activity.
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				_, err := session.SendRequest("keepalive@openssh.com", true, nil)
+				if err != nil {
+					// Connection might be closed, just exit
+					return
+				}
+			}
+		}
+	}()
 
 	// Set up PTY
 	modes := ssh.TerminalModes{
@@ -657,9 +688,12 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 		for {
 			n, err := stdout.Read(buf)
 			if n > 0 {
+				log.Printf("SSH->WS: Stdout read %d bytes", n)
 				wsConn.WriteMessage(websocket.TextMessage, buf[:n])
 			}
 			if err != nil {
+				log.Printf("SSH->WS: Stdout error: %v", err)
+				wsConn.Close() // Force close WebSocket on SSH error
 				return
 			}
 		}
@@ -671,9 +705,12 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 		for {
 			n, err := stderr.Read(buf)
 			if n > 0 {
+				log.Printf("SSH->WS: Stderr read %d bytes", n)
 				wsConn.WriteMessage(websocket.TextMessage, buf[:n])
 			}
 			if err != nil {
+				log.Printf("SSH->WS: Stderr error: %v", err)
+				wsConn.Close() // Force close WebSocket on SSH error
 				return
 			}
 		}
@@ -690,20 +727,24 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 	for {
 		_, msg, err := wsConn.ReadMessage()
 		if err != nil {
+			log.Printf("WS->SSH: Read error: %v", err)
 			break
 		}
 
 		var wsMsg WSMessage
 		if err := json.Unmarshal(msg, &wsMsg); err != nil {
 			// Maybe raw input?
+			log.Printf("WS->SSH: Raw input %d bytes", len(msg))
 			stdin.Write(msg)
 			continue
 		}
 
 		switch wsMsg.Type {
 		case "resize":
+			log.Printf("WS->SSH: Resize %dx%d", wsMsg.Cols, wsMsg.Rows)
 			session.WindowChange(wsMsg.Rows, wsMsg.Cols)
 		case "input":
+			log.Printf("WS->SSH: Input %d bytes: %q", len(wsMsg.Data), wsMsg.Data)
 			stdin.Write([]byte(wsMsg.Data))
 		default:
 			// Fallback for raw data if not JSON
