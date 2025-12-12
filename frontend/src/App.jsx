@@ -37,6 +37,8 @@ function App() {
   const [tunnelLoading, setTunnelLoading] = useState(null);
   const [tunnelLoadingMessage, setTunnelLoadingMessage] = useState('');
   const [sshUser, setSshUser] = useState('root');
+  const [sshPassword, setSshPassword] = useState('');
+  const [sshTunnelConfig, setSshTunnelConfig] = useState(null);
   const [logs, setLogs] = useState([]);
   const [showTerminal, setShowTerminal] = useState(false);
   const [localPort, setLocalPort] = useState(null);
@@ -363,6 +365,63 @@ function App() {
       const msg = err.message || String(err);
       setTcpError(msg);
       addLog(`Failed to start TCP tunnel: ${msg}`, 'error');
+    } finally {
+      setTunnelLoading(null);
+      setTunnelLoadingMessage('');
+    }
+  };
+
+  const startSshModalTunnel = async (mode = 'builtin') => {
+    if (!sshTunnelConfig || !selectedNode) return;
+    const { ip } = sshTunnelConfig;
+    if (!ip) {
+      addLog('No SSH target IP configured', 'error');
+      return;
+    }
+
+    try {
+      setTunnelLoading('ssh');
+      const sshTarget = ip;
+      setTunnelLoadingMessage(`Starting SSH tunnel to ${sshTarget}:22...`);
+      addLog(`Starting SSH tunnel to ${sshTarget}:22...`, 'info');
+
+      const result = await StartTunnel(selectedNode.id, sshTarget, 22);
+      const localPort = result.port || result;
+      const tunnelId = result.tunnelId;
+
+      addLog(`SSH tunnel active on localhost:${localPort}`, 'success');
+      addTunnel('SSH', sshTarget, 22, localPort, tunnelId, sshUser);
+      setHighlightTunnels(true);
+      setTimeout(() => setHighlightTunnels(false), 2000);
+
+      const sshCommand = `ssh -p ${localPort} ${sshUser}@localhost`;
+      addLog(`Command: ${sshCommand}`, 'info');
+
+      setExpandedServiceId(null);
+
+      if (mode === 'native') {
+        await window.electronAPI.openExternalTerminal(sshCommand);
+        addLog('Launched native terminal', 'success');
+      } else if (mode === 'builtin') {
+        await window.electronAPI.openTerminalWindow({
+          port: localPort,
+          nodeName: selectedNode.name,
+          targetInfo: `${sshUser}@${selectedNode.name}`,
+          tunnelId: tunnelId,
+          username: sshUser,
+          password: sshPassword
+        });
+      } else {
+        // Tunnel only
+        addLog(`SSH Tunnel ready. Connect with: ${sshCommand}`, 'success');
+      }
+
+      setSshTunnelConfig(null);
+      setSshPassword(''); // Clear password
+    } catch (err) {
+      console.error(err);
+      handleTunnelError(err);
+      addLog(`Failed to start SSH tunnel: ${err.message}`, 'error');
     } finally {
       setTunnelLoading(null);
       setTunnelLoadingMessage('');
@@ -1205,7 +1264,7 @@ function App() {
                               port: tunnel.localPort,
                               username: tunnel.username,
                               nodeName: tunnel.nodeName,
-                              targetInfo: 'EVE-OS SSH'
+                              targetInfo: `${tunnel.username || 'root'}@${tunnel.nodeName}`
                             })}
                           >
                             <Terminal size={14} />
@@ -1286,7 +1345,7 @@ function App() {
                               port: tunnel.localPort,
                               username: tunnel.username,
                               nodeName: tunnel.nodeName,
-                              targetInfo: 'EVE-OS SSH'
+                              targetInfo: `${tunnel.username || 'root'}@${tunnel.nodeName}`
                             })}
                           >
                             <Terminal size={14} />
@@ -1515,8 +1574,19 @@ function App() {
                 <p>Scanning services...</p>
               </div>
             ) : error ? (
-              <div className={`error-message ${error.type === 'success' ? 'success-message' : ''}`}>
-                {error.message}
+              <div
+                className={`error-message ${error.type === 'success' ? 'success-message' : ''}`}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '12px'
+                }}
+              >
+                {error.type === 'success' && error.message.includes('reconnect') && (
+                  <RefreshCw className="animate-spin" size={18} />
+                )}
+                <span>{error.message}</span>
               </div>
             ) : services ? (
               <div className="services-list">
@@ -1687,73 +1757,20 @@ function App() {
                                     )}
                                   </div>
                                 )}
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                  <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
-                                    <label style={{ fontSize: '10px', color: '#999', marginBottom: '2px', marginLeft: '4px' }}>Username</label>
-                                    <input
-                                      type="text"
-                                      value={sshUser}
-                                      onChange={(e) => setSshUser(e.target.value)}
-                                      placeholder="root"
-                                      style={{
-                                        backgroundColor: '#1a1a1a',
-                                        border: '1px solid #333',
-                                        borderRadius: '4px',
-                                        color: '#fff',
-                                        padding: '6px 8px',
-                                        fontSize: '12px',
-                                        outline: 'none',
-                                        width: '100px'
-                                      }}
-                                    />
-                                  </div>
-                                  <div
-                                    className={`option-btn ${tunnelLoading === 'ssh' ? 'loading' : ''} ${sessionExpired ? 'disabled' : ''}`}
-                                    style={{ flex: 1, justifyContent: 'center' }}
-                                    onClick={async () => {
-                                      if (sessionExpired) {
-                                        addLog('Cannot start SSH tunnel: EdgeView session has expired. Restart the session first.', 'warning');
-                                        return;
-                                      }
-                                      if (tunnelLoading) return;
-                                      try {
-                                        setTunnelLoading('ssh');
-                                        // Use dynamic IP from Cloud API if available, otherwise fallback to default
-                                        const sshTarget = (app.ips && app.ips.length > 0) ? app.ips[0] : '10.2.255.254';
-                                        setTunnelLoadingMessage(`Starting SSH tunnel to ${sshTarget}:22...`);
-                                        addLog(`Starting SSH tunnel to ${sshTarget}:22 as ${sshUser}...`, 'info');
-                                        const result = await StartTunnel(selectedNode.id, sshTarget, 22);
-                                        const localPort = result.port || result;
-                                        const tunnelId = result.tunnelId;
-                                        addLog(`SSH tunnel active on localhost:${localPort}`, 'success');
-                                        addTunnel('SSH', sshTarget, 22, localPort, tunnelId, sshUser);
-                                        setHighlightTunnels(true);
-                                        setTimeout(() => setHighlightTunnels(false), 2000);
-                                        addLog(
-                                          `Connect your SSH client to localhost:${localPort}`,
-                                          'info'
-                                        );
-                                        setExpandedServiceId(null);
-                                        // Open in new window
-                                        await window.electronAPI.openTerminalWindow({
-                                          port: localPort,
-                                          nodeName: selectedNode.name,
-                                          targetInfo: 'EVE-OS SSH',
-                                          tunnelId: tunnelId,
-                                          username: sshUser
-                                        });
-                                      } catch (err) {
-                                        console.error(err);
-                                        handleTunnelError(err);
-                                        addLog(`Failed to start SSH tunnel: ${err.message}`, 'error');
-                                      } finally {
-                                        setTunnelLoading(null);
-                                        setTunnelLoadingMessage('');
-                                      }
-                                    }}>
-                                    {tunnelLoading === 'ssh' ? <Activity size={20} className="option-icon animate-spin" /> : <Terminal size={20} className="option-icon" />}
-                                    <span className="option-label">Launch SSH</span>
-                                  </div>
+                                <div
+                                  className={`option-btn ${tunnelLoading === 'ssh' ? 'loading' : ''} ${sessionExpired ? 'disabled' : ''}`}
+                                  onClick={() => {
+                                    if (sessionExpired) {
+                                      addLog('Cannot start SSH tunnel: EdgeView session has expired. Restart the session first.', 'warning');
+                                      return;
+                                    }
+                                    if (tunnelLoading) return;
+                                    const ip = app.ips && app.ips.length > 0 ? app.ips[0] : '10.2.255.254';
+                                    setSshTunnelConfig({ ip });
+                                  }}
+                                >
+                                  {tunnelLoading === 'ssh' ? <Activity size={20} className="option-icon animate-spin" /> : <Terminal size={20} className="option-icon" />}
+                                  <span className="option-label">Launch SSH</span>
                                 </div>
                                 <div
                                   className={`option-btn ${tunnelLoading ? 'loading' : ''} ${sessionExpired ? 'disabled' : ''}`}
@@ -1845,7 +1862,7 @@ function App() {
                       value={tcpIpInput}
                       onChange={(e) => setTcpIpInput(e.target.value)}
                       placeholder="e.g. 10.0.0.1, localhost"
-                      style={{ width: '100%' }}
+                      style={{ width: '100%', padding: '8px', backgroundColor: '#1a1a1a', border: '1px solid #333', borderRadius: '4px', color: '#fff', outline: 'none', boxSizing: 'border-box' }}
                     />
                   </div>
                   <div className="form-group" style={{ marginBottom: '8px' }}>
@@ -1857,7 +1874,7 @@ function App() {
                       value={tcpPortInput}
                       onChange={(e) => setTcpPortInput(e.target.value)}
                       placeholder="e.g. 80, 8080"
-                      style={{ width: '100%' }}
+                      style={{ width: '30%', minWidth: '80px', padding: '8px', backgroundColor: '#1a1a1a', border: '1px solid #333', borderRadius: '4px', color: '#fff', outline: 'none', boxSizing: 'border-box' }}
                     />
                   </div>
                   {tcpError && (
@@ -1891,6 +1908,115 @@ function App() {
                         'Start Tunnel'
                       )}
                     </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {sshTunnelConfig && (
+              <div
+                style={{
+                  position: 'fixed',
+                  inset: 0,
+                  backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  zIndex: 2100,
+                }}
+              >
+                <div
+                  style={{
+                    backgroundColor: '#1e1e1e',
+                    borderRadius: '8px',
+                    padding: '16px 20px',
+                    minWidth: '380px',
+                    maxWidth: '480px',
+                    boxShadow: '0 12px 30px rgba(0, 0, 0, 0.4)',
+                    border: '1px solid #333',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                    <h4 style={{ margin: 0, fontSize: '14px' }}>Start SSH Session</h4>
+                    <button
+                      className="icon-btn"
+                      onClick={() => setSshTunnelConfig(null)}
+                      title="Close"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                  <div style={{ fontSize: '12px', marginBottom: '16px', color: '#ccc' }}>
+                    <div>Device: {selectedNode?.name}</div>
+                    <div style={{ marginTop: '4px' }}>Target IP: {sshTunnelConfig.ip}</div>
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: '12px' }}>
+                    <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>Username</label>
+                    <input
+                      type="text"
+                      value={sshUser}
+                      onChange={(e) => setSshUser(e.target.value)}
+                      placeholder="root"
+                      style={{ width: '100%', padding: '8px', backgroundColor: '#1a1a1a', border: '1px solid #333', borderRadius: '4px', color: '#fff', outline: 'none', boxSizing: 'border-box' }}
+                    />
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: '16px' }}>
+                    <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>Password (Optional)</label>
+                    <input
+                      type="password"
+                      value={sshPassword}
+                      onChange={(e) => setSshPassword(e.target.value)}
+                      placeholder="Leave empty if using key-based auth"
+                      style={{ width: '100%', padding: '8px', backgroundColor: '#1a1a1a', border: '1px solid #333', borderRadius: '4px', color: '#fff', outline: 'none', boxSizing: 'border-box' }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') startSshModalTunnel('builtin');
+                        if (e.key === 'Escape') setSshTunnelConfig(null);
+                      }}
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
+                    <button
+                      className={`connect-btn primary ${tunnelLoading === 'ssh' ? 'loading' : ''}`}
+                      onClick={() => startSshModalTunnel('builtin')}
+                      disabled={tunnelLoading}
+                      style={{ width: '100%', justifyContent: 'center' }}
+                    >
+                      {tunnelLoading === 'ssh' ? (
+                        <>
+                          <Activity size={14} className="animate-spin" />
+                          <span style={{ marginLeft: '6px' }}>Connecting...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Terminal size={14} style={{ marginRight: '6px' }} />
+                          Open Built-in Terminal
+                        </>
+                      )}
+                    </button>
+
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button
+                        className="connect-btn secondary"
+                        onClick={() => startSshModalTunnel('native')}
+                        disabled={tunnelLoading}
+                        style={{ flex: 1, justifyContent: 'center' }}
+                      >
+                        <ExternalLink size={14} style={{ marginRight: '6px' }} />
+                        Native Terminal
+                      </button>
+                      <button
+                        className="connect-btn secondary"
+                        onClick={() => startSshModalTunnel('tunnel-only')}
+                        disabled={tunnelLoading}
+                        style={{ flex: 1, justifyContent: 'center' }}
+                      >
+                        <Activity size={14} style={{ marginRight: '6px' }} />
+                        Tunnel Only
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
