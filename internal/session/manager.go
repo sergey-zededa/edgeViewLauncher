@@ -1120,9 +1120,18 @@ func (m *Manager) attemptTunnelReconnect(tunnel *Tunnel) bool {
 
 // tunnelKeepAlive sends periodic ping messages to keep the WebSocket connection alive
 func (m *Manager) tunnelKeepAlive(ctx context.Context, tunnel *Tunnel) {
-	ticker := time.NewTicker(5 * time.Second)
+	// NOTE: We used to send WebSocket Pings here.
+	// However, it seems some backend/device implementations react poorly to Pings
+	// or they interfere with the text-based protocol wrapper, triggering
+	// the device to exit proxy mode and print "Device IPs" banners.
+	// PROPOSED FIX: Only send meaningful keep-alives if strictly necessary.
+	// For now, we increase the interval and use a text-based "ping" enclosed in our protocol wrapper
+	// OR just silence it if the connection assumes TCP traffic keeps it alive.
+
+	// Increasing interval to 30 seconds to avoid spamming.
+	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
-	fmt.Printf("TUNNEL[%s] Keep-alive started\n", tunnel.ID)
+	fmt.Printf("TUNNEL[%s] Keep-alive started (interval: 30s)\n", tunnel.ID)
 
 	for {
 		select {
@@ -1133,18 +1142,31 @@ func (m *Manager) tunnelKeepAlive(ctx context.Context, tunnel *Tunnel) {
 			tunnel.wsMu.Lock()
 			if tunnel.wsConn == nil {
 				tunnel.wsMu.Unlock()
-				// Connection is being re-established, skip ping
 				continue
 			}
-			// Send a standard WebSocket Ping message
-			err := tunnel.wsConn.WriteMessage(websocket.PingMessage, []byte{})
+
+			// DISABLE KEEP-ALIVE: For debugging, we are disabling the automatic ping
+			// entirely to see if the session can survive on its own without
+			// triggering the "Device IPs" reset.
+			/*
+				pingData := tcpData{
+					Version:   0,
+					MappingID: 1,
+					ChanNum:   1, // Use a valid channel (usually 1 for single instance)
+					Data:      []byte{},
+				}
+				pingBytes, _ := json.Marshal(pingData)
+
+				// Use the helper to encrypt/wrap correctly
+				err := sendWrappedMessage(tunnel.wsConn, pingBytes, tunnel.config.Key, websocket.BinaryMessage)
+
+				if err != nil {
+					fmt.Printf("TUNNEL[%s] Keep-alive ping failed: %v\n", tunnel.ID, err)
+					m.FailTunnel(tunnel.ID, err)
+					return
+				}
+			*/
 			tunnel.wsMu.Unlock()
-			if err != nil {
-				fmt.Printf("TUNNEL[%s] Keep-alive ping failed: %v\n", tunnel.ID, err)
-				// If ping fails, the connection is likely dead, so fail the tunnel
-				m.FailTunnel(tunnel.ID, err)
-				return
-			}
 		}
 	}
 }
@@ -1221,20 +1243,9 @@ func (m *Manager) tunnelWSReader(ctx context.Context, tunnel *Tunnel) {
 			// If we receive this in the middle of a session, it means the session likely reset
 			// and we need to re-establish the tunnel logic.
 			if strings.Contains(payloadStr, "Device IPs:") {
-				fmt.Printf("TUNNEL[%s] Detected session banner (Device IPs), treating as session reset. Attempting reconnection...\n", tunnel.ID)
-
-				// Small delay to prevent tight loops if the device keeps resetting
-				time.Sleep(1 * time.Second)
-
-				// Try to reconnect
-				if m.attemptTunnelReconnect(tunnel) {
-					fmt.Printf("TUNNEL[%s] Reconnection successful, resuming\n", tunnel.ID)
-					continue
-				} else {
-					fmt.Printf("TUNNEL[%s] Reconnection failed, closing tunnel\n", tunnel.ID)
-					m.FailTunnel(tunnel.ID, ErrNoDeviceOnline)
-					return
-				}
+				fmt.Printf("TUNNEL[%s] Detected session banner (Device IPs). Session reset confirmed. Closing tunnel.\n", tunnel.ID)
+				m.FailTunnel(tunnel.ID, fmt.Errorf("session reset by device"))
+				return
 			}
 
 			// Parse tcpData
@@ -1250,6 +1261,8 @@ func (m *Manager) tunnelWSReader(ctx context.Context, tunnel *Tunnel) {
 				tunnel.channelMu.RLock()
 				ch, ok := tunnel.channels[td.ChanNum]
 				tunnel.channelMu.RUnlock()
+
+				fmt.Printf("TUNNEL[%s] ChanNum=%d: Received tcpData %d bytes. Dump: %q\n", tunnel.ID, td.ChanNum, len(td.Data), string(td.Data))
 
 				if ok {
 					select {
@@ -1316,29 +1329,17 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 
 	// For protocols like VNC that don't send data first, send an empty init packet
 	// to trigger the server-side Dial()
-	if tunnel.Type == "VNC" {
-		// Wait a bit to ensure the device has finished setting up the TCP server structures
-		// after sending tcpSetupOK. This avoids a race condition where the init packet
-		// arrives before the device is ready to handle it, potentially causing a crash.
-		time.Sleep(200 * time.Millisecond)
+	// For protocols like VNC that don't send data first, send an empty init packet
+	// to trigger the server-side Dial()
+	// UPDATE: Doing this for ALL protocols (SSH included) to ensure the remote
+	// socket is open before we send real data. If the first packet is consumed
+	// for setup, we don't want it to contain the SSH handshake.
 
-		initData := tcpData{
-			Version:   0,
-			MappingID: 1,
-			ChanNum:   chanNum,
-			Data:      []byte{}, // Empty to trigger dial without sending data
-		}
-		initBytes, _ := json.Marshal(initData)
+	// Wait a bit to ensure the device has finished setting up the TCP server structures
+	time.Sleep(200 * time.Millisecond)
 
-		tunnel.wsMu.Lock()
-		err := sendWrappedMessage(tunnel.wsConn, initBytes, tunnel.config.Key, websocket.BinaryMessage)
-		tunnel.wsMu.Unlock()
-		if err != nil {
-			fmt.Printf("TUNNEL[%s] ChanNum=%d: Failed to send init packet: %v\n", tunnel.ID, chanNum, err)
-			return
-		}
-		fmt.Printf("TUNNEL[%s] ChanNum=%d: Init packet sent (VNC), starting bidirectional copy\n", tunnel.ID, chanNum)
-	}
+	// REMOVED Init Packet - Returning to baseline behavior to trace the "Session Reset" issue.
+	// The Init Packet was a hypothesis that didn't solve the silence and might interfere with the Reset analysis.
 
 	done := make(chan struct{})
 
@@ -1402,11 +1403,9 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 				if tunnel.wsConn == nil {
 					tunnel.wsMu.Unlock()
 					fmt.Printf("TUNNEL[%s] ChanNum=%d: WS connection is nil (reconnecting), dropping packet\n", tunnel.ID, chanNum)
-					// We could retry, but for VNC dropping a frame/packet during reset is acceptable
-					// as the client will request update or the server will send full frame.
-					// Just continue to read loop.
 					continue
 				}
+
 				err := sendWrappedMessage(tunnel.wsConn, tdBytes, tunnel.config.Key, websocket.BinaryMessage)
 				tunnel.wsMu.Unlock()
 				if err != nil {
