@@ -188,8 +188,10 @@ async function updateTrayMenu() {
 function createWindow() {
     // Platform-specific window options
     const windowOptions = {
-        width: 800,
-        height: 600,
+        width: 1000,
+        height: 900,
+        minWidth: 800,
+        minHeight: 600,
         show: false, // Hide until ready
         frame: false, // Remove native frame on all platforms for custom look
         webPreferences: {
@@ -561,8 +563,6 @@ ipcMain.handle('open-terminal-window', async (event, options) => {
         mode: 'terminal',
         port,
         nodeName,
-        targetInfo,
-        tunnelId: tunnelId || '',
         targetInfo,
         tunnelId: tunnelId || '',
         username: username || '',
