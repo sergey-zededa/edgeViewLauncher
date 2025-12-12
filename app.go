@@ -355,22 +355,10 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (string, error
 
 	// Launch the terminal if requested
 	if !useInAppTerminal {
-		fmt.Println("Launching native terminal...")
-		a.SetConnectionProgress(nodeID, "Launching native terminal...")
-
-		// Get key path from key manager (using standalone function now)
-		keyPath, _, err := ssh.EnsureSSHKey()
-		if err != nil {
-			fmt.Printf("EnsureSSHKey failed: %v\n", err)
-			// Continue anyway, might work if agent is active
-		}
-
-		if err := a.sessionManager.LaunchTerminal(port, keyPath); err != nil {
-			fmt.Printf("LaunchTerminal failed: %v\n", err)
-			a.SetConnectionProgress(nodeID, "Error: Failed to launch terminal")
-			return "", fmt.Errorf("failed to launch terminal: %w", err)
-		}
-		fmt.Println("Native terminal launched successfully.")
+		// DEPRECATED: Backend terminal launching is replaced by frontend/Electron `openExternalTerminal`.
+		// We log this but do not attempt to launch from Go to avoid platform inconsistencies and double-launches.
+		fmt.Println("Native terminal launch requested (handled by frontend).")
+		a.SetConnectionProgress(nodeID, "Ready for native terminal")
 	} else {
 		fmt.Println("In-app terminal requested, skipping native launch.")
 	}
