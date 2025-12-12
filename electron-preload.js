@@ -35,6 +35,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     resizeWindow: (width, height) => ipcRenderer.invoke('resize-window', { width, height }),
     getBackendPort: () => ipcRenderer.invoke('get-backend-port'),
     openExternal: (url) => ipcRenderer.invoke('open-external', url),
+    openExternalTerminal: (command) => ipcRenderer.invoke('open-external-terminal', command),
     getSystemTimeFormat: () => ipcRenderer.invoke('get-system-time-format'),
     verifyToken: (token, baseUrl) => ipcRenderer.invoke('api-call', '/api/verify-token', 'POST', { token, baseUrl }),
 
