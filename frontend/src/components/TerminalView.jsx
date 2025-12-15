@@ -157,66 +157,47 @@ const TerminalView = ({ port }) => {
         };
 
         // Dynamic Resizing Logic
-        // We want a standard size of 120 cols x 80 rows
-        // We need to wait for the renderer to have valid dimensions (which might take >100ms)
-        const resizePoller = setInterval(() => {
+        // Use FitAddon to calculate available cols/rows based on container size
+        const calculateAndResize = () => {
             try {
-                // Access internal metrics to get actual cell dimensions
-                const core = term._core;
-                if (core && core._renderService && core._renderService.dimensions) {
-                    const { actualCellWidth, actualCellHeight } = core._renderService.dimensions;
-
-                    if (actualCellWidth > 0 && actualCellHeight > 0) {
-                        clearInterval(resizePoller); // Stop polling once we have valid dims
-
-                        const targetCols = 120;
-                        const targetRows = 80;
-                        const toolbarHeight = 40; // Height of our custom toolbar
-                        const padding = 20; // 10px padding on each side/top-bottom
-
-                        const width = Math.ceil(targetCols * actualCellWidth + padding);
-                        const height = Math.ceil(targetRows * actualCellHeight + toolbarHeight + padding);
-
-                        console.log(`Resizing to ${width}x${height} for ${targetCols}x${targetRows} term (Cell: ${actualCellWidth}x${actualCellHeight})`);
-
-                        if (window.electronAPI && window.electronAPI.resizeWindow) {
-                            window.electronAPI.resizeWindow(width, height);
-
-                            // Re-fit after resize (give Electron time to resize window)
-                            setTimeout(() => {
-                                fitAddon.fit();
-                                // Trigger connection AFTER resize is complete and we have target dims
-                                connectWebSocket(targetCols, targetRows);
-                            }, 500);
-                        }
-                    }
+                fitAddon.fit();
+                const dims = fitAddon.proposeDimensions();
+                if (dims && dims.cols && dims.rows) {
+                    // Update Electron window size if needed (optional, or just sync PTY)
+                    // For now, we prioritize syncing the PTY to the current container size
+                    return { cols: dims.cols, rows: dims.rows };
                 }
             } catch (e) {
-                console.error("Failed to calculate dynamic window size:", e);
-                clearInterval(resizePoller);
+                console.error("FitAddon failed to propose dimensions:", e);
             }
-        }, 100);
+            return null; // Not ready
+        };
 
-        // Stop polling after 2 seconds to prevent infinite loop
-        setTimeout(() => {
-            clearInterval(resizePoller);
-            // If we haven't connected yet (wsRef.current is null), force connection with defaults
-            if (!wsRef.current) {
-                console.warn("Resize polling timed out, forcing connection with defaults");
-                // Attempt to resize to target anyway (best effort)
-                if (window.electronAPI && window.electronAPI.resizeWindow) {
-                    window.electronAPI.resizeWindow(1024, 768); // 1024x768 approx for 120x80
-                }
-                connectWebSocket(120, 80);
-            }
-        }, 2000);
+        // Wait for renderer to be ready
+        const initConnection = () => {
+            // Give the renderer a moment to layout
+            setTimeout(() => {
+                const dims = calculateAndResize();
+                // Default to standard size if fit fails
+                const cols = dims ? dims.cols : 80;
+                const rows = dims ? dims.rows : 24;
+                
+                console.log(`Initializing PTY with dimensions: ${cols}x${rows}`);
+                connectWebSocket(cols, rows);
+            }, 100);
+        };
 
-        // Handle Resize events (for subsequent manual resizing)
+        initConnection();
+
+        // Handle Resize events
         const handleResize = () => {
             fitAddon.fit();
             if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                const dims = { cols: term.cols, rows: term.rows };
-                wsRef.current.send(JSON.stringify({ type: 'resize', ...dims }));
+                const dims = fitAddon.proposeDimensions();
+                if (dims) {
+                    console.log(`Resizing PTY to ${dims.cols}x${dims.rows}`);
+                    wsRef.current.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
+                }
             }
         };
 
