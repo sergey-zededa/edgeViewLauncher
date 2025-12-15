@@ -10,19 +10,13 @@ let goBackend;
 let BACKEND_PORT = null; // Will be set dynamically when Go backend starts
 let trayRefreshInterval = null; // For periodic menu refresh
 
-// Helper to get asset path in both dev and prod (unpacked)
-const getAssetPath = (...paths) => {
-    const rootPath = app.isPackaged ? process.resourcesPath : __dirname;
-    return path.join(rootPath, ...paths);
-};
-
 function createTray() {
     let trayIcon;
     
     // On macOS, prefer .icns which contains multi-resolution icons (16x16, 32x32, etc.)
     // This avoids resizing a giant 1700px PNG which might fail or look bad.
     if (process.platform === 'darwin') {
-        const icnsPath = getAssetPath('assets', 'icon.icns');
+        const icnsPath = path.join(__dirname, 'assets', 'icon.icns');
         console.log('Creating macOS tray with icon:', icnsPath);
         trayIcon = nativeImage.createFromPath(icnsPath);
         
@@ -30,7 +24,7 @@ function createTray() {
         trayIcon = trayIcon.resize({ width: 22, height: 22 });
     } else {
         // Windows/Linux prefer PNG
-        const iconPath = getAssetPath('assets', 'icon.png');
+        const iconPath = path.join(__dirname, 'assets', 'icon.png');
         console.log('Creating tray with icon:', iconPath);
         trayIcon = nativeImage.createFromPath(iconPath);
         
@@ -41,7 +35,7 @@ function createTray() {
     if (trayIcon.isEmpty()) {
         console.error('Tray icon is empty! Trying fallback PNG');
         // Fallback to PNG if ICNS failed or vice versa
-        const fallbackPath = getAssetPath('assets', 'icon.png');
+        const fallbackPath = path.join(__dirname, 'assets', 'icon.png');
         trayIcon = nativeImage.createFromPath(fallbackPath);
         trayIcon = trayIcon.resize({ width: 22, height: 22 });
     }
@@ -229,7 +223,7 @@ function createWindow() {
         windowOptions.icon = path.join(__dirname, 'icon.icns');
         windowOptions.titleBarStyle = 'hiddenInset';
     } else {
-        windowOptions.icon = getAssetPath('assets', 'icon.png');
+        windowOptions.icon = path.join(__dirname, 'assets', 'icon.png');
     }
 
     mainWindow = new BrowserWindow(windowOptions);

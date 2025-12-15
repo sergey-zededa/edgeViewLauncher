@@ -98,14 +98,8 @@
       "electron-preload.js",
       "backendClient.js",
       "build-info.json",
-      "frontend/dist/**/*"
-    ],
-    "extraResources": [
-      {
-        "from": "assets",
-        "to": "assets",
-        "filter": ["**/*"]
-      }
+      "frontend/dist/**/*",
+      "assets/**/*"
     ],
     "directories": {
       "output": "dist-electron"
