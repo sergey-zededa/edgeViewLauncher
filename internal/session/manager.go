@@ -1269,20 +1269,11 @@ func (m *Manager) tunnelWSReader(ctx context.Context, tunnel *Tunnel) {
 			// If we receive this in the middle of a session, it means the session likely reset
 			// and we need to re-establish the tunnel logic.
 			if strings.Contains(payloadStr, "Device IPs:") {
-				fmt.Printf("TUNNEL[%s] Detected session banner (Device IPs), treating as session reset. Attempting reconnection...\n", tunnel.ID)
-
-				// Small delay to prevent tight loops if the device keeps resetting
-				time.Sleep(1 * time.Second)
-
-				// Try to reconnect
-				if m.attemptTunnelReconnect(tunnel) {
-					fmt.Printf("TUNNEL[%s] Reconnection successful, resuming\n", tunnel.ID)
-					continue
-				} else {
-					fmt.Printf("TUNNEL[%s] Reconnection failed, closing tunnel\n", tunnel.ID)
-					m.FailTunnel(tunnel.ID, ErrNoDeviceOnline)
-					return
-				}
+				fmt.Printf("TUNNEL[%s] Received session banner (Device IPs). Ignoring to prevent disconnects.\n", tunnel.ID)
+				// Previously we treated this as a reset and reconnected, but that caused
+				// stable connections to drop if the banner was sent harmlessly (e.g. status update).
+				// We now ignore it and let the connection persist.
+				continue
 			}
 
 			// Parse tcpData

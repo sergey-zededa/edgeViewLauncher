@@ -600,7 +600,7 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 	if password != "" {
 		log.Printf("SSH: Password provided for user %s", user)
 	} else {
-		log.Printf("SSH: No password provided for user %s", user)
+		log.Printf("SSH: Using key-based auth (no password provided) for user %s", user)
 	}
 
 	authMethods := []ssh.AuthMethod{
