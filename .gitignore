@@ -24,3 +24,6 @@ node_modules
 
 # Build info (generated)
 build-info.json
+
+# Notes
+Launcher_Notes.txt
