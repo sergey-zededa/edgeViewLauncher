@@ -83,7 +83,7 @@ const TerminalView = ({ port }) => {
         fitAddonRef.current = fitAddon;
 
         // Connect to WebSocket
-        const connectWebSocket = async () => {
+        const connectWebSocket = async (initialCols, initialRows) => {
             try {
                 let backendPort = 8080; // Default fallback
                 if (window.electronAPI && window.electronAPI.getBackendPort) {
@@ -96,22 +96,41 @@ const TerminalView = ({ port }) => {
                 const username = params.get('username') || '';
                 const password = params.get('password') || '';
 
-                const wsUrl = `ws://localhost:${backendPort}/api/ssh/term?port=${port}&user=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
+                // Pass initial keys to backend to avoid race condition
+                const wsUrl = `ws://localhost:${backendPort}/api/ssh/term?port=${port}&user=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&cols=${initialCols}&rows=${initialRows}`;
                 const ws = new WebSocket(wsUrl);
+                ws.binaryType = 'arraybuffer'; // Ensure we receive raw bytes
                 wsRef.current = ws;
+
+                // DIAGNOSTIC STATE
+                let totalRxBytes = 0;
+                let escCount = 0;
+                let fixedSequences = 0;
+
+                const updateDiagnostic = () => {
+                    setStatus(`Connected | B:${totalRxBytes} E:${escCount} F:${fixedSequences}`);
+                };
 
                 ws.onopen = () => {
                     setStatus('Connected');
                     setIsConnected(true);
                     term.writeln(`\x1b[1;32mConnected to EdgeView SSH Proxy (User: ${username || 'root'})...\x1b[0m`);
-                    // Send resize event immediately
-                    const dims = { cols: term.cols, rows: term.rows };
-                    ws.send(JSON.stringify({ type: 'resize', ...dims }));
                     term.focus();
                 };
 
                 ws.onmessage = (event) => {
-                    term.write(event.data);
+                    if (event.data instanceof ArrayBuffer) {
+                        const u8 = new Uint8Array(event.data);
+                        totalRxBytes += u8.length;
+                        // Pass raw PTY data directly to xterm.js
+                        // Previous "ANSI Repair Logic" was causing corruption by injecting ESCs
+                        // at chunk boundaries and possibly interfering with ISO-2022 sequences.
+                        term.write(u8);
+                    } else {
+                    } else {
+                        // Should not happen with binaryType=arraybuffer, but just in case
+                        term.write(event.data);
+                    }
                 };
 
                 ws.onclose = () => {
@@ -138,9 +157,62 @@ const TerminalView = ({ port }) => {
             }
         };
 
-        connectWebSocket();
+        // Dynamic Resizing Logic
+        // We want a standard size of 120 cols x 80 rows
+        // We need to wait for the renderer to have valid dimensions (which might take >100ms)
+        const resizePoller = setInterval(() => {
+            try {
+                // Access internal metrics to get actual cell dimensions
+                const core = term._core;
+                if (core && core._renderService && core._renderService.dimensions) {
+                    const { actualCellWidth, actualCellHeight } = core._renderService.dimensions;
 
-        // Handle Resize
+                    if (actualCellWidth > 0 && actualCellHeight > 0) {
+                        clearInterval(resizePoller); // Stop polling once we have valid dims
+
+                        const targetCols = 120;
+                        const targetRows = 80;
+                        const toolbarHeight = 40; // Height of our custom toolbar
+                        const padding = 20; // 10px padding on each side/top-bottom
+
+                        const width = Math.ceil(targetCols * actualCellWidth + padding);
+                        const height = Math.ceil(targetRows * actualCellHeight + toolbarHeight + padding);
+
+                        console.log(`Resizing to ${width}x${height} for ${targetCols}x${targetRows} term (Cell: ${actualCellWidth}x${actualCellHeight})`);
+
+                        if (window.electronAPI && window.electronAPI.resizeWindow) {
+                            window.electronAPI.resizeWindow(width, height);
+
+                            // Re-fit after resize (give Electron time to resize window)
+                            setTimeout(() => {
+                                fitAddon.fit();
+                                // Trigger connection AFTER resize is complete and we have target dims
+                                connectWebSocket(targetCols, targetRows);
+                            }, 500);
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error("Failed to calculate dynamic window size:", e);
+                clearInterval(resizePoller);
+            }
+        }, 100);
+
+        // Stop polling after 2 seconds to prevent infinite loop
+        setTimeout(() => {
+            clearInterval(resizePoller);
+            // If we haven't connected yet (wsRef.current is null), force connection with defaults
+            if (!wsRef.current) {
+                console.warn("Resize polling timed out, forcing connection with defaults");
+                // Attempt to resize to target anyway (best effort)
+                if (window.electronAPI && window.electronAPI.resizeWindow) {
+                    window.electronAPI.resizeWindow(1024, 768); // 1024x768 approx for 120x80
+                }
+                connectWebSocket(120, 80);
+            }
+        }, 2000);
+
+        // Handle Resize events (for subsequent manual resizing)
         const handleResize = () => {
             fitAddon.fit();
             if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -157,6 +229,7 @@ const TerminalView = ({ port }) => {
                 wsRef.current.close();
             }
             term.dispose();
+            clearInterval(resizePoller);
         };
     }, [port]);
 
