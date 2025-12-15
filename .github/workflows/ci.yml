@@ -119,14 +119,14 @@ jobs:
         uses: github/codeql-action/init@v3
         with:
           languages: go, javascript
+          build-mode: autobuild
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.23'
 
-      - name: Build Go code
-        run: go build -o edgeview-backend http-server.go app.go
-
+      # Removed manual build step for CodeQL since autobuild is used
+      
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
