@@ -299,7 +299,7 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (string, error
 		
 		// We need to get the actual EdgeView Status which contains the JWT and URL.
 		evStatus, err := a.zededaClient.GetEdgeViewStatus(nodeID)
-		if err == nil && evStatus.Token != "" && evStatus.DispURL != "" {
+		if err == nil && evStatus != nil && evStatus.Token != "" && evStatus.DispURL != "" {
 			fmt.Println("Found active EdgeView session from API, reusing token...")
 			
 			// We need to extract the 'Key' from the JWT payload because it's required for envelope signing.
