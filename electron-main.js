@@ -17,29 +17,34 @@ const getAssetPath = (...paths) => {
 };
 
 function createTray() {
-    // Try using the PNG first, it's often better for tray icons
-    // In prod, assets are unpacked to Resources/assets
-    // In dev, they are in root/assets
-    const iconPath = getAssetPath('assets', 'icon.png');
-    console.log('Creating tray with icon:', iconPath);
-
-    let trayIcon = nativeImage.createFromPath(iconPath);
-
-    if (trayIcon.isEmpty()) {
-        console.error('Tray icon is empty! Trying .icns fallback');
+    let trayIcon;
+    
+    // On macOS, prefer .icns which contains multi-resolution icons (16x16, 32x32, etc.)
+    // This avoids resizing a giant 1700px PNG which might fail or look bad.
+    if (process.platform === 'darwin') {
         const icnsPath = getAssetPath('assets', 'icon.icns');
+        console.log('Creating macOS tray with icon:', icnsPath);
         trayIcon = nativeImage.createFromPath(icnsPath);
-        console.log('Fallback icon path:', icnsPath);
+        
+        // Resize to 22x22 (logical pixels), nativeImage handles DPI scaling from .icns
+        trayIcon = trayIcon.resize({ width: 22, height: 22 });
+    } else {
+        // Windows/Linux prefer PNG
+        const iconPath = getAssetPath('assets', 'icon.png');
+        console.log('Creating tray with icon:', iconPath);
+        trayIcon = nativeImage.createFromPath(iconPath);
+        
+        // Resize for other platforms
+        trayIcon = trayIcon.resize({ width: 22, height: 22 });
     }
 
-    // Resize to appropriate size for tray (22x22 is standard for macOS menu bar)
-    // We use a slightly smaller size if the source is large to ensure it fits well
-    trayIcon = trayIcon.resize({ width: 22, height: 22 });
-    
-    // Explicitly set as template image for macOS dark mode support if it's a monochrome icon
-    // But our icon is colored, so we leave it as is.
-    // However, if it's not showing up, maybe it needs to be set explicitly.
-    // trayIcon.setTemplateImage(true); 
+    if (trayIcon.isEmpty()) {
+        console.error('Tray icon is empty! Trying fallback PNG');
+        // Fallback to PNG if ICNS failed or vice versa
+        const fallbackPath = getAssetPath('assets', 'icon.png');
+        trayIcon = nativeImage.createFromPath(fallbackPath);
+        trayIcon = trayIcon.resize({ width: 22, height: 22 });
+    }
 
     tray = new Tray(trayIcon);
     tray.setToolTip('EdgeView Launcher');
