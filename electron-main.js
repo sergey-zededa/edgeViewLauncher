@@ -22,8 +22,14 @@ function createTray() {
         trayIcon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.icns'));
     }
 
-    // Resize to appropriate size for tray (16x16 is standard for macOS menu bar)
-    trayIcon = trayIcon.resize({ width: 16, height: 16 });
+    // Resize to appropriate size for tray (22x22 is standard for macOS menu bar)
+    // We use a slightly smaller size if the source is large to ensure it fits well
+    trayIcon = trayIcon.resize({ width: 22, height: 22 });
+    
+    // Explicitly set as template image for macOS dark mode support if it's a monochrome icon
+    // But our icon is colored, so we leave it as is.
+    // However, if it's not showing up, maybe it needs to be set explicitly.
+    // trayIcon.setTemplateImage(true); 
 
     tray = new Tray(trayIcon);
     tray.setToolTip('EdgeView Launcher');
