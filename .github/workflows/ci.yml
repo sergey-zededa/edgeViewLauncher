@@ -109,6 +109,7 @@ jobs:
 
   codeql:
     name: CodeQL Analysis
+    if: false # Disabled for private repo to avoid billing; enable when public
     runs-on: ubuntu-latest
     permissions:
       actions: read
