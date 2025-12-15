@@ -386,7 +386,7 @@ func (s *HTTPServer) Start() {
 	s.app.startup(context.Background())
 
 	// Log version to verify build update
-	log.Printf("EdgeView Backend Version: 2025.12.05-FIX-WINDOWS-PORT-0")
+log.Printf("EdgeView Backend Version: 0.1.1")
 
 	router := mux.NewRouter()
 
@@ -633,30 +633,18 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 	}
 	defer client.Close()
 
+	// NOTE: SSH-level keepalives (keepalive@openssh.com) are DISABLED because they
+	// cause session resets when connecting to EVE-OS (localhost:22). The SSH keepalive
+	// response from the device's SSH daemon somehow triggers EdgeView to reset.
+	// Interestingly, VNC and SSH to apps (container IPs) work fine with just tunnel keepalives.
+	// The tunnel-level keepalive in manager.go handles keeping the connection alive.
+
 	session, err := client.NewSession()
 	if err != nil {
 		wsConn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\nFailed to create SSH session: %v\r\n", err)))
 		return
 	}
 	defer session.Close()
-
-	// Start a heartbeat loop to keep the connection alive
-	// The remote device seems to have a short idle timeout (~30s) and resets the tunnel
-	// if it sees no TCP data. SSH keep-alives generate encrypted traffic that counts as activity.
-	go func() {
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				_, err := session.SendRequest("keepalive@openssh.com", true, nil)
-				if err != nil {
-					// Connection might be closed, just exit
-					return
-				}
-			}
-		}
-	}()
 
 	// Set up PTY
 	modes := ssh.TerminalModes{

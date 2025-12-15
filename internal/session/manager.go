@@ -1118,55 +1118,63 @@ func (m *Manager) attemptTunnelReconnect(tunnel *Tunnel) bool {
 	return false
 }
 
-// tunnelKeepAlive sends periodic ping messages to keep the WebSocket connection alive
+// tunnelKeepAlive sends periodic application-level data to keep the tunnel alive.
+// CRITICAL INSIGHTS from analyzing EdgeView source:
+// 1. WebSocket PingMessage is ignored by Cloudflare/CDN (they only count data frames)
+// 2. TextMessage with tcpData causes device to CLOSE the TCP server (edge-view.go:378-380)
+// 3. Must use BinaryMessage for TCP data to be processed correctly
+// 4. The DEVICE's keepalive is 90 seconds, but we see ~30s timeouts - cloud may be timing out device connection
 func (m *Manager) tunnelKeepAlive(ctx context.Context, tunnel *Tunnel) {
-	// NOTE: We used to send WebSocket Pings here.
-	// However, it seems some backend/device implementations react poorly to Pings
-	// or they interfere with the text-based protocol wrapper, triggering
-	// the device to exit proxy mode and print "Device IPs" banners.
-	// PROPOSED FIX: Only send meaningful keep-alives if strictly necessary.
-	// For now, we increase the interval and use a text-based "ping" enclosed in our protocol wrapper
-	// OR just silence it if the connection assumes TCP traffic keeps it alive.
-
-	// Increasing interval to 30 seconds to avoid spamming.
-	ticker := time.NewTicker(30 * time.Second)
+	// Very aggressive: 5 seconds. The observed timeout is ~20-30s, so we need to be well under that.
+	// This also helps because we can only keep CLIENT→CLOUD alive, not CLOUD→DEVICE.
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
-	fmt.Printf("TUNNEL[%s] Keep-alive started (interval: 30s)\n", tunnel.ID)
+	fmt.Printf("TUNNEL[%s] Keep-alive started (5s aggressive BinaryMessage)\n", tunnel.ID)
 
+	keepaliveCount := 0
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Printf("TUNNEL[%s] Keep-alive stopped (context done)\n", tunnel.ID)
+			fmt.Printf("TUNNEL[%s] Keep-alive stopped (context done) after %d keepalives\n", tunnel.ID, keepaliveCount)
 			return
 		case <-ticker.C:
 			tunnel.wsMu.Lock()
 			if tunnel.wsConn == nil {
 				tunnel.wsMu.Unlock()
+				fmt.Printf("TUNNEL[%s] Keep-alive: wsConn is nil (reconnecting?)\n", tunnel.ID)
 				continue
 			}
 
-			// DISABLE KEEP-ALIVE: For debugging, we are disabling the automatic ping
-			// entirely to see if the session can survive on its own without
-			// triggering the "Device IPs" reset.
-			/*
-				pingData := tcpData{
-					Version:   0,
-					MappingID: 1,
-					ChanNum:   1, // Use a valid channel (usually 1 for single instance)
-					Data:      []byte{},
-				}
-				pingBytes, _ := json.Marshal(pingData)
+			// Find an active channel
+			tunnel.channelMu.RLock()
+			var activeChan uint16 = 1
+			hasChannels := len(tunnel.channels) > 0
+			for chanNum := range tunnel.channels {
+				activeChan = chanNum
+				break
+			}
+			tunnel.channelMu.RUnlock()
 
-				// Use the helper to encrypt/wrap correctly
-				err := sendWrappedMessage(tunnel.wsConn, pingBytes, tunnel.config.Key, websocket.BinaryMessage)
-
-				if err != nil {
-					fmt.Printf("TUNNEL[%s] Keep-alive ping failed: %v\n", tunnel.ID, err)
-					m.FailTunnel(tunnel.ID, err)
-					return
-				}
-			*/
+			// CRITICAL: BinaryMessage with valid channel and empty data
+			keepaliveData := tcpData{
+				Version:   0,
+				MappingID: 1,
+				ChanNum:   activeChan,
+				Data:      []byte{},
+			}
+			dataBytes, _ := json.Marshal(keepaliveData)
+			err := sendWrappedMessage(tunnel.wsConn, dataBytes, tunnel.config.Key, websocket.BinaryMessage)
 			tunnel.wsMu.Unlock()
+
+			if err != nil {
+				fmt.Printf("TUNNEL[%s] Keep-alive #%d FAILED: %v\n", tunnel.ID, keepaliveCount, err)
+				m.FailTunnel(tunnel.ID, err)
+				return
+			}
+			keepaliveCount++
+			if keepaliveCount <= 5 || keepaliveCount%10 == 0 {
+				fmt.Printf("TUNNEL[%s] Keep-alive #%d sent (chan=%d, hasChannels=%v)\n", tunnel.ID, keepaliveCount, activeChan, hasChannels)
+			}
 		}
 	}
 }
@@ -1199,6 +1207,15 @@ func (m *Manager) tunnelWSReader(ctx context.Context, tunnel *Tunnel) {
 			if err != nil {
 				if ctx.Err() == nil {
 					fmt.Printf("TUNNEL[%s] WS reader error: %v\n", tunnel.ID, err)
+
+					// Attempt reconnect for abnormal closures (1006) or unexpected EOFs
+					// This handles network blips or cloud load balancer timeouts.
+					fmt.Printf("TUNNEL[%s] Attempting reconnection after WS error...\n", tunnel.ID)
+					if m.attemptTunnelReconnect(tunnel) {
+						fmt.Printf("TUNNEL[%s] Reconnection successful, resuming reader loop\n", tunnel.ID)
+						continue
+					}
+
 					m.FailTunnel(tunnel.ID, err)
 				}
 				return
@@ -1243,9 +1260,20 @@ func (m *Manager) tunnelWSReader(ctx context.Context, tunnel *Tunnel) {
 			// If we receive this in the middle of a session, it means the session likely reset
 			// and we need to re-establish the tunnel logic.
 			if strings.Contains(payloadStr, "Device IPs:") {
-				fmt.Printf("TUNNEL[%s] Detected session banner (Device IPs). Session reset confirmed. Closing tunnel.\n", tunnel.ID)
-				m.FailTunnel(tunnel.ID, fmt.Errorf("session reset by device"))
-				return
+				fmt.Printf("TUNNEL[%s] Detected session banner (Device IPs), treating as session reset. Attempting reconnection...\n", tunnel.ID)
+
+				// Small delay to prevent tight loops if the device keeps resetting
+				time.Sleep(1 * time.Second)
+
+				// Try to reconnect
+				if m.attemptTunnelReconnect(tunnel) {
+					fmt.Printf("TUNNEL[%s] Reconnection successful, resuming\n", tunnel.ID)
+					continue
+				} else {
+					fmt.Printf("TUNNEL[%s] Reconnection failed, closing tunnel\n", tunnel.ID)
+					m.FailTunnel(tunnel.ID, ErrNoDeviceOnline)
+					return
+				}
 			}
 
 			// Parse tcpData
@@ -1261,8 +1289,6 @@ func (m *Manager) tunnelWSReader(ctx context.Context, tunnel *Tunnel) {
 				tunnel.channelMu.RLock()
 				ch, ok := tunnel.channels[td.ChanNum]
 				tunnel.channelMu.RUnlock()
-
-				fmt.Printf("TUNNEL[%s] ChanNum=%d: Received tcpData %d bytes. Dump: %q\n", tunnel.ID, td.ChanNum, len(td.Data), string(td.Data))
 
 				if ok {
 					select {
