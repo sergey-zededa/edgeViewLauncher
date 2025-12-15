@@ -17,7 +17,10 @@
     "test": "cd frontend && npm test"
   },
   "keywords": [],
-  "author": "",
+  "author": {
+    "name": "ZEDEDA",
+    "email": "support@zededa.com"
+  },
   "license": "ISC",
   "devDependencies": {
     "electron": "^39.2.7",
@@ -67,6 +70,7 @@
     },
     "linux": {
       "icon": "assets/icon.png",
+      "maintainer": "ZEDEDA <support@zededa.com>",
       "target": [
         {
           "target": "AppImage",
