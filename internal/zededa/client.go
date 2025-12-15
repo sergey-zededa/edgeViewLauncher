@@ -903,6 +903,8 @@ type EdgeViewStatus struct {
 	VGAEnabled     bool
 	USBEnabled     bool
 	ConsoleEnabled bool
+	Token          string // Active EdgeView JWT token
+	DispURL        string // Dispatcher URL
 }
 
 // GetEdgeViewStatus returns the detailed EdgeView status from the device
@@ -928,10 +930,17 @@ func (c *Client) GetEdgeViewStatus(nodeID string) (*EdgeViewStatus, error) {
 		}
 	}
 
-	// 2. Get EdgeView Config (Max Sessions, Expiry)
+	// 2. Get EdgeView Config (Max Sessions, Expiry, Token, DispUrl)
 	if evConfig, ok := device["edgeviewconfig"].(map[string]interface{}); ok {
 		// DEBUG: Print full edgeviewconfig
 		fmt.Printf("DEBUG: edgeviewconfig: %+v\n", evConfig)
+
+		if token, ok := evConfig["token"].(string); ok {
+			status.Token = token
+		}
+		if dispUrl, ok := evConfig["dispUrl"].(string); ok {
+			status.DispURL = dispUrl
+		}
 
 		if jwtInfo, ok := evConfig["jwtInfo"].(map[string]interface{}); ok {
 			if num, ok := jwtInfo["numInst"].(float64); ok {
@@ -939,6 +948,12 @@ func (c *Client) GetEdgeViewStatus(nodeID string) (*EdgeViewStatus, error) {
 			}
 			if exp, ok := jwtInfo["expireSec"].(string); ok {
 				status.Expiry = exp
+			}
+			// Fallback: DispURL might be in jwtInfo too
+			if status.DispURL == "" {
+				if dispUrl, ok := jwtInfo["dispUrl"].(string); ok {
+					status.DispURL = dispUrl
+				}
 			}
 		}
 	}

@@ -21,6 +21,7 @@ type zededaAPI interface {
 	UpdateConfig(baseURL, token string)
 	InitSession(targetID string) (string, error)
 	ParseEdgeViewScript(script string) (*zededa.SessionConfig, error)
+	ParseEdgeViewToken(token string) (*zededa.SessionConfig, error)
 	AddSSHKeyToDevice(nodeID, pubKey string) error
 	GetEdgeViewStatus(nodeID string) (*zededa.EdgeViewStatus, error)
 	DisableSSH(nodeID string) error
@@ -292,31 +293,65 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (string, error
 			needNewProxy = true
 		}
 	} else {
-		// No cached session - need to get new script
-		fmt.Println("No cached session, requesting new EdgeView script...")
-		a.SetConnectionProgress(nodeID, "Requesting new EdgeView session from Cloud...")
-		script, err := a.zededaClient.InitSession(nodeID)
-		if err != nil {
-			fmt.Printf("InitSession failed: %v\n", err)
-			a.SetConnectionProgress(nodeID, "Error: Failed to init session")
-			return "", fmt.Errorf("failed to init session: %w", err)
+		// No cached session - check if API says one is already active
+		// This avoids re-enabling EdgeView if the user just closed the window but session is still valid
+		fmt.Println("No local cached session, checking Cloud API status...")
+		
+		// We need to get the actual EdgeView Status which contains the JWT and URL.
+		evStatus, err := a.zededaClient.GetEdgeViewStatus(nodeID)
+		if err == nil && evStatus.Token != "" && evStatus.DispURL != "" {
+			fmt.Println("Found active EdgeView session from API, reusing token...")
+			
+			// We need to extract the 'Key' from the JWT payload because it's required for envelope signing.
+			// The API response doesn't give us the raw signing key (that's only in InitSession response usually),
+			// BUT the JWT 'key' claim is the nonce used for session isolation, which matches what we need.
+			// Let's reuse ParseEdgeViewToken which decodes the JWT and populates SessionConfig.
+			
+			sc, parseErr := a.zededaClient.ParseEdgeViewToken(evStatus.Token)
+			if parseErr == nil {
+				sessionConfig = sc
+				// Ensure URL is correct (API might return raw dispUrl without wss://)
+				if !strings.HasPrefix(sessionConfig.URL, "wss://") && !strings.HasPrefix(sessionConfig.URL, "ws://") {
+					// Use the logic from ParseEdgeViewToken or just prefer what we have if ParseEdgeViewToken handled it.
+					// Actually ParseEdgeViewToken uses claims.Dep. 
+					// If claims.Dep is missing, we fall back to evStatus.DispURL
+					if sessionConfig.URL == "" {
+						sessionConfig.URL = evStatus.DispURL
+						// fixup protocol
+						if !strings.HasPrefix(sessionConfig.URL, "http") && !strings.HasPrefix(sessionConfig.URL, "ws") {
+							sessionConfig.URL = "wss://" + sessionConfig.URL
+						}
+					}
+				}
+				fmt.Printf("Reused active session. URL: %s\n", sessionConfig.URL)
+			} else {
+				fmt.Printf("Failed to parse active token: %v\n", parseErr)
+			}
 		}
-		fmt.Println("EdgeView enabled, script received.")
 
-		// Parse the script to get Session Config
-		fmt.Println("Parsing script...")
-		sessionConfig, err = a.zededaClient.ParseEdgeViewScript(script)
-		if err != nil {
-			fmt.Printf("ParseEdgeViewScript failed: %v\n", err)
-			a.SetConnectionProgress(nodeID, "Error: Failed to parse script")
-			return "", fmt.Errorf("failed to parse script: %w", err)
+		if sessionConfig == nil {
+			// Need to get new script/session
+			fmt.Println("No cached session or key missing, requesting new EdgeView script...")
+			a.SetConnectionProgress(nodeID, "Requesting new EdgeView session from Cloud...")
+			script, err := a.zededaClient.InitSession(nodeID)
+			if err != nil {
+				fmt.Printf("InitSession failed: %v\n", err)
+				a.SetConnectionProgress(nodeID, "Error: Failed to init session")
+				return "", fmt.Errorf("failed to init session: %w", err)
+			}
+			fmt.Println("EdgeView enabled, script received.")
+
+			// Parse the script to get Session Config
+			fmt.Println("Parsing script...")
+			sessionConfig, err = a.zededaClient.ParseEdgeViewScript(script)
+			if err != nil {
+				fmt.Printf("ParseEdgeViewScript failed: %v\n", err)
+				a.SetConnectionProgress(nodeID, "Error: Failed to parse script")
+				return "", fmt.Errorf("failed to parse script: %w", err)
+			}
+			fmt.Printf("Script parsed. URL: %s\n", sessionConfig.URL)
 		}
-		fmt.Printf("Script parsed. URL: %s\n", sessionConfig.URL)
 
-		// Give device time to establish stable connection
-		// Native Terminal.app connects immediately, so we need enough time for device to come online
-		// Give device time to establish stable connection
-		// Native Terminal.app connects immediately, so we need enough time for device to come online
 		fmt.Println("DEBUG: Requesting EdgeView session...")
 		a.SetConnectionProgress(nodeID, "Connecting to EdgeView...")
 		// No artificial delay - rely on retries in StartProxy
