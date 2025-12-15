@@ -40,7 +40,7 @@ jobs:
         run: cd frontend && npm run build
 
       - name: Build Go backend (ARM64)
-        run: GOOS=darwin GOARCH=arm64 go build -o edgeview-backend http-server.go app.go
+        run: GOOS=darwin GOARCH=arm64 go build -o edgeview-backend ./cmd/edgeview-backend
 
       - name: Generate build info
         run: npm run prebuild
@@ -90,7 +90,7 @@ jobs:
         run: cd frontend && npm run build
 
       - name: Build Go backend (x64)
-        run: GOOS=darwin GOARCH=amd64 go build -o edgeview-backend http-server.go app.go
+        run: GOOS=darwin GOARCH=amd64 go build -o edgeview-backend ./cmd/edgeview-backend
 
       - name: Generate build info
         run: npm run prebuild
@@ -143,7 +143,7 @@ jobs:
         run: |
           $env:GOOS = "windows"
           $env:GOARCH = "amd64"
-          go build -o edgeview-backend.exe http-server.go app.go
+          go build -o edgeview-backend.exe ./cmd/edgeview-backend
 
       - name: Generate build info
         run: npm run prebuild
@@ -192,7 +192,7 @@ jobs:
         run: cd frontend && npm run build
 
       - name: Build Go backend (Linux x64)
-        run: GOOS=linux GOARCH=amd64 go build -o edgeview-backend http-server.go app.go
+        run: GOOS=linux GOARCH=amd64 go build -o edgeview-backend ./cmd/edgeview-backend
 
       - name: Generate build info
         run: npm run prebuild
