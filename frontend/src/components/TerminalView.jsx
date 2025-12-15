@@ -127,7 +127,6 @@ const TerminalView = ({ port }) => {
                         // at chunk boundaries and possibly interfering with ISO-2022 sequences.
                         term.write(u8);
                     } else {
-                    } else {
                         // Should not happen with binaryType=arraybuffer, but just in case
                         term.write(event.data);
                     }
