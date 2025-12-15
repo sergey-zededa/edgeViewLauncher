@@ -211,7 +211,6 @@ async function updateTrayMenu() {
                 { label: 'Quit', click: () => { isQuitting = true; app.quit(); } }
             ]);
             tray.setContextMenu(fallbackMenu);
-        }
     }
 }
     menuItems.push({
