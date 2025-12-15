@@ -1,6 +1,6 @@
 {
   "name": "edgeview-launcher",
-"version": "0.1.1",
+  "version": "0.1.1",
   "description": "EdgeView Launcher - Electron Edition",
   "main": "electron-main.js",
   "scripts": {
@@ -11,7 +11,9 @@
     "build:frontend": "cd frontend && npm run build",
     "build:backend:mac": "GOOS=darwin GOARCH=arm64 go build -o edgeview-backend http-server.go app.go",
     "build:backend:windows": "GOOS=windows GOARCH=amd64 go build -o edgeview-backend.exe http-server.go app.go",
+    "build:backend:linux": "GOOS=linux GOARCH=amd64 go build -o edgeview-backend http-server.go app.go",
     "build:windows": "npm run build:frontend && npm run build:backend:windows && electron-builder --win --x64",
+    "build:linux": "npm run build:frontend && npm run build:backend:linux && electron-builder --linux --x64",
     "test": "cd frontend && npm test"
   },
   "keywords": [],
@@ -65,12 +67,23 @@
     },
     "linux": {
       "icon": "icon.png",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": ["x64"]
+        },
+        {
+          "target": "deb",
+          "arch": ["x64"]
+        }
+      ],
       "extraResources": [
         {
           "from": "edgeview-backend",
           "to": "edgeview-backend"
         }
-      ]
+      ],
+      "category": "Development"
     },
     "files": [
       "electron-main.js",
