@@ -98,11 +98,8 @@
       "electron-preload.js",
       "backendClient.js",
       "build-info.json",
-      "assets/entitlements.mac.plist",
       "frontend/dist/**/*",
-      "assets/icon.icns",
-      "assets/icon.ico",
-      "assets/icon.png"
+      "assets/**/*"
     ],
     "directories": {
       "output": "dist-electron"

@@ -651,20 +651,30 @@ function App() {
       const intervalId = setInterval(pollProgress, 1000);
 
       const result = await ConnectToNode(nodeId, useInApp);
+      
+      // Parse port from result string (format: "Session started on port 9001")
+      const match = result.match(/port (\d+)/);
+      const port = (match && match[1]) ? parseInt(match[1], 10) : null;
+
+      if (!port) {
+        console.error("Could not parse port from result:", result);
+        setError({ type: 'error', message: "Failed to start session: Could not determine port." });
+        return;
+      }
+
       if (useInApp) {
-        const match = result.match(/port (\d+)/);
-        if (match && match[1]) {
-          const port = match[1];
-          window.electronAPI.openTerminalWindow({
-            port: parseInt(port),
-            nodeName: selectedNode.name,
-            targetInfo: 'EVE-OS SSH',
-            tunnelId: '' // Could be extracted from result if available
-          });
-        } else {
-          console.error("Could not parse port from result:", result);
-          setError({ type: 'error', message: "Failed to start terminal: Could not determine port." });
-        }
+        window.electronAPI.openTerminalWindow({
+          port: port,
+          nodeName: selectedNode.name,
+          targetInfo: 'EVE-OS SSH',
+          tunnelId: '' // Could be extracted from result if available
+        });
+      } else {
+        // Native Terminal Launch
+        const sshUser = 'root'; // Default for EVE-OS
+        const sshCommand = `ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p ${port} ${sshUser}@localhost`;
+        addLog(`Launching native terminal: ${sshCommand}`, 'info');
+        await window.electronAPI.openExternalTerminal(sshCommand);
       }
       const newConfig = await GetSettings();
       setConfig(newConfig);
