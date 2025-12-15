@@ -10,16 +10,26 @@ let goBackend;
 let BACKEND_PORT = null; // Will be set dynamically when Go backend starts
 let trayRefreshInterval = null; // For periodic menu refresh
 
+// Helper to get asset path in both dev and prod (unpacked)
+const getAssetPath = (...paths) => {
+    const rootPath = app.isPackaged ? process.resourcesPath : __dirname;
+    return path.join(rootPath, ...paths);
+};
+
 function createTray() {
     // Try using the PNG first, it's often better for tray icons
-    const iconPath = path.join(__dirname, 'assets', 'icon.png');
+    // In prod, assets are unpacked to Resources/assets
+    // In dev, they are in root/assets
+    const iconPath = getAssetPath('assets', 'icon.png');
     console.log('Creating tray with icon:', iconPath);
 
     let trayIcon = nativeImage.createFromPath(iconPath);
 
     if (trayIcon.isEmpty()) {
         console.error('Tray icon is empty! Trying .icns fallback');
-        trayIcon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.icns'));
+        const icnsPath = getAssetPath('assets', 'icon.icns');
+        trayIcon = nativeImage.createFromPath(icnsPath);
+        console.log('Fallback icon path:', icnsPath);
     }
 
     // Resize to appropriate size for tray (22x22 is standard for macOS menu bar)
@@ -214,7 +224,7 @@ function createWindow() {
         windowOptions.icon = path.join(__dirname, 'icon.icns');
         windowOptions.titleBarStyle = 'hiddenInset';
     } else {
-        windowOptions.icon = path.join(__dirname, 'assets', 'icon.png');
+        windowOptions.icon = getAssetPath('assets', 'icon.png');
     }
 
     mainWindow = new BrowserWindow(windowOptions);
