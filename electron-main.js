@@ -42,12 +42,22 @@ function createTray() {
 
     tray = new Tray(trayIcon);
     tray.setToolTip('EdgeView Launcher');
+
+    // Set initial context menu synchronously to ensure tray is interactive immediately
+    const initialMenu = Menu.buildFromTemplate([
+        { label: 'EdgeView Launcher', enabled: false },
+        { type: 'separator' },
+        { label: 'Loading...', enabled: false },
+        { type: 'separator' },
+        { label: 'Show Window', click: () => mainWindow ? mainWindow.show() : createWindow() },
+        { label: 'Quit', click: () => { isQuitting = true; app.quit(); } }
+    ]);
+    tray.setContextMenu(initialMenu);
+
     console.log('Tray created successfully');
 
-    // Initial menu (will be updated with dynamic content)
+    // Update menu with dynamic content
     updateTrayMenu();
-
-    // Refresh menu periodically (every 5 seconds)
     trayRefreshInterval = setInterval(updateTrayMenu, 5000);
 
     tray.on('double-click', () => {
@@ -93,100 +103,32 @@ async function updateTrayMenu() {
                 }
             }
         } catch (e) {
-            // Silently ignore - backend might not be ready
+            console.error('Failed to update tray menu (partial failure):', e);
+            // Ignore fetch errors, but ensure we proceed to set the menu
         }
 
-        menuItems.push({ type: 'separator' });
-
-        // Fetch active tunnels
-        try {
-            const tunnelsRes = await fetch(`http://localhost:${BACKEND_PORT}/api/tunnels`);
-            const tunnelsData = await tunnelsRes.json();
-
-            if (tunnelsData.success && Array.isArray(tunnelsData.data) && tunnelsData.data.length > 0) {
-                menuItems.push({
-                    label: 'ACTIVE CONNECTIONS',
-                    enabled: false
-                });
-
-                for (const tunnel of tunnelsData.data) {
-                    const deviceName = tunnel.NodeName || tunnel.NodeID?.substring(0, 8) || 'Unknown';
-                    const port = tunnel.LocalPort;
-                    const type = tunnel.Type || 'TCP';
-
-                    menuItems.push({
-                        label: `${deviceName} → :${port} (${type})`,
-                        submenu: [
-                            {
-                                label: `Type: ${type}`,
-                                enabled: false
-                            },
-                            {
-                                label: `Local Port: ${port}`,
-                                enabled: false
-                            },
-                            {
-                                label: `Target: ${tunnel.TargetIP}`,
-                                enabled: false
-                            },
-                            { type: 'separator' },
-                            {
-                                label: 'Close Connection',
-                                click: async () => {
-                                    try {
-                                        await fetch(`http://localhost:${BACKEND_PORT}/api/tunnel/${tunnel.ID}`, {
-                                            method: 'DELETE'
-                                        });
-                                        updateTrayMenu(); // Refresh menu
-                                    } catch (e) {
-                                        console.error('Failed to close tunnel:', e);
-                                    }
-                                }
-                            }
-                        ]
-                    });
-                }
-            } else {
-                menuItems.push({
-                    label: 'No active connections',
-                    enabled: false
-                });
-            }
-        } catch (e) {
-            menuItems.push({
-                label: 'Loading...',
-                enabled: false
-            });
+        // --- Build Menu ---
+        const contextMenu = Menu.buildFromTemplate(menuItems);
+        
+        // Ensure tray still exists before setting menu
+        if (tray && !tray.isDestroyed()) {
+            tray.setContextMenu(contextMenu);
         }
-    } else {
-        menuItems.push({
-            label: 'Connecting to backend...',
-            enabled: false
-        });
+    } catch (err) {
+        console.error('CRITICAL: Failed to update tray menu:', err);
+        // Fallback to basic menu
+        if (tray && !tray.isDestroyed()) {
+             const fallbackMenu = Menu.buildFromTemplate([
+                { label: 'EdgeView Launcher', enabled: false },
+                { label: 'Error loading menu', enabled: false },
+                { type: 'separator' },
+                { label: 'Show Window', click: () => mainWindow ? mainWindow.show() : createWindow() },
+                { label: 'Quit', click: () => { isQuitting = true; app.quit(); } }
+            ]);
+            tray.setContextMenu(fallbackMenu);
+        }
     }
-
-    menuItems.push({ type: 'separator' });
-
-    // Open app
-    menuItems.push({
-        label: 'Open EdgeView Launcher',
-        accelerator: 'CommandOrControl+O',
-        click: () => {
-            if (mainWindow) {
-                mainWindow.show();
-                mainWindow.focus();
-                if (process.platform === 'darwin' && app.dock) {
-                    app.dock.show();
-                }
-            } else {
-                createWindow();
-            }
-        }
-    });
-
-    menuItems.push({ type: 'separator' });
-
-    // Quit
+}
     menuItems.push({
         label: 'Quit',
         accelerator: 'CommandOrControl+Q',
