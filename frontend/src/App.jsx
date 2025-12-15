@@ -674,16 +674,12 @@ function App() {
       } catch (err) {
         console.error('Failed to refresh session status:', err);
       }
-      if (selectedNode) {
-        addLog('Refreshing services with EdgeView data...', 'info');
-        try {
-          const refreshed = await GetDeviceServices(nodeId, selectedNode.name);
-          setServices(JSON.parse(refreshed));
-          addLog('Services refreshed with enrichment data', 'success');
-        } catch (err) {
-          console.error('Failed to refresh services:', err);
-        }
-      }
+      // NOTE: We do NOT automatically refresh services here anymore.
+      // Doing so triggers a new EdgeView query (ExecuteCommand) which opens a SECOND
+      // WebSocket connection. On devices with MaxInst=2, this conflicts with the
+      // active tunnel (Inst 1) + this query (Inst 2), potentially hitting the limit
+      // or causing stability issues if the query takes time.
+      // Users can manually refresh if needed, but the initial fetch is usually sufficient.
 
       cancelled = true;
       clearInterval(intervalId);
