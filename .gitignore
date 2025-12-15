@@ -8,6 +8,8 @@ edgeview-backend
 edgeview-backend.exe
 edgeview-backend-test
 edgeview-launcher-backend
+edgeViewLauncher
+edgeview-launcher
 
 # EVE reference implementations
 eve/
