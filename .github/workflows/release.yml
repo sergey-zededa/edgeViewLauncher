@@ -16,6 +16,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Configure git for private modules
+        env:
+          TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            git config --global url."https://${TOKEN}:x-oauth-basic@github.com/zededa".insteadOf "https://github.com/zededa"
+          fi
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
@@ -40,6 +48,8 @@ jobs:
         run: cd frontend && npm run build
 
       - name: Build Go backend (ARM64)
+        env:
+          GOPRIVATE: github.com/zededa/*
         run: GOOS=darwin GOARCH=arm64 go build -o edgeview-backend http-server.go app.go
 
       - name: Generate build info
@@ -66,6 +76,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Configure git for private modules
+        env:
+          TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            git config --global url."https://${TOKEN}:x-oauth-basic@github.com/zededa".insteadOf "https://github.com/zededa"
+          fi
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
@@ -90,6 +108,8 @@ jobs:
         run: cd frontend && npm run build
 
       - name: Build Go backend (x64)
+        env:
+          GOPRIVATE: github.com/zededa/*
         run: GOOS=darwin GOARCH=amd64 go build -o edgeview-backend http-server.go app.go
 
       - name: Generate build info
@@ -116,6 +136,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Configure git for private modules
+        env:
+          TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            git config --global url."https://${TOKEN}:x-oauth-basic@github.com/zededa".insteadOf "https://github.com/zededa"
+          fi
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
@@ -140,6 +168,8 @@ jobs:
         run: cd frontend && npm run build
 
       - name: Build Go backend (Windows x64)
+        env:
+          GOPRIVATE: github.com/zededa/*
         run: |
           $env:GOOS = "windows"
           $env:GOARCH = "amd64"
@@ -168,6 +198,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Configure git for private modules
+        env:
+          TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            git config --global url."https://${TOKEN}:x-oauth-basic@github.com/zededa".insteadOf "https://github.com/zededa"
+          fi
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
@@ -192,6 +230,8 @@ jobs:
         run: cd frontend && npm run build
 
       - name: Build Go backend (Linux x64)
+        env:
+          GOPRIVATE: github.com/zededa/*
         run: GOOS=linux GOARCH=amd64 go build -o edgeview-backend http-server.go app.go
 
       - name: Generate build info
