@@ -12,14 +12,14 @@ let trayRefreshInterval = null; // For periodic menu refresh
 
 function createTray() {
     // Try using the PNG first, it's often better for tray icons
-    const iconPath = path.join(__dirname, 'icon.png');
+    const iconPath = path.join(__dirname, 'assets', 'icon.png');
     console.log('Creating tray with icon:', iconPath);
 
     let trayIcon = nativeImage.createFromPath(iconPath);
 
     if (trayIcon.isEmpty()) {
         console.error('Tray icon is empty! Trying .icns fallback');
-        trayIcon = nativeImage.createFromPath(path.join(__dirname, 'icon.icns'));
+        trayIcon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.icns'));
     }
 
     // Resize to appropriate size for tray (16x16 is standard for macOS menu bar)
@@ -208,7 +208,7 @@ function createWindow() {
         windowOptions.icon = path.join(__dirname, 'icon.icns');
         windowOptions.titleBarStyle = 'hiddenInset';
     } else {
-        windowOptions.icon = path.join(__dirname, 'icon.png');
+        windowOptions.icon = path.join(__dirname, 'assets', 'icon.png');
     }
 
     mainWindow = new BrowserWindow(windowOptions);

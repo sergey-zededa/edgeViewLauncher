@@ -9,9 +9,9 @@
     "build": "npm run build:mac",
     "build:mac": "npm run build:frontend && npm run build:backend:mac && electron-builder --mac --arm64",
     "build:frontend": "cd frontend && npm run build",
-    "build:backend:mac": "GOOS=darwin GOARCH=arm64 go build -o edgeview-backend http-server.go app.go",
-    "build:backend:windows": "GOOS=windows GOARCH=amd64 go build -o edgeview-backend.exe http-server.go app.go",
-    "build:backend:linux": "GOOS=linux GOARCH=amd64 go build -o edgeview-backend http-server.go app.go",
+    "build:backend:mac": "GOOS=darwin GOARCH=arm64 go build -o edgeview-backend ./cmd/edgeview-backend",
+    "build:backend:windows": "GOOS=windows GOARCH=amd64 go build -o edgeview-backend.exe ./cmd/edgeview-backend",
+    "build:backend:linux": "GOOS=linux GOARCH=amd64 go build -o edgeview-backend ./cmd/edgeview-backend",
     "build:windows": "npm run build:frontend && npm run build:backend:windows && electron-builder --win --x64",
     "build:linux": "npm run build:frontend && npm run build:backend:linux && electron-builder --linux --x64",
     "test": "cd frontend && npm test"
@@ -27,7 +27,7 @@
     "appId": "com.edgeview.launcher",
     "productName": "EdgeView Launcher",
     "win": {
-      "icon": "icon.ico",
+      "icon": "assets/icon.ico",
       "target": [
         {
           "target": "nsis",
@@ -53,11 +53,11 @@
           ]
         }
       ],
-      "icon": "icon.icns",
+      "icon": "assets/icon.icns",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
-      "entitlements": "entitlements.mac.plist",
-      "entitlementsInherit": "entitlements.mac.plist",
+      "entitlements": "assets/entitlements.mac.plist",
+      "entitlementsInherit": "assets/entitlements.mac.plist",
       "extraResources": [
         {
           "from": "edgeview-backend",
@@ -66,7 +66,7 @@
       ]
     },
     "linux": {
-      "icon": "icon.png",
+      "icon": "assets/icon.png",
       "target": [
         {
           "target": "AppImage",
@@ -94,11 +94,11 @@
       "electron-preload.js",
       "backendClient.js",
       "build-info.json",
-      "entitlements.mac.plist",
+      "assets/entitlements.mac.plist",
       "frontend/dist/**/*",
-      "icon.icns",
-      "icon.ico",
-      "icon.png"
+      "assets/icon.icns",
+      "assets/icon.ico",
+      "assets/icon.png"
     ],
     "directories": {
       "output": "dist-electron"

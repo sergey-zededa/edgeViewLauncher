@@ -40,11 +40,28 @@ Exact commands and variations can be found in `WARP.md` and the package/config f
 
 Refer to comments in these files and to `WARP.md` for implementation details and development conventions.
 
-## Building Packages
+## Building
 
-Build and packaging are handled via Electron Builder and the associated npm scripts. To create distributable installers for supported platforms, use the build scripts defined in the root `package.json` (for example, platform-specific `npm run build` variants).
+Build and packaging are handled via Electron Builder. To create distributable installers:
 
-Artifacts are written into `dist-electron/` and are intentionally excluded from version control.
+```bash
+# macOS ARM64 (default)
+npm run build
+
+# Windows x64 (requires cross-compilation setup or running on Windows)
+npm run build:windows
+
+# Linux x64
+npm run build:linux
+```
+
+Artifacts are written into `dist-electron/`.
+
+### Code Signing
+
+For distribution, the app should be code signed and notarized to avoid security warnings.
+Refer to `package.json` build configuration for signing identities and notarization scripts.
+Without signing, users may need to manually bypass Gatekeeper (e.g., `xattr -cr /Applications/EdgeView\ Launcher.app`).
 
 ## Additional Documentation
 

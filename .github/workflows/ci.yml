@@ -34,7 +34,7 @@ jobs:
         run: cd frontend && npm test -- --run
 
       - name: Build Go backend (verify compilation)
-        run: go build -o edgeview-backend http-server.go app.go
+        run: go build -o edgeview-backend ./cmd/edgeview-backend
 
   lint:
     name: Lint

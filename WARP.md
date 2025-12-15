@@ -58,15 +58,16 @@ cd frontend && npm run dev          # Terminal 1: Vite dev server (localhost:517
 go build -o edgeview-backend && NODE_ENV=development npm start  # Terminal 2: Electron app
 
 # Rebuild Go backend only (after Go code changes)
+# Important: Binary name MUST be edgeview-backend (macOS/Linux) or edgeview-backend.exe (Windows)
 go build -o edgeview-backend http-server.go app.go
 
 # Build for production
 npm run build                       # Builds frontend + backend + Electron package
+npm run build:windows               # Windows x64 build
+npm run build:linux                 # Linux x64 build
 
 # Run frontend tests
 cd frontend && npm test             # Run all tests with Vitest
-cd frontend && npm test -- -t "test name"  # Run specific test
-cd frontend && npm test -- --watch  # Watch mode
 ```
 
 **Important**: The Go binary must be named `edgeview-backend` (not `edgeViewLauncher`) because `electron-main.js` looks for this specific name.
