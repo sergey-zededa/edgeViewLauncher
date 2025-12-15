@@ -10,7 +10,7 @@
     "test": "vitest"
   },
   "dependencies": {
-    "@novnc/novnc": "^1.6.0",
+    "@novnc/novnc": "^1.5.0",
     "lucide-react": "^0.561.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
@@ -26,6 +26,7 @@
     "@vitejs/plugin-react": "^5.1.2",
     "jsdom": "^27.3.0",
     "vite": "^7.2.7",
+    "vite-plugin-top-level-await": "^1.6.0",
     "vitest": "^4.0.15"
   }
 }
