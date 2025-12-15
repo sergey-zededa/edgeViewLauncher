@@ -10,7 +10,7 @@
     "test": "vitest"
   },
   "dependencies": {
-    "@novnc/novnc": "^1.5.0",
+    "@novnc/novnc": "^1.6.0",
     "lucide-react": "^0.561.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
