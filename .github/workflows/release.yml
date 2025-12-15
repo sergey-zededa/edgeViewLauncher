@@ -221,15 +221,16 @@ jobs:
         run: ls -R artifacts
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: ncipollo/release-action@v1
         with:
-          files: |
+          artifacts: |
             artifacts/macos-arm64/*
             artifacts/macos-x64/*
             artifacts/windows-x64/*
             artifacts/linux-x64/*
-          generate_release_notes: true
+          generateReleaseNotes: true
           draft: false
           prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-alpha') || contains(github.ref, '-rc') }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          allowUpdates: true
+          removeArtifacts: true
+          token: ${{ secrets.GITHUB_TOKEN }}
