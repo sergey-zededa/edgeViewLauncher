@@ -2,6 +2,13 @@
 
 This file provides guidance to WARP (warp.dev) when working with code in this repository.
 
+## Critical Rules
+
+**IMPORTANT**: 
+1. **NEVER create git tags** or trigger release builds (CI/CD) unless explicitly instructed by the user.
+2. **NEVER push to remote** (`git push`) unless explicitly asked.
+3. Do not modify `eve/` directory contents as they are reference implementations.
+
 ## Project Overview
 
 EdgeView Launcher is an Electron desktop application with a Go backend for managing remote ZEDEDA edge devices. It provides SSH terminal access, VNC remote desktop, and TCP tunneling through EdgeView proxy connections.
