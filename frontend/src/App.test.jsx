@@ -242,7 +242,7 @@ describe('App configuration and tunnels', () => {
     const [clustersArg, activeClusterArg] = electronAPI.SaveSettings.mock.calls[0];
     expect(clustersArg).toHaveLength(1);
     expect(clustersArg[0].apiToken).toBe(newToken);
-    expect(activeClusterArg).toBe('Cluster 1');
+    expect(activeClusterArg).toBe('Cluster 1'); // Check string value, not object reference
   });
 
   it('starting a VNC tunnel calls StartTunnel and adds an active tunnel without auto-launching VNC client', async () => {
