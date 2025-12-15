@@ -1125,11 +1125,11 @@ func (m *Manager) attemptTunnelReconnect(tunnel *Tunnel) bool {
 // 3. Must use BinaryMessage for TCP data to be processed correctly
 // 4. The DEVICE's keepalive is 90 seconds, but we see ~30s timeouts - cloud may be timing out device connection
 func (m *Manager) tunnelKeepAlive(ctx context.Context, tunnel *Tunnel) {
-	// Very aggressive: 5 seconds. The observed timeout is ~20-30s, so we need to be well under that.
-	// This also helps because we can only keep CLIENT→CLOUD alive, not CLOUD→DEVICE.
-	ticker := time.NewTicker(5 * time.Second)
+	// Less aggressive: 30 seconds. The observed timeout is ~30-40s, so this should be safe
+	// while avoiding flooding the device with keepalives.
+	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
-	fmt.Printf("TUNNEL[%s] Keep-alive started (5s aggressive BinaryMessage)\n", tunnel.ID)
+	fmt.Printf("TUNNEL[%s] Keep-alive started (30s BinaryMessage)\n", tunnel.ID)
 
 	keepaliveCount := 0
 	for {
@@ -1145,7 +1145,7 @@ func (m *Manager) tunnelKeepAlive(ctx context.Context, tunnel *Tunnel) {
 				continue
 			}
 
-			// Find an active channel
+			// Find an active channel if one exists, otherwise use 1
 			tunnel.channelMu.RLock()
 			var activeChan uint16 = 1
 			hasChannels := len(tunnel.channels) > 0
@@ -1154,6 +1154,12 @@ func (m *Manager) tunnelKeepAlive(ctx context.Context, tunnel *Tunnel) {
 				break
 			}
 			tunnel.channelMu.RUnlock()
+
+			// Only send keepalive if we have active channels (i.e. an active session using the tunnel)
+			// Sending keepalives to an idle tunnel might be confusing the device if it expects data.
+			// Actually, EdgeView tunnel logic often requires keepalive on the WebSocket itself.
+			// The protocol wrapper (sendWrappedMessage) handles the WebSocket level.
+			// Sending tcpData with empty payload is a specific "tunnel application" keepalive.
 
 			// CRITICAL: BinaryMessage with valid channel and empty data
 			keepaliveData := tcpData{
@@ -1168,12 +1174,15 @@ func (m *Manager) tunnelKeepAlive(ctx context.Context, tunnel *Tunnel) {
 
 			if err != nil {
 				fmt.Printf("TUNNEL[%s] Keep-alive #%d FAILED: %v\n", tunnel.ID, keepaliveCount, err)
-				m.FailTunnel(tunnel.ID, err)
-				return
-			}
-			keepaliveCount++
-			if keepaliveCount <= 5 || keepaliveCount%10 == 0 {
-				fmt.Printf("TUNNEL[%s] Keep-alive #%d sent (chan=%d, hasChannels=%v)\n", tunnel.ID, keepaliveCount, activeChan, hasChannels)
+				// Don't fail the tunnel immediately on keepalive failure, let the read loop handle disconnects
+				// m.FailTunnel(tunnel.ID, err)
+				// return
+			} else {
+				keepaliveCount++
+				// Log less frequently
+				if keepaliveCount <= 5 || keepaliveCount%20 == 0 {
+					fmt.Printf("TUNNEL[%s] Keep-alive #%d sent (chan=%d, hasChannels=%v)\n", tunnel.ID, keepaliveCount, activeChan, hasChannels)
+				}
 			}
 		}
 	}
