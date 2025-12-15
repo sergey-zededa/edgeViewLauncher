@@ -386,7 +386,7 @@ func (s *HTTPServer) Start() {
 	s.app.startup(context.Background())
 
 	// Log version to verify build update
-log.Printf("EdgeView Backend Version: 0.1.1")
+	log.Printf("EdgeView Backend Version: 0.1.1")
 
 	router := mux.NewRouter()
 
@@ -654,7 +654,16 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Default size
-	if err := session.RequestPty("xterm-256color", 24, 80, modes); err != nil {
+	cols := 80
+	rows := 24
+	if colsStr := r.URL.Query().Get("cols"); colsStr != "" {
+		fmt.Sscanf(colsStr, "%d", &cols)
+	}
+	if rowsStr := r.URL.Query().Get("rows"); rowsStr != "" {
+		fmt.Sscanf(rowsStr, "%d", &rows)
+	}
+
+	if err := session.RequestPty("xterm", rows, cols, modes); err != nil {
 		wsConn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\nFailed to request PTY: %v\r\n", err)))
 		return
 	}
@@ -676,8 +685,7 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 		for {
 			n, err := stdout.Read(buf)
 			if n > 0 {
-				log.Printf("SSH->WS: Stdout read %d bytes", n)
-				wsConn.WriteMessage(websocket.TextMessage, buf[:n])
+				wsConn.WriteMessage(websocket.BinaryMessage, buf[:n])
 			}
 			if err != nil {
 				log.Printf("SSH->WS: Stdout error: %v", err)
@@ -693,7 +701,6 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 		for {
 			n, err := stderr.Read(buf)
 			if n > 0 {
-				log.Printf("SSH->WS: Stderr read %d bytes", n)
 				wsConn.WriteMessage(websocket.TextMessage, buf[:n])
 			}
 			if err != nil {
