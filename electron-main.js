@@ -543,8 +543,8 @@ ipcMain.handle('open-terminal-window', async (event, options) => {
     const username = (typeof options === 'object' && options.username) ? options.username : '';
 
     const termWindow = new BrowserWindow({
-        width: 800,
-        height: 600,
+        width: 1024, // Approx 120 cols
+        height: 768, // Approx 40 rows + padding
         webPreferences: {
             preload: path.join(__dirname, 'electron-preload.js'),
             contextIsolation: true,

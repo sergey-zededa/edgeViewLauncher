@@ -5,6 +5,7 @@ dist-electron/
 
 # Go binaries
 edgeview-backend
+!cmd/edgeview-backend/
 edgeview-backend.exe
 edgeview-backend-test
 edgeview-launcher-backend
