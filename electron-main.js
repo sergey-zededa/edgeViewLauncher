@@ -11,55 +11,32 @@ let BACKEND_PORT = null; // Will be set dynamically when Go backend starts
 let trayRefreshInterval = null; // For periodic menu refresh
 
 function createTray() {
-    let trayIcon;
-    
-    // On macOS, prefer .icns which contains multi-resolution icons (16x16, 32x32, etc.)
-    // This avoids resizing a giant 1700px PNG which might fail or look bad.
-    if (process.platform === 'darwin') {
-        const icnsPath = path.join(__dirname, 'assets', 'icon.icns');
-        console.log('Creating macOS tray with icon:', icnsPath);
-        trayIcon = nativeImage.createFromPath(icnsPath);
-        
-        // Resize to 22x22 (logical pixels), nativeImage handles DPI scaling from .icns
-        trayIcon = trayIcon.resize({ width: 22, height: 22 });
-    } else {
-        // Windows/Linux prefer PNG
-        const iconPath = path.join(__dirname, 'assets', 'icon.png');
-        console.log('Creating tray with icon:', iconPath);
-        trayIcon = nativeImage.createFromPath(iconPath);
-        
-        // Resize for other platforms
-        trayIcon = trayIcon.resize({ width: 22, height: 22 });
-    }
+    // Restore EXACT logic from known working state (Friday/morning), but pointing to new assets location.
+    // We use the large icon.png and resize it, as we know this worked.
+    const iconPath = path.join(__dirname, 'assets', 'icon.png');
+    console.log('Creating tray with icon:', iconPath);
+
+    let trayIcon = nativeImage.createFromPath(iconPath);
 
     if (trayIcon.isEmpty()) {
-        console.error('Tray icon is empty! Trying fallback PNG');
-        // Fallback to PNG if ICNS failed or vice versa
-        const fallbackPath = path.join(__dirname, 'assets', 'icon.png');
-        trayIcon = nativeImage.createFromPath(fallbackPath);
-        trayIcon = trayIcon.resize({ width: 22, height: 22 });
+        console.error('Tray icon is empty! Trying .icns fallback');
+        // Fallback to icns if png fails
+        trayIcon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.icns'));
     }
+
+    // Resize to 16x16 (standard for macOS menu bar, matching old working version)
+    trayIcon = trayIcon.resize({ width: 16, height: 16 });
 
     tray = new Tray(trayIcon);
     tray.setToolTip('EdgeView Launcher');
     
-    // Set initial context menu synchronously to ensure tray is interactive immediately
-    const initialMenu = Menu.buildFromTemplate([
-        { label: 'EdgeView Launcher', enabled: false },
-        { type: 'separator' },
-        { label: 'Loading...', enabled: false },
-        { type: 'separator' },
-        { label: 'Show Window', click: () => mainWindow ? mainWindow.show() : createWindow() },
-        { label: 'Quit', click: () => { isQuitting = true; app.quit(); } }
-    ]);
-    tray.setContextMenu(initialMenu);
-    
     console.log('Tray created successfully');
 
-    // Update menu with dynamic content
+    // Initial menu (will be updated with dynamic content)
     updateTrayMenu();
 
     // Refresh menu periodically (every 5 seconds)
+    if (trayRefreshInterval) clearInterval(trayRefreshInterval);
     trayRefreshInterval = setInterval(updateTrayMenu, 5000);
 
     tray.on('double-click', () => {
@@ -169,6 +146,11 @@ async function updateTrayMenu() {
                     enabled: false
                 });
             }
+        } else {
+            menuItems.push({
+                label: 'Connecting to backend...',
+                enabled: false
+            });
         }
 
         menuItems.push({ type: 'separator' });
@@ -190,6 +172,7 @@ async function updateTrayMenu() {
 
         menuItems.push({
             label: 'Quit',
+            accelerator: 'CommandOrControl+Q',
             click: () => {
                 isQuitting = true;
                 app.quit();
@@ -211,19 +194,8 @@ async function updateTrayMenu() {
                 { label: 'Quit', click: () => { isQuitting = true; app.quit(); } }
             ]);
             tray.setContextMenu(fallbackMenu);
-    }
-}
-    menuItems.push({
-        label: 'Quit',
-        accelerator: 'CommandOrControl+Q',
-        click: () => {
-            isQuitting = true;
-            app.quit();
         }
-    });
-
-    const contextMenu = Menu.buildFromTemplate(menuItems);
-    tray.setContextMenu(contextMenu);
+    }
 }
 
 function createWindow() {
