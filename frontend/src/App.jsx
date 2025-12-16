@@ -314,6 +314,16 @@ function App() {
     setLogs(prev => [...prev, { timestamp, message, type }]);
   };
 
+  // Extract user-friendly error message from API errors
+  const extractErrorMessage = (err) => {
+    const fullMessage = err.message || String(err);
+    // Remove "Error invoking remote method 'api-call': Error: " prefix
+    const cleaned = fullMessage
+      .replace(/^Error invoking remote method '[^']+': Error: /, '')
+      .replace(/^Error: /, '');
+    return cleaned;
+  };
+
   // Tunnel management functions
   const addTunnel = (type, targetIP, targetPort, localPort, tunnelId, username = '') => {
     const tunnel = {
@@ -636,6 +646,7 @@ function App() {
 
   const startSession = async (nodeId, useInApp) => {
     let cancelled = false;
+    let intervalId = null;
 
     const pollProgress = async () => {
       if (cancelled) return;
@@ -657,7 +668,7 @@ function App() {
 
       // Start polling connection progress while backend works.
       pollProgress();
-      const intervalId = setInterval(pollProgress, 1000);
+      intervalId = setInterval(pollProgress, 1000);
 
       const result = await ConnectToNode(nodeId, useInApp);
       
@@ -707,10 +718,13 @@ function App() {
       setLoadingSSH(false);
     } catch (err) {
       cancelled = true;
+      clearInterval(intervalId);
       setLoadingSSH(false);
       setLoadingMessage('');
       console.error('Failed to connect:', err);
-      setError({ type: 'error', message: `Failed to connect: ${err.message || err} ` });
+      const userMessage = extractErrorMessage(err);
+      addLog(`Connection failed: ${userMessage}`, 'error');
+      setError({ type: 'error', message: `Failed to connect: ${userMessage}` });
     }
   };
 
