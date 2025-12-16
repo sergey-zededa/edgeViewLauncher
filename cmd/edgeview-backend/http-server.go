@@ -382,12 +382,17 @@ func GetFreePort() (int, error) {
 	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
+var (
+	// Version is set via ldflags during build
+	Version = "dev"
+)
+
 func (s *HTTPServer) Start() {
 	// Initialize app context
 	s.app.startup(context.Background())
 
 	// Log version to verify build update
-	log.Printf("EdgeView Backend Version: 0.1.1")
+	log.Printf("EdgeView Backend Version: %s", Version)
 
 	router := mux.NewRouter()
 
