@@ -932,9 +932,6 @@ func (c *Client) GetEdgeViewStatus(nodeID string) (*EdgeViewStatus, error) {
 
 	// 2. Get EdgeView Config (Max Sessions, Expiry, Token, DispUrl)
 	if evConfig, ok := device["edgeviewconfig"].(map[string]interface{}); ok {
-		// DEBUG: Print full edgeviewconfig
-		fmt.Printf("DEBUG: edgeviewconfig: %+v\n", evConfig)
-
 		if token, ok := evConfig["token"].(string); ok {
 			status.Token = token
 		}

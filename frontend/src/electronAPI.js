@@ -125,6 +125,33 @@ export const VerifyToken = (token, baseUrl) => {
     return window.electronAPI.verifyToken(token, baseUrl).then(res => res.data);
 };
 
+// Secure Storage API
+export const SecureStorageStatus = () => {
+    return window.electronAPI.secureStorageStatus();
+};
+
+export const SecureStorageMigrate = () => {
+    return window.electronAPI.secureStorageMigrate();
+};
+
+export const SecureStorageGetSettings = () => {
+    return window.electronAPI.secureStorageGetSettings().then(res => {
+        if (res.success) {
+            return res.data;
+        }
+        throw new Error(res.error || 'Failed to load settings');
+    });
+};
+
+export const SecureStorageSaveSettings = (config) => {
+    return window.electronAPI.secureStorageSaveSettings(config).then(res => {
+        if (!res.success) {
+            throw new Error(res.error || 'Failed to save settings');
+        }
+        return res;
+    });
+};
+
 // Auto-updater API
 export const CheckForUpdates = () => {
     return window.electronAPI.checkForUpdates();

@@ -3,6 +3,7 @@ const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const { spawn } = require('child_process');
 const { callJSON } = require('./backendClient');
+const SecureStorageManager = require('./electron-secure-storage');
 
 let mainWindow;
 let tray;
@@ -10,6 +11,7 @@ let isQuitting = false;
 let goBackend;
 let BACKEND_PORT = null; // Will be set dynamically when Go backend starts
 let trayRefreshInterval = null; // For periodic menu refresh
+let secureStorage; // Secure storage manager instance
 
 // Auto-updater configuration
 autoUpdater.autoDownload = false; // User-triggered downloads
@@ -465,6 +467,28 @@ function startGoBackend() {
         if (portMatch && !BACKEND_PORT) {
             BACKEND_PORT = parseInt(portMatch[1], 10);
             console.log(`[Go Backend] Detected backend port: ${BACKEND_PORT}`);
+
+            // Initialize backend with secure tokens
+            if (!secureStorage) {
+                secureStorage = new SecureStorageManager();
+            }
+            try {
+                const config = secureStorage.loadConfigWithTokens();
+                if (config) {
+                    console.log('[Go Backend] Injecting secure configuration...');
+                    // We need to wait a moment for the server to be fully ready to accept connections
+                    setTimeout(async () => {
+                        try {
+                            await callJSON(`http://localhost:${BACKEND_PORT}/api/settings`, 'POST', config);
+                            console.log('[Go Backend] Secure configuration injected successfully');
+                        } catch (err) {
+                            console.error('[Go Backend] Failed to inject secure configuration:', err);
+                        }
+                    }, 500);
+                }
+            } catch (err) {
+                console.error('[Go Backend] Failed to load secure configuration:', err);
+            }
         }
     });
 
@@ -477,6 +501,27 @@ function startGoBackend() {
         if (portMatch && !BACKEND_PORT) {
             BACKEND_PORT = parseInt(portMatch[1], 10);
             console.log(`[Go Backend] Detected backend port: ${BACKEND_PORT}`);
+
+            // Initialize backend with secure tokens (duplicate logic for stderr path)
+            if (!secureStorage) {
+                secureStorage = new SecureStorageManager();
+            }
+            try {
+                const config = secureStorage.loadConfigWithTokens();
+                if (config) {
+                    console.log('[Go Backend] Injecting secure configuration...');
+                    setTimeout(async () => {
+                        try {
+                            await callJSON(`http://localhost:${BACKEND_PORT}/api/settings`, 'POST', config);
+                            console.log('[Go Backend] Secure configuration injected successfully');
+                        } catch (err) {
+                            console.error('[Go Backend] Failed to inject secure configuration:', err);
+                        }
+                    }, 500);
+                }
+            } catch (err) {
+                console.error('[Go Backend] Failed to load secure configuration:', err);
+            }
         }
     });
 
@@ -801,6 +846,63 @@ ipcMain.handle('get-backend-port', async () => {
         }
     }
     return BACKEND_PORT;
+});
+
+// Secure Storage IPC Handlers
+ipcMain.handle('secure-storage-status', async () => {
+    if (!secureStorage) {
+        secureStorage = new SecureStorageManager();
+    }
+    return secureStorage.getStatus();
+});
+
+ipcMain.handle('secure-storage-migrate', async () => {
+    if (!secureStorage) {
+        secureStorage = new SecureStorageManager();
+    }
+    return secureStorage.migrateFromPlaintext();
+});
+
+ipcMain.handle('secure-storage-get-settings', async () => {
+    if (!secureStorage) {
+        secureStorage = new SecureStorageManager();
+    }
+    try {
+        const config = secureStorage.loadConfigWithTokens();
+        return { success: true, data: config };
+    } catch (error) {
+        console.error('[IPC] Error loading config with tokens:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('secure-storage-save-settings', async (event, config) => {
+    if (!secureStorage) {
+        secureStorage = new SecureStorageManager();
+    }
+    try {
+        secureStorage.saveConfigWithTokens(config);
+        
+        // Push updated settings to Go backend
+        if (BACKEND_PORT) {
+            try {
+                // The config object passed from frontend already has tokens populated
+                // because it comes from the React state which was initialized with tokens
+                await callJSON(`http://localhost:${BACKEND_PORT}/api/settings`, 'POST', config);
+                console.log('[IPC] Synced updated secure settings to backend');
+            } catch (err) {
+                console.error('[IPC] Failed to sync settings to backend:', err);
+                // Don't fail the save operation if backend sync fails, 
+                // but logging it is important. 
+                // The user might need to restart if this fails.
+            }
+        }
+        
+        return { success: true };
+    } catch (error) {
+        console.error('[IPC] Error saving config with tokens:', error);
+        return { success: false, error: error.message };
+    }
 });
 
 // Get System Time Format (12h vs 24h)

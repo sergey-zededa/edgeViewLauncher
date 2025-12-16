@@ -39,6 +39,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getSystemTimeFormat: () => ipcRenderer.invoke('get-system-time-format'),
     verifyToken: (token, baseUrl) => ipcRenderer.invoke('api-call', '/api/verify-token', 'POST', { token, baseUrl }),
 
+    // Secure Storage methods
+    secureStorageStatus: () => ipcRenderer.invoke('secure-storage-status'),
+    secureStorageMigrate: () => ipcRenderer.invoke('secure-storage-migrate'),
+    secureStorageGetSettings: () => ipcRenderer.invoke('secure-storage-get-settings'),
+    secureStorageSaveSettings: (config) => ipcRenderer.invoke('secure-storage-save-settings', config),
+
     // Electron App Info (version, build number)
     getElectronAppInfo: () => ipcRenderer.invoke('get-electron-app-info'),
 
