@@ -1156,8 +1156,6 @@ func (c *Client) VerifyToken(token string) (*TokenInfo, error) {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	// Debug: Print raw response to see all available fields
-	fmt.Printf("DEBUG: VerifyToken raw response: %+v\n", result)
 
 	// Extract known fields with type assertions
 	var expiresAt, createdAt, lastLogin time.Time
