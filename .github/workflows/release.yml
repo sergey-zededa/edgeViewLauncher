@@ -247,5 +247,5 @@ jobs:
           draft: false
           prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-alpha') || contains(github.ref, '-rc') }}
           allowUpdates: true
-          removeArtifacts: true
+          removeArtifacts: false
           token: ${{ secrets.GITHUB_TOKEN }}
