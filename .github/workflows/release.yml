@@ -46,6 +46,8 @@ jobs:
         run: npm run prebuild
 
       - name: Build Electron app (DMG)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --mac --arm64 --publish always
 
       - name: Upload macOS ARM64 artifacts
@@ -94,6 +96,8 @@ jobs:
         run: npm run prebuild
 
       - name: Build Electron app (DMG)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --mac --x64 --publish always
 
       - name: Upload macOS x64 artifacts
@@ -145,6 +149,8 @@ jobs:
         run: npm run prebuild
 
       - name: Build Electron app (NSIS installer)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --win --x64 --publish always
 
       - name: Upload Windows artifacts
@@ -192,6 +198,8 @@ jobs:
         run: npm run prebuild
 
       - name: Build Electron app (AppImage & deb)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --linux --x64 --publish always
 
       - name: Upload Linux artifacts
