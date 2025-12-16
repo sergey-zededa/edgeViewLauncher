@@ -1038,8 +1038,8 @@ type TokenInfo struct {
 
 // VerifyToken checks if a session token is valid by calling the IAM API
 func (c *Client) VerifyToken(token string) (*TokenInfo, error) {
-	// Use the /self endpoint to get current session info
-	url := fmt.Sprintf("%s/api/v1/sessions/token/self", c.BaseURL)
+	// Use the /api/v1/users/self endpoint to get current user info
+	url := fmt.Sprintf("%s/api/v1/users/self", c.BaseURL)
 
 	// Debug: Print curl command for manual testing
 	// fmt.Printf("DEBUG: VerifyToken curl command:\ncurl -X GET '%s' -H 'Authorization: Bearer %s'\n", url, token)
