@@ -8,16 +8,24 @@ echo "Setting up branch protection for main branch..."
 
 gh api repos/sergey-zededa/edgeViewLauncher/branches/main/protection \
   --method PUT \
-  --field required_status_checks='{"strict":true,"contexts":[]}' \
-  --field enforce_admins=false \
-  --field required_pull_request_reviews='{"dismiss_stale_reviews":true,"require_code_owner_reviews":false,"required_approving_review_count":1}' \
-  --field restrictions=null \
-  --field allow_force_pushes=false \
-  --field allow_deletions=false \
-  --field block_creations=false \
-  --field required_conversation_resolution=true \
-  --field lock_branch=false \
-  --field allow_fork_syncing=true
+  --input - <<'EOF'
+{
+  "required_status_checks": null,
+  "enforce_admins": false,
+  "required_pull_request_reviews": {
+    "dismiss_stale_reviews": true,
+    "require_code_owner_reviews": false,
+    "required_approving_review_count": 1
+  },
+  "restrictions": null,
+  "allow_force_pushes": false,
+  "allow_deletions": false,
+  "block_creations": false,
+  "required_conversation_resolution": true,
+  "lock_branch": false,
+  "allow_fork_syncing": true
+}
+EOF
 
 echo "✓ Branch protection enabled for main branch"
 echo ""
