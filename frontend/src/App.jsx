@@ -1178,7 +1178,7 @@ function App() {
                 </div>
 
                 {/* Token Info - only show for active cluster when userInfo is loaded */}
-                {userInfo && editingCluster.name === config.activeCluster && (userInfo.tokenOwner || userInfo.tokenExpiry) && (
+                {userInfo && editingCluster.name === config.activeCluster && (userInfo.tokenOwner || userInfo.tokenExpiry || userInfo.tokenRole || userInfo.lastLogin) && (
                   <div className="token-info-section">
                     <label>Token Status</label>
                     <div className="token-info-content">
@@ -1186,6 +1186,12 @@ function App() {
                         <div className="token-info-row">
                           <span className="token-info-label">Owner:</span>
                           <span className="token-info-value">{userInfo.tokenOwner}</span>
+                        </div>
+                      )}
+                      {userInfo.tokenRole && (
+                        <div className="token-info-row">
+                          <span className="token-info-label">Role:</span>
+                          <span className="token-info-value">{userInfo.tokenRole}</span>
                         </div>
                       )}
                       {userInfo.tokenExpiry && (() => {
@@ -1214,10 +1220,21 @@ function App() {
 
                         return (
                           <div className="token-info-row">
-                            <span className="token-info-label">Validity:</span>
+                            <span className="token-info-label">Expires:</span>
                             <span className={`token-info-value ${statusClass}`}>
                               {statusText}
-                              <span className="token-expiry-date">({expiryDate.toLocaleDateString()} {expiryDate.toLocaleTimeString()})</span>
+                              <span className="token-expiry-date"> ({expiryDate.toLocaleDateString()} {expiryDate.toLocaleTimeString()})</span>
+                            </span>
+                          </div>
+                        );
+                      })()}
+                      {userInfo.lastLogin && (() => {
+                        const lastLoginDate = new Date(userInfo.lastLogin);
+                        return (
+                          <div className="token-info-row">
+                            <span className="token-info-label">Last Login:</span>
+                            <span className="token-info-value">
+                              {lastLoginDate.toLocaleDateString()} {lastLoginDate.toLocaleTimeString()}
                             </span>
                           </div>
                         );

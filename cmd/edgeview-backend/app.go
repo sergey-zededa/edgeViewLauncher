@@ -169,6 +169,8 @@ func (a *App) GetUserInfo() map[string]string {
 	enterprise := "Unknown"
 	tokenOwner := ""
 	tokenExpiry := ""
+	tokenRole := ""
+	lastLogin := ""
 
 	// Get active cluster details
 	var apiToken, baseURL string
@@ -197,6 +199,12 @@ func (a *App) GetUserInfo() map[string]string {
 			if !cachedInfo.ExpiresAt.IsZero() {
 				tokenExpiry = cachedInfo.ExpiresAt.Format(time.RFC3339)
 			}
+			if cachedInfo.Role != "" {
+				tokenRole = cachedInfo.Role
+			}
+			if !cachedInfo.LastLogin.IsZero() {
+				lastLogin = cachedInfo.LastLogin.Format(time.RFC3339)
+			}
 		} else {
 			// Trigger async fetch if not cached
 			go a.fetchTokenInfo(apiToken)
@@ -209,6 +217,8 @@ func (a *App) GetUserInfo() map[string]string {
 		"clusterName": a.config.ActiveCluster,
 		"tokenOwner":  tokenOwner,
 		"tokenExpiry": tokenExpiry,
+		"tokenRole":   tokenRole,
+		"lastLogin":   lastLogin,
 	}
 }
 
