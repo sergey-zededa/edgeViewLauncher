@@ -11,26 +11,20 @@ let BACKEND_PORT = null; // Will be set dynamically when Go backend starts
 let trayRefreshInterval = null; // For periodic menu refresh
 
 function createTray() {
-    // Restore EXACT logic from known working state (Friday/morning), but pointing to new assets location.
-    // We use the large icon.png and resize it, as we know this worked.
     const iconPath = path.join(__dirname, 'assets', 'icon.png');
-    console.log('Creating tray with icon:', iconPath);
 
     let trayIcon = nativeImage.createFromPath(iconPath);
 
     if (trayIcon.isEmpty()) {
-        console.error('Tray icon is empty! Trying .icns fallback');
         // Fallback to icns if png fails
         trayIcon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.icns'));
     }
 
-    // Resize to 16x16 (standard for macOS menu bar, matching old working version)
+    // Resize to 16x16 (standard for macOS menu bar)
     trayIcon = trayIcon.resize({ width: 16, height: 16 });
 
     tray = new Tray(trayIcon);
     tray.setToolTip('EdgeView Launcher');
-    
-    console.log('Tray created successfully');
 
     // Initial menu (will be updated with dynamic content)
     updateTrayMenu();
