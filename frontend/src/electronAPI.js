@@ -124,3 +124,36 @@ export const ListTunnels = (nodeId) => {
 export const VerifyToken = (token, baseUrl) => {
     return window.electronAPI.verifyToken(token, baseUrl).then(res => res.data);
 };
+
+// Auto-updater API
+export const CheckForUpdates = () => {
+    return window.electronAPI.checkForUpdates();
+};
+
+export const DownloadUpdate = () => {
+    return window.electronAPI.downloadUpdate();
+};
+
+export const InstallUpdate = () => {
+    return window.electronAPI.installUpdate();
+};
+
+export const OnUpdateAvailable = (callback) => {
+    return window.electronAPI.onUpdateAvailable(callback);
+};
+
+export const OnUpdateNotAvailable = (callback) => {
+    return window.electronAPI.onUpdateNotAvailable(callback);
+};
+
+export const OnUpdateDownloadProgress = (callback) => {
+    return window.electronAPI.onUpdateDownloadProgress(callback);
+};
+
+export const OnUpdateDownloaded = (callback) => {
+    return window.electronAPI.onUpdateDownloaded(callback);
+};
+
+export const OnUpdateError = (callback) => {
+    return window.electronAPI.onUpdateError(callback);
+};

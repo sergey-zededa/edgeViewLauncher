@@ -1252,3 +1252,81 @@ body {
     background: var(--bg-hover);
     color: var(--accent-hover);
 }
+
+/* Version Info Section */
+.version-info-section {
+    margin-top: 16px;
+    padding: 12px;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+}
+
+.version-info-section label {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.version-info-content {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.version-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+}
+
+.version-label {
+    color: var(--text-secondary);
+    min-width: 60px;
+}
+
+.version-value {
+    color: var(--text-primary);
+    font-family: monospace;
+}
+
+.update-available-row {
+    color: #4a90e2;
+    font-weight: 500;
+}
+
+.update-ready-row {
+    color: #238636;
+    font-weight: 500;
+}
+
+.check-updates-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    margin-top: 8px;
+    align-self: flex-start;
+}
+
+.check-updates-btn:hover:not(:disabled) {
+    background: var(--bg-hover);
+    border-color: var(--accent-color);
+}
+
+.check-updates-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}

@@ -1,11 +1,34 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { SearchNodes, ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken } from './electronAPI';
+import { SearchNodes, ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate } from './electronAPI';
 import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
 import Tooltip from './components/Tooltip';
 import About from './components/About';
+import UpdateBanner from './components/UpdateBanner';
 import './components/Tooltip.css';
 import './App.css';
+
+// Simple component to display version info
+function VersionDisplay() {
+  const [versionInfo, setVersionInfo] = React.useState(null);
+
+  React.useEffect(() => {
+    window.electronAPI.getElectronAppInfo().then(info => {
+      setVersionInfo(info);
+    }).catch(err => {
+      console.error('Failed to get version info:', err);
+    });
+  }, []);
+
+  if (!versionInfo) return 'Loading...';
+
+  return (
+    <span>
+      {versionInfo.version}
+      {versionInfo.buildNumber !== 'dev' && ` (Build ${versionInfo.buildNumber})`}
+    </span>
+  );
+}
 
 function App() {
   const [config, setConfig] = useState({ baseUrl: '', apiToken: '', clusters: [], activeCluster: '' });
@@ -46,6 +69,14 @@ function App() {
   const [tcpPortInput, setTcpPortInput] = useState('');
   const [tcpIpInput, setTcpIpInput] = useState('');
   const [tcpError, setTcpError] = useState('');
+
+  // Update state
+  const [updateState, setUpdateState] = useState({
+    status: 'not-available', // 'not-available', 'available', 'downloading', 'downloaded', 'error', 'dismissed'
+    version: null,
+    downloadProgress: 0,
+    error: null
+  });
 
   // Dropdown state
   const [showTerminalMenu, setShowTerminalMenu] = useState(false);
@@ -302,6 +333,58 @@ function App() {
       }
     };
     checkTimeFormat();
+  }, []);
+
+  // Auto-update event listeners
+  useEffect(() => {
+    const cleanupUpdateAvailable = OnUpdateAvailable((info) => {
+      console.log('Update available:', info.version);
+      setUpdateState({
+        status: 'available',
+        version: info.version,
+        downloadProgress: 0,
+        error: null
+      });
+    });
+
+    const cleanupUpdateNotAvailable = OnUpdateNotAvailable((info) => {
+      console.log('Update not available');
+      setUpdateState(prev => ({ ...prev, status: 'not-available' }));
+    });
+
+    const cleanupDownloadProgress = OnUpdateDownloadProgress((progress) => {
+      setUpdateState(prev => ({
+        ...prev,
+        status: 'downloading',
+        downloadProgress: Math.round(progress.percent)
+      }));
+    });
+
+    const cleanupUpdateDownloaded = OnUpdateDownloaded((info) => {
+      console.log('Update downloaded:', info.version);
+      setUpdateState(prev => ({
+        ...prev,
+        status: 'downloaded',
+        downloadProgress: 100
+      }));
+    });
+
+    const cleanupUpdateError = OnUpdateError((error) => {
+      console.error('Update error:', error);
+      setUpdateState(prev => ({
+        ...prev,
+        status: 'error',
+        error: error || 'Unknown error occurred'
+      }));
+    });
+
+    return () => {
+      cleanupUpdateAvailable();
+      cleanupUpdateNotAvailable();
+      cleanupDownloadProgress();
+      cleanupUpdateDownloaded();
+      cleanupUpdateError();
+    };
   }, []);
 
   // Helper to detect user's time format preference (12h vs 24h)
@@ -913,6 +996,39 @@ function App() {
     }
   };
 
+  // Update handlers
+  const handleDownloadUpdate = async () => {
+    try {
+      setUpdateState(prev => ({ ...prev, status: 'downloading', downloadProgress: 0 }));
+      await DownloadUpdate();
+    } catch (err) {
+      console.error('Failed to download update:', err);
+      setUpdateState(prev => ({
+        ...prev,
+        status: 'error',
+        error: 'Failed to download update'
+      }));
+    }
+  };
+
+  const handleInstallUpdate = async () => {
+    try {
+      await InstallUpdate();
+      // App will restart, so no need to update state
+    } catch (err) {
+      console.error('Failed to install update:', err);
+      setUpdateState(prev => ({
+        ...prev,
+        status: 'error',
+        error: 'Failed to install update'
+      }));
+    }
+  };
+
+  const handleDismissUpdate = () => {
+    setUpdateState(prev => ({ ...prev, status: 'dismissed' }));
+  };
+
   const saveSettings = async () => {
     setSettingsError(null); // Clear previous errors
     setSaveStatus('Saving...');
@@ -1092,6 +1208,14 @@ function App() {
         </div>
       </div>
 
+      {/* Update Banner */}
+      <UpdateBanner
+        updateState={updateState}
+        onDownload={handleDownloadUpdate}
+        onInstall={handleInstallUpdate}
+        onDismiss={handleDismissUpdate}
+      />
+
       {/* Authentication Error Banner */}
       {authError && !showSettings && (
         <div className="auth-error-banner">
@@ -1265,6 +1389,50 @@ function App() {
                     <span>{settingsError}</span>
                   </div>
                 )}
+
+                {/* Version Info and Update Check */}
+                <div className="version-info-section">
+                  <label>Application Version</label>
+                  <div className="version-info-content">
+                    <div className="version-row">
+                      <span className="version-label">Version:</span>
+                      <span className="version-value">
+                        {window.electronAPI ? (
+                          <VersionDisplay />
+                        ) : (
+                          'Loading...'
+                        )}
+                      </span>
+                    </div>
+                    {updateState.status === 'available' && (
+                      <div className="version-row update-available-row">
+                        <AlertCircle size={14} />
+                        <span>Update available: {updateState.version}</span>
+                      </div>
+                    )}
+                    {updateState.status === 'downloaded' && (
+                      <div className="version-row update-ready-row">
+                        <Check size={14} />
+                        <span>Update ready to install</span>
+                      </div>
+                    )}
+                    <button 
+                      className="check-updates-btn"
+                      onClick={async () => {
+                        try {
+                          const { CheckForUpdates } = await import('./electronAPI');
+                          await CheckForUpdates();
+                        } catch (err) {
+                          console.error('Failed to check for updates:', err);
+                        }
+                      }}
+                      disabled={updateState.status === 'downloading'}
+                    >
+                      <RefreshCw size={14} />
+                      {updateState.status === 'downloading' ? 'Checking...' : 'Check for Updates'}
+                    </button>
+                  </div>
+                </div>
 
                 <div className="settings-actions">
                   {saveStatus && (

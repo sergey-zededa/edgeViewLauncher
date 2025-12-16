@@ -63,7 +63,19 @@ For distribution, the app should be code signed and notarized to avoid security 
 Refer to `package.json` build configuration for signing identities and notarization scripts.
 Without signing, users may need to manually bypass Gatekeeper (e.g., `xattr -cr /Applications/EdgeView\ Launcher.app`).
 
+## Auto-Update
+
+The application supports automatic updates via GitHub Releases:
+
+- Checks for updates automatically on startup (production builds only)
+- Users are notified when new versions are available
+- One-click download and installation
+- Manual update check available in Settings
+
+For detailed information about the auto-update system, see `AUTO_UPDATE.md`.
+
 ## Additional Documentation
 
 - `WARP.md` – repository-specific development guidance, architecture notes, and testing instructions
+- `AUTO_UPDATE.md` – detailed auto-update implementation and release process
 - Source code (especially `internal/` and `frontend/`) for the authoritative behaviour of sessions, tunnels, and UI flows

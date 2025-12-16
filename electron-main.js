@@ -1,4 +1,5 @@
 const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const { spawn } = require('child_process');
 const { callJSON } = require('./backendClient');
@@ -9,6 +10,53 @@ let isQuitting = false;
 let goBackend;
 let BACKEND_PORT = null; // Will be set dynamically when Go backend starts
 let trayRefreshInterval = null; // For periodic menu refresh
+
+// Auto-updater configuration
+autoUpdater.autoDownload = false; // User-triggered downloads
+autoUpdater.autoInstallOnAppQuit = true; // Apply update on next launch
+
+// Auto-updater event handlers
+autoUpdater.on('checking-for-update', () => {
+    console.log('[AutoUpdater] Checking for updates...');
+});
+
+autoUpdater.on('update-available', (info) => {
+    console.log('[AutoUpdater] Update available:', info.version);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('update-available', info);
+    }
+});
+
+autoUpdater.on('update-not-available', (info) => {
+    console.log('[AutoUpdater] Update not available. Current version:', info.version);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('update-not-available', info);
+    }
+});
+
+autoUpdater.on('error', (err) => {
+    console.error('[AutoUpdater] Error:', err);
+    // Don't notify UI about 404 errors (no releases published yet)
+    // This is expected when the repository has no releases
+    const is404 = err.message && (err.message.includes('404') || err.statusCode === 404);
+    if (!is404 && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('update-error', err.message);
+    }
+});
+
+autoUpdater.on('download-progress', (progressObj) => {
+    console.log(`[AutoUpdater] Download progress: ${progressObj.percent.toFixed(2)}%`);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('update-download-progress', progressObj);
+    }
+});
+
+autoUpdater.on('update-downloaded', (info) => {
+    console.log('[AutoUpdater] Update downloaded:', info.version);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('update-downloaded', info);
+    }
+});
 
 function createTray() {
     const iconPath = path.join(__dirname, 'assets', 'icon.png');
@@ -458,6 +506,17 @@ app.whenReady().then(() => {
     // Give backend a moment to start
     setTimeout(createWindow, 1000);
 
+    // Check for updates after app is fully initialized (15 second delay)
+    // Skip in development mode
+    if (process.env.NODE_ENV !== 'development') {
+        setTimeout(() => {
+            console.log('[AutoUpdater] Starting automatic update check...');
+            autoUpdater.checkForUpdates().catch(err => {
+                console.error('[AutoUpdater] Failed to check for updates:', err);
+            });
+        }, 15000);
+    }
+
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) {
             createWindow();
@@ -469,6 +528,38 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
     // Do nothing - keep app running in tray
+});
+
+// Auto-updater IPC Handlers
+ipcMain.handle('check-for-updates', async () => {
+    try {
+        const result = await autoUpdater.checkForUpdates();
+        return { success: true, updateInfo: result.updateInfo };
+    } catch (error) {
+        console.error('[AutoUpdater] Check failed:', error);
+        // Handle 404 errors (no releases) more gracefully
+        const is404 = error.message && (error.message.includes('404') || error.statusCode === 404);
+        if (is404) {
+            return { success: false, error: 'No releases available yet', noReleases: true };
+        }
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('download-update', async () => {
+    try {
+        await autoUpdater.downloadUpdate();
+        return { success: true };
+    } catch (error) {
+        console.error('[AutoUpdater] Download failed:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('install-update', async () => {
+    // Quit and install - this will restart the app
+    autoUpdater.quitAndInstall(false, true);
+    return { success: true };
 });
 
 // IPC Handler: Get Electron App Info (version, build number)
