@@ -74,6 +74,21 @@ The application supports automatic updates via GitHub Releases:
 
 For detailed information about the auto-update system, see `AUTO_UPDATE.md`.
 
+## Contributing
+
+This repository is maintained by ZEDEDA. While the source code is public, we require:
+
+- **All changes must be submitted via Pull Requests**
+- **At least one maintainer approval required** before merging
+- **Branch protection** prevents direct pushes to main
+- **Issues and discussions** are welcome for bug reports and feature requests
+
+Before contributing, please:
+1. Open an issue to discuss your proposed changes
+2. Fork the repository and create a feature branch
+3. Ensure tests pass (`npm test` in frontend/)
+4. Submit a pull request with a clear description
+
 ## Additional Documentation
 
 - `WARP.md` – repository-specific development guidance, architecture notes, and testing instructions
