@@ -1043,8 +1043,83 @@ type TokenInfo struct {
 	RawData    map[string]interface{} `json:"rawData,omitempty"` // Store full response for debugging
 }
 
+// GetRoleName fetches the role name from the API given a roleId
+func (c *Client) GetRoleName(roleId string) (string, error) {
+	if roleId == "" {
+		return "", fmt.Errorf("roleId is empty")
+	}
+
+	url := fmt.Sprintf("%s/api/v1/roles/id/%s", c.BaseURL, roleId)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("API returned status %d", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	// Extract role name
+	if name, ok := result["name"].(string); ok {
+		return name, nil
+	}
+
+	return "", fmt.Errorf("role name not found in response")
+}
+
+// extractJWTExpiry tries to extract the expiry time from a JWT token
+func extractJWTExpiry(token string) (time.Time, error) {
+	// JWT format: header.payload.signature
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return time.Time{}, fmt.Errorf("invalid JWT format")
+	}
+
+	// Decode the payload (second part)
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		// Try with standard base64
+		payload, err = base64.RawStdEncoding.DecodeString(parts[1])
+		if err != nil {
+			return time.Time{}, fmt.Errorf("failed to decode JWT payload: %w", err)
+		}
+	}
+
+	// Parse the JSON payload
+	var claims map[string]interface{}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return time.Time{}, fmt.Errorf("failed to parse JWT claims: %w", err)
+	}
+
+	// Get the exp claim (Unix timestamp)
+	if exp, ok := claims["exp"].(float64); ok {
+		return time.Unix(int64(exp), 0), nil
+	}
+
+	return time.Time{}, fmt.Errorf("no exp claim found in JWT")
+}
+
 // VerifyToken checks if a session token is valid by calling the IAM API
 func (c *Client) VerifyToken(token string) (*TokenInfo, error) {
+	// First, try to extract expiry from the JWT token itself
+	var jwtExpiry time.Time
+	if exp, err := extractJWTExpiry(token); err == nil {
+		jwtExpiry = exp
+	}
+
 	// Use the /api/v1/users/self endpoint to get current user info
 	url := fmt.Sprintf("%s/api/v1/users/self", c.BaseURL)
 
@@ -1076,15 +1151,20 @@ func (c *Client) VerifyToken(token string) (*TokenInfo, error) {
 	}
 
 	// Debug: Print raw response to see all available fields
-	// fmt.Printf("DEBUG: VerifyToken raw response: %+v\n", result)
+	fmt.Printf("DEBUG: VerifyToken raw response: %+v\n", result)
 
 	// Extract known fields with type assertions
 	var expiresAt, createdAt, lastLogin time.Time
 
+	// Try to get expiresAt from API response
 	if expiryStr, ok := result["expiresAt"].(string); ok && expiryStr != "" {
 		if t, err := time.Parse(time.RFC3339, expiryStr); err == nil {
 			expiresAt = t
 		}
+	}
+	// If API didn't provide expiresAt, use the JWT expiry we extracted earlier
+	if expiresAt.IsZero() && !jwtExpiry.IsZero() {
+		expiresAt = jwtExpiry
 	}
 
 	if createdStr, ok := result["createdAt"].(string); ok && createdStr != "" {
@@ -1093,7 +1173,8 @@ func (c *Client) VerifyToken(token string) (*TokenInfo, error) {
 		}
 	}
 
-	if lastLoginStr, ok := result["lastLogin"].(string); ok && lastLoginStr != "" {
+	// API uses LastLoginTime, not lastLogin
+	if lastLoginStr, ok := result["LastLoginTime"].(string); ok && lastLoginStr != "" {
 		if t, err := time.Parse(time.RFC3339, lastLoginStr); err == nil {
 			lastLogin = t
 		}
@@ -1115,7 +1196,26 @@ func (c *Client) VerifyToken(token string) (*TokenInfo, error) {
 
 	email, _ := result["email"].(string)
 	username, _ := result["username"].(string)
-	role, _ := result["role"].(string)
+	
+	// Try to get role name from allowedEnterprises array
+	role := ""
+	if allowedEnterprises, ok := result["allowedEnterprises"].([]interface{}); ok && len(allowedEnterprises) > 0 {
+		if firstEnt, ok := allowedEnterprises[0].(map[string]interface{}); ok {
+			if roleId, ok := firstEnt["roleId"].(string); ok && roleId != "" {
+				// Try to fetch the role name from the API
+				if roleName, err := c.GetRoleName(roleId); err == nil {
+					role = roleName
+				} else {
+					// If we can't fetch the role name, use the roleId
+					role = roleId
+				}
+			}
+		}
+	}
+	// Fallback to direct role field if it exists
+	if role == "" {
+		role, _ = result["role"].(string)
+	}
 
 	return &TokenInfo{
 		Valid:     true,

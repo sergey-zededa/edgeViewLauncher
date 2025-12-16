@@ -229,11 +229,11 @@ func (a *App) fetchTokenInfo(apiToken string) {
 	}
 	tokenInfo, err := a.zededaClient.VerifyToken(apiToken)
 	if err != nil {
-		// fmt.Printf("DEBUG: fetchTokenInfo: VerifyToken error: %v\n", err)
+		fmt.Printf("DEBUG: fetchTokenInfo: VerifyToken error: %v\n", err)
 		return
 	}
 	if tokenInfo != nil {
-		// fmt.Printf("DEBUG: fetchTokenInfo: VerifyToken result: Valid=%v, Subject=%s, ExpiresAt=%v\n", tokenInfo.Valid, tokenInfo.Subject, tokenInfo.ExpiresAt)
+		fmt.Printf("DEBUG: fetchTokenInfo: VerifyToken result: Valid=%v, Subject=%s, ExpiresAt=%v, Role=%s, LastLogin=%v, Email=%s\n", tokenInfo.Valid, tokenInfo.Subject, tokenInfo.ExpiresAt, tokenInfo.Role, tokenInfo.LastLogin, tokenInfo.Email)
 		a.mu.Lock()
 		a.tokenInfoCache = tokenInfo
 		a.mu.Unlock()
