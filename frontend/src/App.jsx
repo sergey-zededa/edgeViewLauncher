@@ -724,7 +724,8 @@ function App() {
       console.error('Failed to connect:', err);
       const userMessage = extractErrorMessage(err);
       addLog(`Connection failed: ${userMessage}`, 'error');
-      setError({ type: 'error', message: `Failed to connect: ${userMessage}` });
+      // Don't show error banner - activity log entry is sufficient
+      // Error banner blocks "Running Applications" section and there's no recovery action
     }
   };
 
