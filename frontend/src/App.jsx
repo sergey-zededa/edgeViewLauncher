@@ -917,6 +917,12 @@ function App() {
 
         // Test the token by trying to load user info
         const active = newConfig.clusters.find(c => c.name === newConfig.activeCluster);
+
+        // Clear state before reloading to prevent stale data
+        setNodes([]);
+        setProjects([]);
+        setEnterprise(null);
+
         if (active && active.apiToken) {
           try {
             await loadUserInfo();
@@ -943,10 +949,6 @@ function App() {
           }, 1500);
         }
       }
-
-      setNodes([]);
-      setProjects([]);
-      setEnterprise(null);
 
       if (query) {
         const currentQuery = query;
