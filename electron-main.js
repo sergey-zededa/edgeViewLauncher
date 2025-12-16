@@ -15,6 +15,18 @@ let trayRefreshInterval = null; // For periodic menu refresh
 autoUpdater.autoDownload = false; // User-triggered downloads
 autoUpdater.autoInstallOnAppQuit = true; // Apply update on next launch
 
+// Check if app is code-signed (required for auto-update on macOS)
+let isAppSigned = true;
+if (process.platform === 'darwin') {
+    const { execSync } = require('child_process');
+    try {
+        execSync(`codesign -dv "${app.getPath('exe')}" 2>&1`);
+    } catch (e) {
+        isAppSigned = false;
+        console.log('[AutoUpdater] App is not code-signed, auto-update disabled on macOS');
+    }
+}
+
 // Auto-updater event handlers
 autoUpdater.on('checking-for-update', () => {
     console.log('[AutoUpdater] Checking for updates...');
@@ -507,8 +519,8 @@ app.whenReady().then(() => {
     setTimeout(createWindow, 1000);
 
     // Check for updates after app is fully initialized (15 second delay)
-    // Skip in development mode
-    if (process.env.NODE_ENV !== 'development') {
+    // Skip in development mode and for unsigned builds on macOS
+    if (process.env.NODE_ENV !== 'development' && isAppSigned) {
         setTimeout(() => {
             console.log('[AutoUpdater] Starting automatic update check...');
             autoUpdater.checkForUpdates().catch(err => {
@@ -532,6 +544,15 @@ app.on('window-all-closed', () => {
 
 // Auto-updater IPC Handlers
 ipcMain.handle('check-for-updates', async () => {
+    // Check if app is signed (required for macOS auto-update)
+    if (process.platform === 'darwin' && !isAppSigned) {
+        return { 
+            success: false, 
+            error: 'Auto-update requires code-signed builds. Please download updates manually from GitHub.',
+            requiresCodeSigning: true 
+        };
+    }
+    
     try {
         const result = await autoUpdater.checkForUpdates();
         return { success: true, updateInfo: result.updateInfo };

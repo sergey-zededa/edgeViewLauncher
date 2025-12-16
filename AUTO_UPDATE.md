@@ -204,9 +204,12 @@ Auto-update is disabled in development mode (when `NODE_ENV=development`). This 
 ## Platform-Specific Notes
 
 ### macOS
-- Works with both DMG and ZIP distributions
-- Supports both ARM64 and x64 architectures
-- Code signing recommended for production
+- Works with ZIP distributions (primary update mechanism)
+- DMG provided for initial installation
+- Supports both ARM64 and x64 architectures (universal binary)
+- **Code signing REQUIRED for auto-update** - see CODE_SIGNING.md
+- Unsigned builds will show error: "Auto-update requires code-signed builds"
+- Until code signing is set up, users must download updates manually from GitHub
 
 ### Windows
 - Uses NSIS installer with differential updates
