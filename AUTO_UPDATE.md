@@ -119,11 +119,41 @@ Added repository and publish configuration:
       "provider": "github",
       "owner": "sergey-zededa",
       "repo": "edgeViewLauncher",
-      "private": false
+      "private": true
     }
   }
 }
 ```
+
+### Private Repository Setup
+
+**This repository is private**, which requires additional configuration:
+
+1. **Create a Personal Access Token (PAT)**:
+   - Go to GitHub Settings → Developer settings → Personal access tokens → Tokens (classic)
+   - Click "Generate new token (classic)"
+   - Name it "EdgeView Launcher Releases"
+   - Select scopes: `repo` (Full control of private repositories)
+   - Generate and copy the token
+
+2. **Add token to GitHub Secrets**:
+   - Go to repository Settings → Secrets and variables → Actions
+   - Click "New repository secret"
+   - Name: `GH_TOKEN`
+   - Value: Paste your PAT
+   - This will be used by CI/CD to publish releases
+
+3. **Make releases public** (required for auto-update to work):
+   - Go to repository Settings → General → Danger Zone
+   - Find "Change repository visibility"
+   - You can keep the source code private but make releases public
+   - Alternatively, each release can be manually made public after creation
+
+**Important**: Auto-updates from private repositories have limitations:
+- `electron-updater` running in the app needs to download update manifest files
+- For private repos, these files require authentication which cannot be securely embedded in the app
+- **Recommended solution**: Keep source code private but make releases public
+- If releases must stay private, users will need to manually download updates
 
 ## Testing
 
