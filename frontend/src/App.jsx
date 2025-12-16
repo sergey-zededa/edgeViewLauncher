@@ -200,7 +200,7 @@ function App() {
   }, [query, showSettings, selectedNode]);
 
 
-  // Sync editingCluster with activeCluster when settings open
+  // Sync editingCluster with activeCluster when settings open and load user info
   useEffect(() => {
     if (showSettings) {
       const active = config.clusters.find(c => c.name === config.activeCluster);
@@ -208,6 +208,12 @@ function App() {
         setEditingCluster({ ...active });
         // Token verification disabled - will be re-enabled in future
         setTokenStatus(null);
+        // Load user info when opening settings
+        if (active.apiToken) {
+          loadUserInfo().catch(err => {
+            console.log('Failed to load user info when opening settings:', err);
+          });
+        }
       }
     }
   }, [showSettings, config.activeCluster, config.clusters]);
@@ -875,11 +881,20 @@ function App() {
     setConfig({ ...config, clusters: newClusters, activeCluster: newActive });
   };
 
-  const switchCluster = (name) => {
+  const switchCluster = async (name) => {
     setConfig({ ...config, activeCluster: name });
     const cluster = config.clusters.find(c => c.name === name);
     if (cluster) {
       setEditingCluster({ ...cluster });
+      // Refresh user info when switching clusters
+      if (cluster.apiToken) {
+        try {
+          await loadUserInfo();
+        } catch (err) {
+          console.log('Failed to load user info for switched cluster:', err);
+          // Don't block the switch, just log the error
+        }
+      }
     }
   };
 

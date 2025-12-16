@@ -1030,10 +1030,17 @@ func (c *Client) DisableSSH(nodeID string) error {
 
 // TokenInfo contains information about a session token
 type TokenInfo struct {
-	Valid     bool      `json:"valid"`
-	ExpiresAt time.Time `json:"expiresAt"`
-	Subject   string    `json:"subject"` // Usually the user email or ID
-	Error     string    `json:"error,omitempty"`
+	Valid      bool      `json:"valid"`
+	ExpiresAt  time.Time `json:"expiresAt"`
+	Subject    string    `json:"subject"` // Usually the user email or ID
+	UserID     string    `json:"userId,omitempty"`
+	Username   string    `json:"username,omitempty"`
+	Email      string    `json:"email,omitempty"`
+	Role       string    `json:"role,omitempty"`
+	CreatedAt  time.Time `json:"createdAt,omitempty"`
+	LastLogin  time.Time `json:"lastLogin,omitempty"`
+	Error      string    `json:"error,omitempty"`
+	RawData    map[string]interface{} `json:"rawData,omitempty"` // Store full response for debugging
 }
 
 // VerifyToken checks if a session token is valid by calling the IAM API
@@ -1061,39 +1068,65 @@ func (c *Client) VerifyToken(token string) (*TokenInfo, error) {
 		return &TokenInfo{Valid: false, Error: fmt.Sprintf("API returned status %d", resp.StatusCode)}, nil
 	}
 
-	// Response structure from ZEDEDA IAM API
-	var result struct {
-		Token     string `json:"token"`
-		ExpiresAt string `json:"expiresAt"` // RFC3339
-		Subject   string `json:"subject"`
-		Email     string `json:"email"` // Try email field too
-		Username  string `json:"username"`
-	}
+	// Response structure from ZEDEDA IAM API - using generic map to capture all fields
+	var result map[string]interface{}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	// Parse expiry
-	var expiresAt time.Time
-	if result.ExpiresAt != "" {
-		if t, err := time.Parse(time.RFC3339, result.ExpiresAt); err == nil {
+	// Debug: Print raw response to see all available fields
+	// fmt.Printf("DEBUG: VerifyToken raw response: %+v\n", result)
+
+	// Extract known fields with type assertions
+	var expiresAt, createdAt, lastLogin time.Time
+
+	if expiryStr, ok := result["expiresAt"].(string); ok && expiryStr != "" {
+		if t, err := time.Parse(time.RFC3339, expiryStr); err == nil {
 			expiresAt = t
 		}
 	}
 
+	if createdStr, ok := result["createdAt"].(string); ok && createdStr != "" {
+		if t, err := time.Parse(time.RFC3339, createdStr); err == nil {
+			createdAt = t
+		}
+	}
+
+	if lastLoginStr, ok := result["lastLogin"].(string); ok && lastLoginStr != "" {
+		if t, err := time.Parse(time.RFC3339, lastLoginStr); err == nil {
+			lastLogin = t
+		}
+	}
+
 	// Use subject, or fallback to email or username
-	subject := result.Subject
+	subject, _ := result["subject"].(string)
 	if subject == "" {
-		subject = result.Email
+		subject, _ = result["email"].(string)
 	}
 	if subject == "" {
-		subject = result.Username
+		subject, _ = result["username"].(string)
 	}
+
+	userID, _ := result["userId"].(string)
+	if userID == "" {
+		userID, _ = result["id"].(string)
+	}
+
+	email, _ := result["email"].(string)
+	username, _ := result["username"].(string)
+	role, _ := result["role"].(string)
 
 	return &TokenInfo{
 		Valid:     true,
 		ExpiresAt: expiresAt,
 		Subject:   subject,
+		UserID:    userID,
+		Username:  username,
+		Email:     email,
+		Role:      role,
+		CreatedAt: createdAt,
+		LastLogin: lastLogin,
+		RawData:   result, // Store full response for future use
 	}, nil
 }
