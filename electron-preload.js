@@ -42,6 +42,37 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Electron App Info (version, build number)
     getElectronAppInfo: () => ipcRenderer.invoke('get-electron-app-info'),
 
+    // Auto-updater methods
+    checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+    downloadUpdate: () => ipcRenderer.invoke('download-update'),
+    installUpdate: () => ipcRenderer.invoke('install-update'),
+    onUpdateAvailable: (callback) => {
+        const listener = (event, info) => callback(info);
+        ipcRenderer.on('update-available', listener);
+        // Return cleanup function
+        return () => ipcRenderer.removeListener('update-available', listener);
+    },
+    onUpdateNotAvailable: (callback) => {
+        const listener = (event, info) => callback(info);
+        ipcRenderer.on('update-not-available', listener);
+        return () => ipcRenderer.removeListener('update-not-available', listener);
+    },
+    onUpdateDownloadProgress: (callback) => {
+        const listener = (event, progress) => callback(progress);
+        ipcRenderer.on('update-download-progress', listener);
+        return () => ipcRenderer.removeListener('update-download-progress', listener);
+    },
+    onUpdateDownloaded: (callback) => {
+        const listener = (event, info) => callback(info);
+        ipcRenderer.on('update-downloaded', listener);
+        return () => ipcRenderer.removeListener('update-downloaded', listener);
+    },
+    onUpdateError: (callback) => {
+        const listener = (event, error) => callback(error);
+        ipcRenderer.on('update-error', listener);
+        return () => ipcRenderer.removeListener('update-error', listener);
+    },
+
     // Window Controls
     closeWindow: () => {
         try {

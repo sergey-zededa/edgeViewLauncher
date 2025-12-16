@@ -1,0 +1,114 @@
+.update-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 12px 20px;
+    background: linear-gradient(135deg, #4a90e2 0%, #357abd 100%);
+    color: white;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    animation: slideDown 0.3s ease-out;
+}
+
+.update-banner.error {
+    background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+}
+
+@keyframes slideDown {
+    from {
+        transform: translateY(-100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.update-banner-message {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+    font-size: 14px;
+}
+
+.update-banner-message.error {
+    color: #fff;
+}
+
+.update-banner-message svg {
+    flex-shrink: 0;
+}
+
+.update-banner-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.update-banner-button {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border: none;
+    border-radius: 4px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+}
+
+.update-banner-button.primary {
+    background: white;
+    color: #357abd;
+}
+
+.update-banner-button.primary:hover {
+    background: #f0f0f0;
+    transform: translateY(-1px);
+}
+
+.update-banner-button.secondary {
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.update-banner-button.secondary:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+.update-banner-progress {
+    flex: 1;
+    max-width: 200px;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.3);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.update-banner-progress-bar {
+    height: 100%;
+    background: white;
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+
+.update-banner-spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}

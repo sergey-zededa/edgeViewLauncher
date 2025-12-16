@@ -12,8 +12,14 @@ vi.mock('./components/Tooltip', () => ({
   default: ({ children }) => <span>{children}</span>,
 }));
 
+vi.mock('./components/UpdateBanner', () => ({
+  __esModule: true,
+  default: () => <div data-testid="update-banner-mock" />,
+}));
+
 vi.mock('./electronAPI', () => {
   const fn = () => Promise.resolve();
+  const noop = () => () => {}; // Cleanup function for event listeners
   return {
     SearchNodes: vi.fn().mockResolvedValue([]),
     ConnectToNode: vi.fn(fn),
@@ -35,6 +41,15 @@ vi.mock('./electronAPI', () => {
     CloseTunnel: vi.fn(fn),
     ListTunnels: vi.fn().mockResolvedValue([]),
     AddRecentDevice: vi.fn(fn),
+    // Auto-update API mocks
+    OnUpdateAvailable: vi.fn(noop),
+    OnUpdateNotAvailable: vi.fn(noop),
+    OnUpdateDownloadProgress: vi.fn(noop),
+    OnUpdateDownloaded: vi.fn(noop),
+    OnUpdateError: vi.fn(noop),
+    DownloadUpdate: vi.fn(fn),
+    InstallUpdate: vi.fn(fn),
+    CheckForUpdates: vi.fn().mockResolvedValue({ success: true }),
   };
 });
 
@@ -50,7 +65,13 @@ describe('App configuration and tunnels', () => {
       value: { 
         openExternal: vi.fn(),
         openVncWindow: vi.fn(),
-        getSystemTimeFormat: vi.fn().mockResolvedValue(false)
+        getSystemTimeFormat: vi.fn().mockResolvedValue(false),
+        getElectronAppInfo: vi.fn().mockResolvedValue({ 
+          version: '0.1.1', 
+          buildNumber: 'dev',
+          buildDate: null,
+          gitCommit: 'abc123'
+        })
       },
       writable: true,
     });

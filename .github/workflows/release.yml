@@ -46,7 +46,7 @@ jobs:
         run: npm run prebuild
 
       - name: Build Electron app (DMG)
-        run: npx electron-builder --mac --arm64 --publish never
+        run: npx electron-builder --mac --arm64 --publish always
 
       - name: Upload macOS ARM64 artifacts
         uses: actions/upload-artifact@v4
@@ -94,7 +94,7 @@ jobs:
         run: npm run prebuild
 
       - name: Build Electron app (DMG)
-        run: npx electron-builder --mac --x64 --publish never
+        run: npx electron-builder --mac --x64 --publish always
 
       - name: Upload macOS x64 artifacts
         uses: actions/upload-artifact@v4
@@ -145,7 +145,7 @@ jobs:
         run: npm run prebuild
 
       - name: Build Electron app (NSIS installer)
-        run: npx electron-builder --win --x64 --publish never
+        run: npx electron-builder --win --x64 --publish always
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
@@ -192,7 +192,7 @@ jobs:
         run: npm run prebuild
 
       - name: Build Electron app (AppImage & deb)
-        run: npx electron-builder --linux --x64 --publish never
+        run: npx electron-builder --linux --x64 --publish always
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
