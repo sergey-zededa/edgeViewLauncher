@@ -552,7 +552,6 @@ function App() {
     setShowTerminal(false);
 
     GetDeviceServices(node.id, node.name).then(result => {
-      addLog(`Services fetched from Cloud API`);
       try {
         const parsed = JSON.parse(result);
         setServices(parsed);
@@ -582,7 +581,7 @@ function App() {
   const loadSSHStatus = async (nodeId, checkTunnel = true) => {
     setLoadingSSH(true);
     setLoadingMessage("Checking SSH configuration...");
-    addLog("Checking SSH status...");
+    // REMOVED: addLog("Checking SSH status..."); (too verbose)
     let sessStatus = null;
     try {
       const status = await GetSSHStatus(nodeId);
@@ -599,11 +598,15 @@ function App() {
       }
       if (checkTunnel) {
         setLoadingMessage("Verifying EdgeView tunnel...");
-        addLog("Verifying EdgeView tunnel connectivity...");
+        // REMOVED: addLog("Verifying EdgeView tunnel connectivity..."); (too verbose)
         try {
           await VerifyTunnel(nodeId);
           // Only set as connected if we also have a valid active session with expiry
-          if (sessStatus && sessStatus.active && sessStatus.expiresAt) {
+          // Check both local session (sessStatus) and cloud status (status)
+          const isLocalActive = sessStatus && sessStatus.active && sessStatus.expiresAt;
+          const isCloudActive = status && status.expiry && !Number.isNaN(parseInt(status.expiry, 10)) && (parseInt(status.expiry, 10) * 1000 > Date.now());
+
+          if (isLocalActive || isCloudActive) {
             setTunnelConnected(true);
             addLog("EdgeView session verified: Connected", 'success');
           } else {
@@ -669,6 +672,7 @@ function App() {
           targetInfo: 'EVE-OS SSH',
           tunnelId: '' // Could be extracted from result if available
         });
+        addLog('In-app terminal launched', 'success');
       } else {
         // Native Terminal Launch
         const sshUser = 'root'; // Default for EVE-OS
@@ -708,11 +712,14 @@ function App() {
     if (!selectedNode) return;
     setLoadingSSH(true);
     setLoadingMessage("Enabling SSH access...");
+    addLog("Enabling SSH access...", 'info');
     try {
       await SetupSSH(selectedNode.id);
+      addLog("SSH access enabled successfully", 'success');
       loadSSHStatus(selectedNode.id);
     } catch (err) {
-      alert("Failed to setup SSH: " + err);
+      console.error(err);
+      addLog("Failed to setup SSH: " + err, 'error');
       setLoadingSSH(false);
     }
   };
@@ -721,11 +728,15 @@ function App() {
     if (!selectedNode) return;
     if (!confirm("Are you sure you want to disable SSH access? This will remove the public key from the device.")) return;
     setLoadingSSH(true);
+    setLoadingMessage("Disabling SSH access...");
+    addLog("Disabling SSH access...", 'info');
     try {
       await DisableSSH(selectedNode.id);
+      addLog("SSH access disabled successfully", 'success');
       loadSSHStatus(selectedNode.id);
     } catch (err) {
-      alert("Failed to disable SSH: " + err);
+      console.error(err);
+      addLog("Failed to disable SSH: " + err, 'error');
       setLoadingSSH(false);
     }
   };
@@ -738,7 +749,8 @@ function App() {
       loadSSHStatus(selectedNode.id);  // Refresh to get updated status
       addLog(`VGA access ${enabled ? 'enabled' : 'disabled'}`, 'success');
     } catch (err) {
-      alert("Failed to toggle VGA: " + err);
+      console.error(err);
+      addLog(`Failed to toggle VGA: ${err}`, 'error');
       setLoadingSSH(false);
     }
   };
@@ -751,7 +763,8 @@ function App() {
       loadSSHStatus(selectedNode.id);  // Refresh to get updated status
       addLog(`USB access ${enabled ? 'enabled' : 'disabled'}`, 'success');
     } catch (err) {
-      alert("Failed to toggle USB: " + err);
+      console.error(err);
+      addLog(`Failed to toggle USB: ${err}`, 'error');
       setLoadingSSH(false);
     }
   };
@@ -764,7 +777,8 @@ function App() {
       loadSSHStatus(selectedNode.id);  // Refresh to get updated status
       addLog(`Console access ${enabled ? 'enabled' : 'disabled'}`, 'success');
     } catch (err) {
-      alert("Failed to toggle Console: " + err);
+      console.error(err);
+      addLog(`Failed to toggle Console: ${err}`, 'error');
       setLoadingSSH(false);
     }
   };
@@ -1499,15 +1513,15 @@ function App() {
                           style={{
                             display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
                             fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
-                            backgroundColor: sshStatus.status === 'enabled' ? 'rgba(35, 134, 54, 0.2)' : sshStatus.status === 'mismatch' ? 'rgba(210, 153, 34, 0.2)' : 'rgba(218, 54, 51, 0.2)',
-                            color: sshStatus.status === 'enabled' ? '#238636' : sshStatus.status === 'mismatch' ? '#d29922' : '#da3633',
+                            backgroundColor: sshStatus.status === 'enabled' ? 'rgba(35, 134, 54, 0.2)' : sshStatus.status === 'mismatch' ? 'rgba(210, 153, 34, 0.2)' : 'rgba(255, 255, 255, 0.1)',
+                            color: sshStatus.status === 'enabled' ? '#238636' : sshStatus.status === 'mismatch' ? '#d29922' : '#c9d1d9',
                             border: 'none'
                           }}
                         >
                           {sshStatus.status === 'enabled' ? <Unlock size={13} style={{ marginRight: '6px' }} /> :
                             sshStatus.status === 'mismatch' ? <AlertTriangle size={13} style={{ marginRight: '6px' }} /> :
                               <Lock size={13} style={{ marginRight: '6px' }} />}
-                          SSH {sshStatus.status === 'enabled' ? 'Enabled' : sshStatus.status === 'mismatch' ? 'Key Mismatch' : 'Disabled'}
+                          {sshStatus.status === 'enabled' ? 'SSH Enabled' : sshStatus.status === 'mismatch' ? 'SSH Key Mismatch' : 'Enable SSH'}
                         </div>
 
                         {/* VGA Control */}
@@ -1518,13 +1532,13 @@ function App() {
                           style={{
                             display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
                             fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
-                            backgroundColor: sshStatus.vgaEnabled ? 'rgba(35, 134, 54, 0.2)' : 'rgba(218, 54, 51, 0.2)',
-                            color: sshStatus.vgaEnabled ? '#238636' : '#da3633',
+                            backgroundColor: sshStatus.vgaEnabled ? 'rgba(35, 134, 54, 0.2)' : 'rgba(255, 255, 255, 0.1)',
+                            color: sshStatus.vgaEnabled ? '#238636' : '#c9d1d9',
                             border: 'none'
                           }}
                         >
                           <Monitor size={13} style={{ marginRight: '6px' }} />
-                          VGA {sshStatus.vgaEnabled ? 'Enabled' : 'Disabled'}
+                          {sshStatus.vgaEnabled ? 'VGA Enabled' : 'Enable VGA'}
                         </div>
 
                         {/* USB Control */}
@@ -1535,13 +1549,13 @@ function App() {
                           style={{
                             display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
                             fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
-                            backgroundColor: sshStatus.usbEnabled ? 'rgba(35, 134, 54, 0.2)' : 'rgba(218, 54, 51, 0.2)',
-                            color: sshStatus.usbEnabled ? '#238636' : '#da3633',
+                            backgroundColor: sshStatus.usbEnabled ? 'rgba(35, 134, 54, 0.2)' : 'rgba(255, 255, 255, 0.1)',
+                            color: sshStatus.usbEnabled ? '#238636' : '#c9d1d9',
                             border: 'none'
                           }}
                         >
                           <Activity size={13} style={{ marginRight: '6px' }} />
-                          USB {sshStatus.usbEnabled ? 'Enabled' : 'Disabled'}
+                          {sshStatus.usbEnabled ? 'USB Enabled' : 'Enable USB'}
                         </div>
 
                         {/* Console Control */}
@@ -1552,13 +1566,13 @@ function App() {
                           style={{
                             display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
                             fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
-                            backgroundColor: sshStatus.consoleEnabled ? 'rgba(35, 134, 54, 0.2)' : 'rgba(218, 54, 51, 0.2)',
-                            color: sshStatus.consoleEnabled ? '#238636' : '#da3633',
+                            backgroundColor: sshStatus.consoleEnabled ? 'rgba(35, 134, 54, 0.2)' : 'rgba(255, 255, 255, 0.1)',
+                            color: sshStatus.consoleEnabled ? '#238636' : '#c9d1d9',
                             border: 'none'
                           }}
                         >
                           <Terminal size={13} style={{ marginRight: '6px' }} />
-                          Console {sshStatus.consoleEnabled ? 'Enabled' : 'Disabled'}
+                          {sshStatus.consoleEnabled ? 'Console Enabled' : 'Enable Console'}
                         </div>
 
                       </div>
