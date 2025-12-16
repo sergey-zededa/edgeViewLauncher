@@ -9,9 +9,9 @@
     "build": "npm run build:mac",
     "build:mac": "npm run build:frontend && npm run build:backend:mac && electron-builder --mac --arm64",
     "build:frontend": "cd frontend && npm run build",
-    "build:backend:mac": "GOOS=darwin GOARCH=arm64 go build -o edgeview-backend ./cmd/edgeview-backend",
-    "build:backend:windows": "GOOS=windows GOARCH=amd64 go build -o edgeview-backend.exe ./cmd/edgeview-backend",
-    "build:backend:linux": "GOOS=linux GOARCH=amd64 go build -o edgeview-backend ./cmd/edgeview-backend",
+    "build:backend:mac": "VERSION=$(node -p \"require('./package.json').version\") && GOOS=darwin GOARCH=arm64 go build -ldflags=\"-X main.Version=$VERSION\" -o edgeview-backend ./cmd/edgeview-backend",
+    "build:backend:windows": "VERSION=$(node -p \"require('./package.json').version\") && GOOS=windows GOARCH=amd64 go build -ldflags=\"-X main.Version=$VERSION\" -o edgeview-backend.exe ./cmd/edgeview-backend",
+    "build:backend:linux": "VERSION=$(node -p \"require('./package.json').version\") && GOOS=linux GOARCH=amd64 go build -ldflags=\"-X main.Version=$VERSION\" -o edgeview-backend ./cmd/edgeview-backend",
     "build:windows": "npm run build:frontend && npm run build:backend:windows && electron-builder --win --x64",
     "build:linux": "npm run build:frontend && npm run build:backend:linux && electron-builder --linux --x64",
     "test": "cd frontend && npm test"
