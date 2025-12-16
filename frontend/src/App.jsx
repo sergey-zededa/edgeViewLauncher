@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { SearchNodes, ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate } from './electronAPI';
+import { SearchNodes, ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings } from './electronAPI';
 import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
 import Tooltip from './components/Tooltip';
@@ -76,6 +76,15 @@ function App() {
     version: null,
     downloadProgress: 0,
     error: null
+  });
+
+  // Secure storage migration state
+  const [migrationState, setMigrationState] = useState({
+    needed: false,
+    inProgress: false,
+    completed: false,
+    error: null,
+    encryptionAvailable: true
   });
 
   // Dropdown state
@@ -586,25 +595,85 @@ function App() {
   };
 
   useEffect(() => {
-    GetSettings().then(cfg => {
-      if (cfg) {
-        setConfig({
-          baseUrl: cfg.baseUrl || '',
-          apiToken: cfg.apiToken || '',
-          clusters: cfg.clusters || [],
-          activeCluster: cfg.activeCluster || '',
-          recentDevices: cfg.recentDevices || []
-        });
-        const hasToken = cfg.apiToken || (cfg.clusters && cfg.clusters.some(c => c.name === cfg.activeCluster && c.apiToken));
-        if (hasToken) {
-          loadUserInfo();
+    // Check secure storage status and perform migration if needed
+    const initializeSettings = async () => {
+      try {
+        const status = await SecureStorageStatus();
+        
+        setMigrationState(prev => ({
+          ...prev,
+          needed: status.needsMigration,
+          encryptionAvailable: status.encryptionAvailable
+        }));
+
+        // Auto-migrate if needed
+        if (status.needsMigration && status.encryptionAvailable) {
+          console.log('[SecureStorage] Migration needed, starting auto-migration...');
+          setMigrationState(prev => ({ ...prev, inProgress: true }));
+          
+          const result = await SecureStorageMigrate();
+          
+          if (result.success) {
+            console.log('[SecureStorage] Migration successful:', result.message);
+            setMigrationState({
+              needed: false,
+              inProgress: false,
+              completed: true,
+              error: null,
+              encryptionAvailable: true
+            });
+          } else {
+            console.error('[SecureStorage] Migration failed:', result.error);
+            setMigrationState(prev => ({
+              ...prev,
+              inProgress: false,
+              error: result.error
+            }));
+          }
+        }
+
+        // Load settings using secure storage
+        const cfg = await SecureStorageGetSettings();
+        
+        if (cfg) {
+          setConfig({
+            baseUrl: cfg.baseUrl || '',
+            apiToken: cfg.apiToken || '',
+            clusters: cfg.clusters || [],
+            activeCluster: cfg.activeCluster || '',
+            recentDevices: cfg.recentDevices || []
+          });
+          const hasToken = cfg.apiToken || (cfg.clusters && cfg.clusters.some(c => c.name === cfg.activeCluster && c.apiToken));
+          if (hasToken) {
+            loadUserInfo();
+          } else {
+            setShowSettings(true);
+          }
         } else {
           setShowSettings(true);
         }
-      } else {
-        setShowSettings(true);
+      } catch (err) {
+        console.error('Failed to initialize settings:', err);
+        // Fallback to legacy GetSettings if secure storage fails
+        try {
+          const cfg = await GetSettings();
+          if (cfg) {
+            setConfig({
+              baseUrl: cfg.baseUrl || '',
+              apiToken: cfg.apiToken || '',
+              clusters: cfg.clusters || [],
+              activeCluster: cfg.activeCluster || '',
+              recentDevices: cfg.recentDevices || []
+            });
+          }
+        } catch (fallbackErr) {
+          console.error('Fallback GetSettings also failed:', fallbackErr);
+          setShowSettings(true);
+        }
       }
-    });
+    };
+
+    initializeSettings();
   }, []);
 
   useEffect(() => {
@@ -635,7 +704,7 @@ function App() {
     if (node.status !== 'online') return;
     try {
       await AddRecentDevice(node.id);
-      const newConfig = await GetSettings();
+      const newConfig = await SecureStorageGetSettings();
       setConfig(newConfig);
     } catch (err) {
       console.error("Failed to update recents:", err);
@@ -1062,9 +1131,15 @@ function App() {
         activeToSave = sanitizedCluster.name;
       }
 
-      await SaveSettings(clustersToSave, activeToSave);
+      // Save using secure storage
+      const configToSave = {
+        ...config,
+        clusters: clustersToSave,
+        activeCluster: activeToSave
+      };
+      await SecureStorageSaveSettings(configToSave);
 
-      const settings = await GetSettings();
+      const settings = await SecureStorageGetSettings();
       if (settings) {
         const newConfig = {
           baseUrl: settings.baseUrl || '',
@@ -1215,6 +1290,52 @@ function App() {
         onInstall={handleInstallUpdate}
         onDismiss={handleDismissUpdate}
       />
+
+      {/* Migration Status Banner */}
+      {migrationState.inProgress && (
+        <div className="migration-banner info-banner">
+          <div className="banner-content">
+            <RefreshCw size={18} className="spinner" />
+            <span>Migrating credentials to secure storage...</span>
+          </div>
+        </div>
+      )}
+      {migrationState.completed && (
+        <div className="migration-banner success-banner">
+          <div className="banner-content">
+            <Check size={18} />
+            <span>Credentials successfully migrated to secure storage</span>
+            <button 
+              className="banner-dismiss"
+              onClick={() => setMigrationState(prev => ({ ...prev, completed: false }))}
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+      )}
+      {migrationState.error && (
+        <div className="migration-banner error-banner">
+          <div className="banner-content">
+            <AlertTriangle size={18} />
+            <span>Migration failed: {migrationState.error}</span>
+            <button 
+              className="banner-dismiss"
+              onClick={() => setMigrationState(prev => ({ ...prev, error: null }))}
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+      )}
+      {!migrationState.encryptionAvailable && (
+        <div className="migration-banner warning-banner">
+          <div className="banner-content">
+            <AlertCircle size={18} />
+            <span>Secure storage is not available on this system. Credentials are stored in plaintext.</span>
+          </div>
+        </div>
+      )}
 
       {/* Authentication Error Banner */}
       {authError && !showSettings && (

@@ -8,9 +8,10 @@ import (
 )
 
 type ClusterConfig struct {
-	Name     string `json:"name"`
-	BaseURL  string `json:"baseUrl"`
-	APIToken string `json:"apiToken"`
+	Name           string `json:"name"`
+	BaseURL        string `json:"baseUrl"`
+	APIToken       string `json:"apiToken,omitempty"`       // Optional: only used for legacy/migration
+	TokenEncrypted bool   `json:"tokenEncrypted,omitempty"` // Indicates token is stored in secure storage
 }
 
 type Config struct {
@@ -109,7 +110,18 @@ func Save(cfg *Config) error {
 	path := filepath.Join(dir, "config.json")
 	fmt.Printf("Config Save: Writing to %s\n", path)
 
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	// Create a copy of config to sanitize sensitive data
+	cleanCfg := *cfg
+	cleanCfg.Clusters = make([]ClusterConfig, len(cfg.Clusters))
+	for i, c := range cfg.Clusters {
+		cleanCfg.Clusters[i] = c
+		if c.TokenEncrypted {
+			// Do not write token to disk if it's supposed to be encrypted
+			cleanCfg.Clusters[i].APIToken = ""
+		}
+	}
+
+	data, err := json.MarshalIndent(cleanCfg, "", "  ")
 	if err != nil {
 		fmt.Printf("Config Save: Marshal failed: %v\n", err)
 		return fmt.Errorf("failed to marshal config: %w", err)
