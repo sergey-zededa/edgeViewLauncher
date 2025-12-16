@@ -1082,10 +1082,16 @@ func (c *Client) GetRoleName(roleId string) (string, error) {
 
 // extractJWTExpiry tries to extract the expiry time from a JWT token
 func extractJWTExpiry(token string) (time.Time, error) {
+	// ZEDEDA API tokens are in format: enterpriseId:jwtToken
+	// Extract the JWT part
+	if idx := strings.Index(token, ":"); idx > 0 && idx < len(token)-1 {
+		token = token[idx+1:]
+	}
+
 	// JWT format: header.payload.signature
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
-		return time.Time{}, fmt.Errorf("invalid JWT format")
+		return time.Time{}, fmt.Errorf("invalid JWT format: expected 3 parts, got %d", len(parts))
 	}
 
 	// Decode the payload (second part)
