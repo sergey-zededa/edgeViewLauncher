@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"edgeViewLauncher/internal/config"
@@ -597,18 +598,15 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 
 	// Get password from query param
 	password := r.URL.Query().Get("password")
-	if password != "" {
-		log.Printf("SSH: Password provided for user %s", user)
-	} else {
-		log.Printf("SSH: Using key-based auth (no password provided) for user %s", user)
-	}
 
-	authMethods := []ssh.AuthMethod{
-		ssh.PublicKeys(signer),
-	}
+	// Build auth methods based on what's available
+	// For application containers that don't accept public keys, prioritize password auth
+	var authMethods []ssh.AuthMethod
 	if password != "" {
+		// When password is provided, use it FIRST (before public key)
+		// Many application containers only accept password authentication
 		authMethods = append(authMethods, ssh.Password(password))
-		// Also add KeyboardInteractive for servers that disable PasswordAuth but use ChallengeResponse
+		// Also add KeyboardInteractive for servers that use ChallengeResponse
 		authMethods = append(authMethods, ssh.KeyboardInteractive(func(user, instruction string, questions []string, echos []bool) (answers []string, err error) {
 			answers = make([]string, len(questions))
 			for i := range questions {
@@ -616,6 +614,22 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 			}
 			return answers, nil
 		}))
+		// Fallback to public key if password fails (for EVE-OS compatibility)
+		authMethods = append(authMethods, ssh.PublicKeys(signer))
+	} else {
+		// No password provided - try public key first (for EVE-OS)
+		// Then enable keyboard-interactive for application containers
+		authMethods = []ssh.AuthMethod{
+			ssh.PublicKeys(signer),
+			ssh.KeyboardInteractive(func(user, instruction string, questions []string, echos []bool) (answers []string, err error) {
+				// This allows interactive password authentication
+				// However, since we're in a WebSocket handler (not connected to a real TTY),
+				// we cannot prompt the user directly.
+				// The SSH library will fail with "no supported methods" if the server requires this.
+				log.Printf("SSH: Server requested keyboard-interactive auth, but no password provided")
+				return nil, fmt.Errorf("keyboard-interactive authentication requires password")
+			}),
+		}
 	}
 
 	// Connect to local SSH proxy
@@ -628,10 +642,25 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 
 	client, err := ssh.Dial("tcp", fmt.Sprintf("localhost:%d", port), config)
 	if err != nil {
-		wsConn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\nFailed to connect to SSH proxy (localhost:%d): %v\r\n", port, err)))
+		log.Printf("SSH: Authentication failed for %s@localhost:%d: %v", user, port, err)
+		// Check if it's an authentication error
+		if strings.Contains(err.Error(), "unable to authenticate") {
+			if password == "" {
+				// User didn't provide password - this is likely an app container that needs one
+				wsConn.WriteMessage(websocket.TextMessage, []byte("\r\n\x1b[1;33mAuthentication failed.\x1b[0m\r\n"))
+				wsConn.WriteMessage(websocket.TextMessage, []byte("\r\nThis application requires password authentication.\r\n"))
+				wsConn.WriteMessage(websocket.TextMessage, []byte("Please close this window and provide a password when connecting.\r\n\r\n"))
+			} else {
+				// User provided password but it was rejected
+				wsConn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\n\x1b[1;31mAuthentication failed:\x1b[0m %v\r\n", err)))
+			}
+		} else {
+			wsConn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\nFailed to connect to SSH proxy (localhost:%d): %v\r\n", port, err)))
+		}
 		return
 	}
 	defer client.Close()
+	log.Printf("SSH: Connected %s@localhost:%d", user, port)
 
 	// NOTE: SSH-level keepalives (keepalive@openssh.com) are DISABLED because they
 	// cause session resets when connecting to EVE-OS (localhost:22). The SSH keepalive
@@ -641,10 +670,14 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 
 	session, err := client.NewSession()
 	if err != nil {
+		log.Printf("SSH: Failed to create session for user %s on port %d: %v", user, port, err)
 		wsConn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\nFailed to create SSH session: %v\r\n", err)))
 		return
 	}
-	defer session.Close()
+	defer func() {
+		session.Close()
+		log.Printf("SSH: Session closed %s@localhost:%d", user, port)
+	}()
 
 	// Set up PTY
 	modes := ssh.TerminalModes{
@@ -675,6 +708,7 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 
 	// Start shell
 	if err := session.Shell(); err != nil {
+		log.Printf("SSH: Failed to start shell: %v", err)
 		wsConn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\nFailed to start shell: %v\r\n", err)))
 		return
 	}
@@ -688,7 +722,6 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 				wsConn.WriteMessage(websocket.BinaryMessage, buf[:n])
 			}
 			if err != nil {
-				log.Printf("SSH->WS: Stdout error: %v", err)
 				wsConn.Close() // Force close WebSocket on SSH error
 				return
 			}
@@ -722,7 +755,6 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 	for {
 		_, msg, err := wsConn.ReadMessage()
 		if err != nil {
-			log.Printf("WS->SSH: Read error: %v", err)
 			break
 		}
 
@@ -736,10 +768,8 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 
 		switch wsMsg.Type {
 		case "resize":
-			log.Printf("WS->SSH: Resize %dx%d", wsMsg.Cols, wsMsg.Rows)
 			session.WindowChange(wsMsg.Rows, wsMsg.Cols)
 		case "input":
-			log.Printf("WS->SSH: Input %d bytes: %q", len(wsMsg.Data), wsMsg.Data)
 			stdin.Write([]byte(wsMsg.Data))
 		default:
 			// Fallback for raw data if not JSON
