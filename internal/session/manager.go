@@ -1194,6 +1194,13 @@ func (m *Manager) tunnelWSReader(ctx context.Context, tunnel *Tunnel) {
 	defer func() {
 		tunnel.wsMu.Lock()
 		if tunnel.wsConn != nil {
+			// Send graceful close message using WebSocket Close frame
+			// This ensures EdgeView dispatcher knows we're disconnecting intentionally
+			fmt.Printf("TUNNEL[%s] Sending WebSocket close frame for graceful shutdown\n", tunnel.ID)
+			closeMsg := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "client closing tunnel")
+			tunnel.wsConn.WriteControl(websocket.CloseMessage, closeMsg, time.Now().Add(time.Second))
+			// Give device time to process close frame before forceful close
+			time.Sleep(100 * time.Millisecond)
 			tunnel.wsConn.Close()
 		}
 		tunnel.wsMu.Unlock()
