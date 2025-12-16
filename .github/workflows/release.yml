@@ -9,8 +9,8 @@ permissions:
   contents: write
 
 jobs:
-  build-mac-arm64:
-    name: Build macOS (ARM64)
+  build-mac:
+    name: Build macOS (Universal)
     runs-on: macos-latest
     steps:
       - name: Checkout code
@@ -42,72 +42,30 @@ jobs:
       - name: Build Go backend (ARM64)
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          GOOS=darwin GOARCH=arm64 go build -ldflags="-X 'main.Version=$VERSION'" -o edgeview-backend ./cmd/edgeview-backend
-
-      - name: Generate build info
-        run: npm run prebuild
-
-      - name: Build Electron app (DMG)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --mac --arm64 --publish always
-
-      - name: Upload macOS ARM64 artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos-arm64
-          path: |
-            dist-electron/*.dmg
-            dist-electron/*.zip
-          retention-days: 5
-
-  build-mac-x64:
-    name: Build macOS (x64)
-    runs-on: macos-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.24'
-          cache: true
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: |
-            package-lock.json
-            frontend/package-lock.json
-
-      - name: Install dependencies
-        run: |
-          npm ci
-          cd frontend && npm ci
-
-      - name: Build frontend
-        run: cd frontend && npm run build
+          GOOS=darwin GOARCH=arm64 go build -ldflags="-X 'main.Version=$VERSION'" -o edgeview-backend-arm64 ./cmd/edgeview-backend
 
       - name: Build Go backend (x64)
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          GOOS=darwin GOARCH=amd64 go build -ldflags="-X 'main.Version=$VERSION'" -o edgeview-backend ./cmd/edgeview-backend
+          GOOS=darwin GOARCH=amd64 go build -ldflags="-X 'main.Version=$VERSION'" -o edgeview-backend-amd64 ./cmd/edgeview-backend
+
+      - name: Create universal Go binary
+        run: |
+          lipo -create -output edgeview-backend edgeview-backend-arm64 edgeview-backend-amd64
+          rm edgeview-backend-arm64 edgeview-backend-amd64
 
       - name: Generate build info
         run: npm run prebuild
 
-      - name: Build Electron app (DMG)
+      - name: Build Electron app (macOS universal)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --mac --x64 --publish always
+        run: npx electron-builder --mac --publish always
 
-      - name: Upload macOS x64 artifacts
+      - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: macos-x64
+          name: macos
           path: |
             dist-electron/*.dmg
             dist-electron/*.zip
@@ -221,7 +179,7 @@ jobs:
 
   release:
     name: Create Release
-    needs: [build-mac-arm64, build-mac-x64, build-windows, build-linux]
+    needs: [build-mac, build-windows, build-linux]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -239,8 +197,7 @@ jobs:
         uses: ncipollo/release-action@v1
         with:
           artifacts: |
-            artifacts/macos-arm64/*
-            artifacts/macos-x64/*
+            artifacts/macos/*
             artifacts/windows-x64/*
             artifacts/linux-x64/*
           generateReleaseNotes: true
