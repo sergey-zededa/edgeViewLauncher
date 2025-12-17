@@ -110,3 +110,35 @@ Key Go backend routes (`http-server.go`):
 - Config file: `~/.edgeview-config.json` (clusters, recent devices)
 - SSH keys: `~/.ssh/edgeview_rsa` and `~/.ssh/edgeview_rsa.pub`
 - Production build output: `dist-electron/`
+
+## Release Process
+
+When preparing a new release, follow these steps strictly to ensure auto-update compatibility:
+
+1.  **Bump Versions**:
+    *   Update version in `package.json` (root)
+    *   Update version in `frontend/package.json`
+    *   `npm version patch --no-git-tag-version` (in both directories)
+
+2.  **Commit Changes**:
+    *   Commit the version bump changes.
+    *   Push to `main`.
+
+3.  **Trigger Release Build**:
+    *   Use GitHub CLI or UI to create a release.
+    *   **CRITICAL**: The tag name must match the `v*` pattern (e.g., `v0.1.10`).
+    *   **CRITICAL**: The release MUST be created from the **latest commit** on `main` that contains the version bump.
+    *   If a release is created pointing to an older commit, auto-updates will fail because the internal version won't match the tag.
+
+    ```bash
+    # Example
+    gh release create v0.1.10 --generate-notes --title "v0.1.10"
+    ```
+
+4.  **Verification**:
+    *   Verify the GitHub Action "Release" workflow runs successfully.
+    *   Ensure artifacts are uploaded with standardized names (lowercase, no spaces):
+        *   `edgeview-launcher-Setup-x.y.z.exe` (Windows)
+        *   `edgeview-launcher-x.y.z-arm64.dmg` (macOS)
+        *   `edgeview-launcher-x.y.z-x64.AppImage` (Linux)
+    *   Verify `latest.yml` (and `latest-mac.yml`, `latest-linux.yml`) is present in the release assets.
