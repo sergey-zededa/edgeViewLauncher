@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1442,12 +1441,12 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 						}
 					}
 
+					// Log only protocol level info, not full dumps unless error
 					if strings.HasPrefix(prefix, "SSH-") {
-						fmt.Printf("TUNNEL[%s] ChanNum=%d: Packet #%d is valid SSH version: %s\n", tunnel.ID, chanNum, packetCount, strings.TrimSpace(prefix))
+						// fmt.Printf("TUNNEL[%s] ChanNum=%d: Packet #%d is valid SSH version: %s\n", tunnel.ID, chanNum, packetCount, strings.TrimSpace(prefix))
 					} else if isText {
-						fmt.Printf("TUNNEL[%s] ChanNum=%d: Packet #%d received from device (len=%d) looks like TEXT:\n%s\n", tunnel.ID, chanNum, packetCount, len(data), string(data))
-					} else {
-						fmt.Printf("TUNNEL[%s] ChanNum=%d: Packet #%d received from device (len=%d) looks like BINARY:\n%s\n", tunnel.ID, chanNum, packetCount, len(data), hex.Dump(data))
+						// Only log if it looks like a text error
+						fmt.Printf("TUNNEL[%s] ChanNum=%d: Packet #%d received text (possible error): %s\n", tunnel.ID, chanNum, packetCount, strings.TrimSpace(string(data)))
 					}
 				}
 
