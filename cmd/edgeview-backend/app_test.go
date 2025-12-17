@@ -262,7 +262,7 @@ func TestConnectToNode_UsesCachedSessionAndLaunchesTerminal(t *testing.T) {
 
 	a := newTestApp(fakeClient, fakeSess)
 
-	msg, err := a.ConnectToNode("node1", false)
+	port, _, err := a.ConnectToNode("node1", false)
 	if err != nil {
 		t.Fatalf("ConnectToNode returned error: %v", err)
 	}
@@ -270,8 +270,36 @@ func TestConnectToNode_UsesCachedSessionAndLaunchesTerminal(t *testing.T) {
 	// if !fakeSess.launched {
 	// 	t.Fatalf("expected LaunchTerminal to be called for native terminal")
 	// }
-	if msg == "" {
-		t.Fatalf("expected non-empty success message")
+	if port <= 0 {
+		t.Fatalf("expected positive port, got %d", port)
+	}
+}
+
+// TestConnectToNode_ReturnsTunnelID verifies that ConnectToNode propagates the tunnel ID
+// returned by the session manager when starting a new proxy.
+func TestConnectToNode_ReturnsTunnelID(t *testing.T) {
+	fakeClient := &fakeZededaClient{
+		initSessionScript: "edgeview -token tok",
+		parseCfg:          &zededa.SessionConfig{URL: "wss://example", Token: "tok"},
+	}
+	fakeSess := &fakeSessionManager{
+		startProxyPort: 9001,
+		startProxyID:   "tunnel-123",
+	}
+
+	a := newTestApp(fakeClient, fakeSess)
+
+	// Simulate "In-App Terminal" which always creates a new proxy
+	port, tunnelID, err := a.ConnectToNode("node2", true)
+	if err != nil {
+		t.Fatalf("ConnectToNode returned error: %v", err)
+	}
+
+	if port != 9001 {
+		t.Errorf("expected port 9001, got %d", port)
+	}
+	if tunnelID != "tunnel-123" {
+		t.Errorf("expected tunnel ID 'tunnel-123', got %q", tunnelID)
 	}
 }
 
@@ -368,7 +396,7 @@ func TestConnectToNode_InitSessionError(t *testing.T) {
 
 	a := newTestApp(fakeClient, fakeSess)
 
-	_, err := a.ConnectToNode("node-err", true)
+	_, _, err := a.ConnectToNode("node-err", true)
 	if err == nil || !strings.Contains(err.Error(), "failed to init session") {
 		t.Fatalf("expected init-session error to be propagated, got: %v", err)
 	}

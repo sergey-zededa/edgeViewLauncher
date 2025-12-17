@@ -829,12 +829,10 @@ function App() {
 
       const result = await ConnectToNode(nodeId, useInApp);
       
-      // Parse port from result string (format: "Session started on port 9001")
-      const match = result.match(/port (\d+)/);
-      const port = (match && match[1]) ? parseInt(match[1], 10) : null;
+      const { port, tunnelId } = result;
 
       if (!port) {
-        console.error("Could not parse port from result:", result);
+        console.error("Could not determine port from result:", result);
         setError({ type: 'error', message: "Failed to start session: Could not determine port." });
         return;
       }
@@ -844,7 +842,7 @@ function App() {
           port: port,
           nodeName: selectedNode.name,
           targetInfo: 'EVE-OS SSH',
-          tunnelId: '' // Could be extracted from result if available
+          tunnelId: tunnelId
         });
         addLog('In-app terminal launched', 'success');
       } else {

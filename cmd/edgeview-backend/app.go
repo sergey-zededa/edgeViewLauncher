@@ -275,12 +275,13 @@ func (a *App) AddRecentDevice(nodeID string) {
 }
 
 // ConnectToNode initiates a session to the node
-func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (string, error) {
+func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (int, string, error) {
 	fmt.Printf("ConnectToNode called for %s (In-App: %v)\n", nodeID, useInAppTerminal)
 	a.SetConnectionProgress(nodeID, "Initializing connection...")
 
 	var sessionConfig *zededa.SessionConfig
 	var port int
+	var tunnelID string
 	var needNewProxy bool
 
 	// Check if we have a cached session
@@ -343,7 +344,7 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (string, error
 			if err != nil {
 				fmt.Printf("InitSession failed: %v\n", err)
 				a.SetConnectionProgress(nodeID, "Error: Failed to init session")
-				return "", fmt.Errorf("failed to init session: %w", err)
+				return 0, "", fmt.Errorf("failed to init session: %w", err)
 			}
 			fmt.Println("EdgeView enabled, script received.")
 
@@ -353,7 +354,7 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (string, error
 			if err != nil {
 				fmt.Printf("ParseEdgeViewScript failed: %v\n", err)
 				a.SetConnectionProgress(nodeID, "Error: Failed to parse script")
-				return "", fmt.Errorf("failed to parse script: %w", err)
+				return 0, "", fmt.Errorf("failed to parse script: %w", err)
 			}
 			fmt.Printf("Script parsed. URL: %s\n", sessionConfig.URL)
 		}
@@ -370,13 +371,12 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (string, error
 		fmt.Println("Starting proxy...")
 		a.SetConnectionProgress(nodeID, "Starting local secure proxy...")
 		var err error
-		var tunnelID string
 		// Default to SSH (tcp/localhost:22)
 		port, tunnelID, err = a.sessionManager.StartProxy(a.ctx, sessionConfig, nodeID, "localhost:22", "ssh")
 		if err != nil {
 			fmt.Printf("StartProxy failed: %v\n", err)
 			a.SetConnectionProgress(nodeID, "Error: Failed to start proxy")
-			return "", fmt.Errorf("failed to start proxy: %w", err)
+			return 0, "", fmt.Errorf("failed to start proxy: %w", err)
 		}
 		fmt.Printf("Proxy started on port %d (Tunnel ID: %s)\n", port, tunnelID)
 
@@ -405,7 +405,7 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (string, error
 	}
 
 	a.SetConnectionProgress(nodeID, "Connected")
-	return fmt.Sprintf("Session started on port %d", port), nil
+	return port, tunnelID, nil
 }
 
 // StartTunnel starts a TCP tunnel to a specific IP and port on the device
