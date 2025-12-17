@@ -1,11 +1,13 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1400,6 +1402,9 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 			fmt.Printf("TUNNEL[%s] ChanNum=%d: WS->TCP goroutine exiting\n", tunnel.ID, chanNum)
 			close(done)
 		}()
+		
+		var lastPacket []byte
+		packetCount := 0
 		for {
 			select {
 			case data, ok := <-dataChan:
@@ -1407,6 +1412,45 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 					fmt.Printf("TUNNEL[%s] ChanNum=%d: dataChan closed, WS->TCP ending\n", tunnel.ID, chanNum)
 					return // Channel closed
 				}
+				
+				// Deduplicate consecutive packets (specifically for SSH version string issues)
+				if bytes.Equal(data, lastPacket) {
+					// Check if it's an SSH version string
+					if len(data) > 4 && string(data[:4]) == "SSH-" {
+						fmt.Printf("TUNNEL[%s] ChanNum=%d: Dropping duplicate SSH version string packet\n", tunnel.ID, chanNum)
+						continue
+					}
+				}
+				lastPacket = make([]byte, len(data))
+				copy(lastPacket, data)
+				
+				packetCount++
+				if packetCount <= 3 {
+					// DEBUG: Log the first 3 packets to diagnose invalid packet length errors
+					prefix := ""
+					if len(data) > 32 {
+						prefix = string(data[:32])
+					} else {
+						prefix = string(data)
+					}
+					
+					isText := true
+					for _, b := range []byte(prefix) {
+						if (b < 32 || b > 126) && b != '\r' && b != '\n' && b != '\t' {
+							isText = false
+							break
+						}
+					}
+
+					if strings.HasPrefix(prefix, "SSH-") {
+						fmt.Printf("TUNNEL[%s] ChanNum=%d: Packet #%d is valid SSH version: %s\n", tunnel.ID, chanNum, packetCount, strings.TrimSpace(prefix))
+					} else if isText {
+						fmt.Printf("TUNNEL[%s] ChanNum=%d: Packet #%d received from device (len=%d) looks like TEXT:\n%s\n", tunnel.ID, chanNum, packetCount, len(data), string(data))
+					} else {
+						fmt.Printf("TUNNEL[%s] ChanNum=%d: Packet #%d received from device (len=%d) looks like BINARY:\n%s\n", tunnel.ID, chanNum, packetCount, len(data), hex.Dump(data))
+					}
+				}
+
 				if _, err := conn.Write(data); err != nil {
 					fmt.Printf("TUNNEL[%s] ChanNum=%d: WS->TCP write error: %v\n", tunnel.ID, chanNum, err)
 					return

@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -391,6 +393,16 @@ var (
 	Version = "dev"
 )
 
+// BufferedConn wraps net.Conn to allow peeking/buffering reads
+type BufferedConn struct {
+	net.Conn
+	r io.Reader
+}
+
+func (b *BufferedConn) Read(p []byte) (n int, err error) {
+	return b.r.Read(p)
+}
+
 func (s *HTTPServer) Start() {
 	// Initialize app context
 	s.app.startup(context.Background())
@@ -608,14 +620,92 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 	// Get password from query param
 	password := r.URL.Query().Get("password")
 
-	// Build auth methods based on what's available
-	// For application containers that don't accept public keys, prioritize password auth
+	// Channels for coordinating IO
+	type resizeMsg struct {
+		Cols int
+		Rows int
+	}
+	
+	// Buffered channels to prevent blocking the reader
+	inputChan := make(chan []byte, 100)
+	resizeChan := make(chan resizeMsg, 10)
+	authResponseChan := make(chan string, 1)
+	
+	// Atomic flag to track if we are in auth phase or shell phase
+	// 0 = Auth Phase, 1 = Shell Phase
+	// We use a channel for synchronization instead of atomics for simpler logic
+	isShellActive := make(chan struct{})
+
+	// Start WebSocket Reader Loop IMMEDIATELY
+	// This ensures we can receive password input while ssh.Dial is blocking
+	go func() {
+		defer close(inputChan)
+		
+		type WSMessage struct {
+			Type string `json:"type"` // "input" or "resize"
+			Data string `json:"data,omitempty"`
+			Cols int    `json:"cols,omitempty"`
+			Rows int    `json:"rows,omitempty"`
+		}
+
+		for {
+			_, msg, err := wsConn.ReadMessage()
+			if err != nil {
+				return
+			}
+
+			var wsMsg WSMessage
+			if err := json.Unmarshal(msg, &wsMsg); err != nil {
+				// Raw input fallback
+				select {
+				case <-isShellActive:
+					// Shell is active, send as raw input
+					inputChan <- msg
+				default:
+					// Still in auth phase?
+					// If we are waiting for auth, this might be the password
+					// Try to send to auth channel non-blocking
+					select {
+					case authResponseChan <- string(msg):
+					default:
+						// No one listening for auth, drop or buffer?
+					}
+				}
+				continue
+			}
+
+			switch wsMsg.Type {
+			case "resize":
+				resizeChan <- resizeMsg{Cols: wsMsg.Cols, Rows: wsMsg.Rows}
+			case "input":
+				data := []byte(wsMsg.Data)
+				select {
+				case <-isShellActive:
+					// Normal shell input
+					inputChan <- data
+				default:
+					// Auth input
+					// Check if we can send to auth channel
+					select {
+					case authResponseChan <- wsMsg.Data:
+					default:
+						// If auth is not waiting, buffer it for shell later? 
+						// Or just drop if it's spurious input.
+						// For robustness, let's try to send to inputChan anyway, 
+						// the shell reader will pick it up after auth.
+						// BUT we must be careful not to confuse the auth handler.
+						// Current strategy: Only send to authChan if auth is pending.
+					}
+				}
+			}
+		}
+	}()
+
+	// Build auth methods
 	var authMethods []ssh.AuthMethod
 	if password != "" {
-		// When password is provided, use it FIRST (before public key)
-		// Many application containers only accept password authentication
+		// Existing logic: Password provided upfront
 		authMethods = append(authMethods, ssh.Password(password))
-		// Also add KeyboardInteractive for servers that use ChallengeResponse
 		authMethods = append(authMethods, ssh.KeyboardInteractive(func(user, instruction string, questions []string, echos []bool) (answers []string, err error) {
 			answers = make([]string, len(questions))
 			for i := range questions {
@@ -623,20 +713,62 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 			}
 			return answers, nil
 		}))
-		// Fallback to public key if password fails (for EVE-OS compatibility)
 		authMethods = append(authMethods, ssh.PublicKeys(signer))
 	} else {
-		// No password provided - try public key first (for EVE-OS)
-		// Then enable keyboard-interactive for application containers
+		// New Logic: Interactive Auth
 		authMethods = []ssh.AuthMethod{
 			ssh.PublicKeys(signer),
 			ssh.KeyboardInteractive(func(user, instruction string, questions []string, echos []bool) (answers []string, err error) {
-				// This allows interactive password authentication
-				// However, since we're in a WebSocket handler (not connected to a real TTY),
-				// we cannot prompt the user directly.
-				// The SSH library will fail with "no supported methods" if the server requires this.
-				log.Printf("SSH: Server requested keyboard-interactive auth, but no password provided")
-				return nil, fmt.Errorf("keyboard-interactive authentication requires password")
+				// If no questions, just return
+				if len(questions) == 0 {
+					return nil, nil
+				}
+
+				// Prompt user for each question
+				answers = make([]string, len(questions))
+				for i, question := range questions {
+					// Format prompt cleanly
+					prompt := fmt.Sprintf("\r\n%s", question)
+					if instruction != "" {
+						prompt = fmt.Sprintf("\r\n%s\r\n%s", instruction, question)
+					}
+					
+					// Send prompt to frontend
+					// We use a simple text message that xterm.js will render
+					// Ideally frontend should handle password hiding, but xterm.js doesn't natively support "password mode" easily via raw text
+					// For now, it will echo. We can send specific escape codes to hide cursor/text if needed, but simple is better first.
+					wsConn.WriteMessage(websocket.TextMessage, []byte(prompt))
+
+					// Wait for response - buffer input until newline
+					var answerBuf []rune
+				inputLoop:
+					for {
+						select {
+						case chunk := <-authResponseChan:
+							for _, r := range chunk {
+								switch r {
+								case '\r', '\n':
+									// Enter pressed, we're done
+									// Echo a newline so the user sees the prompt move down
+									wsConn.WriteMessage(websocket.TextMessage, []byte("\r\n"))
+									break inputLoop
+								case 127, 8: // Backspace (DEL) or BS
+									if len(answerBuf) > 0 {
+										answerBuf = answerBuf[:len(answerBuf)-1]
+									}
+								default:
+									// Append regular character
+									answerBuf = append(answerBuf, r)
+									// Do NOT echo password characters
+								}
+							}
+						case <-time.After(60 * time.Second):
+							return nil, fmt.Errorf("authentication timed out")
+						}
+					}
+					answers[i] = string(answerBuf)
+				}
+				return answers, nil
 			}),
 		}
 	}
@@ -646,47 +778,76 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 		User:            user,
 		Auth:            authMethods,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         10 * time.Second,
+		Timeout:         30 * time.Second, // Increased timeout for interactive
 	}
 
-	client, err := ssh.Dial("tcp", fmt.Sprintf("localhost:%d", port), config)
+	// Dial raw TCP first to peek at the protocol header
+	rawConn, err := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", port), 5*time.Second)
 	if err != nil {
-		log.Printf("SSH: Authentication failed for %s@localhost:%d: %v", user, port, err)
-		// Check if it's an authentication error
+		wsConn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\nFailed to connect to SSH proxy: %v\r\n", err)))
+		return
+	}
+	defer rawConn.Close()
+
+	// Peek at the first few bytes to check for SSH version string vs plaintext error
+	// The standard requires the server to send "SSH-2.0-..."
+	peekBuf := make([]byte, 4)
+	rawConn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := io.ReadFull(rawConn, peekBuf); err != nil {
+		rawConn.SetReadDeadline(time.Time{}) // Reset deadline
+		wsConn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\nFailed to read protocol header: %v\r\n", err)))
+		return
+	}
+	rawConn.SetReadDeadline(time.Time{}) // Reset deadline
+
+	// Check if it looks like SSH
+	if string(peekBuf) != "SSH-" {
+		// Not SSH - likely a plaintext error message from EdgeView device
+		// Read the rest of the message to show the user
+		restBuf := make([]byte, 1024)
+		rawConn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		n2, _ := rawConn.Read(restBuf) // Ignore error, just get what we can
+		
+		fullMsg := string(peekBuf) + string(restBuf[:n2])
+		cleanMsg := strings.TrimSpace(fullMsg)
+		
+		log.Printf("SSH: Protocol mismatch. Received: %q", cleanMsg)
+		wsConn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\n\x1b[1;31mConnection rejected by device:\x1b[0m %s\r\n", cleanMsg)))
+		return
+	}
+
+	// It looks like SSH! Reconstruct the stream using a BufferedConn
+	// This "puts back" the bytes we peeked so the SSH library can read them
+	sshConn := &BufferedConn{
+		Conn: rawConn,
+		r:    io.MultiReader(bytes.NewReader(peekBuf), rawConn),
+	}
+
+	// Establish SSH connection on existing socket
+	c, chans, reqs, err := ssh.NewClientConn(sshConn, fmt.Sprintf("localhost:%d", port), config)
+	if err != nil {
+		log.Printf("SSH: Authentication failed: %v", err)
 		if strings.Contains(err.Error(), "unable to authenticate") {
-			if password == "" {
-				// User didn't provide password - this is likely an app container that needs one
-				wsConn.WriteMessage(websocket.TextMessage, []byte("\r\n\x1b[1;33mAuthentication failed.\x1b[0m\r\n"))
-				wsConn.WriteMessage(websocket.TextMessage, []byte("\r\nThis application requires password authentication.\r\n"))
-				wsConn.WriteMessage(websocket.TextMessage, []byte("Please close this window and provide a password when connecting.\r\n\r\n"))
-			} else {
-				// User provided password but it was rejected
-				wsConn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\n\x1b[1;31mAuthentication failed:\x1b[0m %v\r\n", err)))
-			}
+			wsConn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\n\x1b[1;31mAuthentication failed:\x1b[0m %v\r\n", err)))
 		} else {
-			wsConn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\nFailed to connect to SSH proxy (localhost:%d): %v\r\n", port, err)))
+			wsConn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\nFailed to connect: %v\r\n", err)))
 		}
 		return
 	}
+	client := ssh.NewClient(c, chans, reqs)
 	defer client.Close()
+	
+	// Signal that shell phase is active
+	close(isShellActive)
+	
 	log.Printf("SSH: Connected %s@localhost:%d", user, port)
-
-	// NOTE: SSH-level keepalives (keepalive@openssh.com) are DISABLED because they
-	// cause session resets when connecting to EVE-OS (localhost:22). The SSH keepalive
-	// response from the device's SSH daemon somehow triggers EdgeView to reset.
-	// Interestingly, VNC and SSH to apps (container IPs) work fine with just tunnel keepalives.
-	// The tunnel-level keepalive in manager.go handles keeping the connection alive.
 
 	session, err := client.NewSession()
 	if err != nil {
-		log.Printf("SSH: Failed to create session for user %s on port %d: %v", user, port, err)
-		wsConn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\nFailed to create SSH session: %v\r\n", err)))
+		wsConn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\nFailed to create session: %v\r\n", err)))
 		return
 	}
-	defer func() {
-		session.Close()
-		log.Printf("SSH: Session closed %s@localhost:%d", user, port)
-	}()
+	defer session.Close()
 
 	// Set up PTY
 	modes := ssh.TerminalModes{
@@ -717,10 +878,16 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 
 	// Start shell
 	if err := session.Shell(); err != nil {
-		log.Printf("SSH: Failed to start shell: %v", err)
 		wsConn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\nFailed to start shell: %v\r\n", err)))
 		return
 	}
+
+	// Handle Resizes
+	go func() {
+		for msg := range resizeChan {
+			session.WindowChange(msg.Rows, msg.Cols)
+		}
+	}()
 
 	// SSH -> WebSocket (Stdout)
 	go func() {
@@ -731,7 +898,7 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 				wsConn.WriteMessage(websocket.BinaryMessage, buf[:n])
 			}
 			if err != nil {
-				wsConn.Close() // Force close WebSocket on SSH error
+				wsConn.Close()
 				return
 			}
 		}
@@ -746,44 +913,14 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 				wsConn.WriteMessage(websocket.TextMessage, buf[:n])
 			}
 			if err != nil {
-				log.Printf("SSH->WS: Stderr error: %v", err)
-				wsConn.Close() // Force close WebSocket on SSH error
 				return
 			}
 		}
 	}()
 
-	// WebSocket -> SSH (Stdin + Resize)
-	type WSMessage struct {
-		Type string `json:"type"` // "input" or "resize"
-		Data string `json:"data,omitempty"`
-		Cols int    `json:"cols,omitempty"`
-		Rows int    `json:"rows,omitempty"`
-	}
-
-	for {
-		_, msg, err := wsConn.ReadMessage()
-		if err != nil {
-			break
-		}
-
-		var wsMsg WSMessage
-		if err := json.Unmarshal(msg, &wsMsg); err != nil {
-			// Maybe raw input?
-			log.Printf("WS->SSH: Raw input %d bytes", len(msg))
-			stdin.Write(msg)
-			continue
-		}
-
-		switch wsMsg.Type {
-		case "resize":
-			session.WindowChange(wsMsg.Rows, wsMsg.Cols)
-		case "input":
-			stdin.Write([]byte(wsMsg.Data))
-		default:
-			// Fallback for raw data if not JSON
-			stdin.Write(msg)
-		}
+	// WebSocket -> SSH (Stdin)
+	for data := range inputChan {
+		stdin.Write(data)
 	}
 }
 
