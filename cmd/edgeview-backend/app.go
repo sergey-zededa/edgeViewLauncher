@@ -416,16 +416,44 @@ func (a *App) StartTunnel(nodeID, targetIP string, targetPort int, protocol stri
 	// Get cached session
 	cached, ok := a.sessionManager.GetCachedSession(nodeID)
 	if !ok {
-		fmt.Println("DEBUG: No cached session found, creating new one for tunnel...")
-		// Try to create a new session
-		script, err := a.zededaClient.InitSession(nodeID)
-		if err != nil {
-			return 0, "", fmt.Errorf("no active session found and failed to create one: %w", err)
+		fmt.Println("DEBUG: No cached session found, checking Cloud API status...")
+
+		var sessionConfig *zededa.SessionConfig
+
+		// Check if API says one is already active (reuse logic from ConnectToNode)
+		evStatus, err := a.zededaClient.GetEdgeViewStatus(nodeID)
+		if err == nil && evStatus != nil && evStatus.Token != "" && evStatus.DispURL != "" {
+			fmt.Println("Found active EdgeView session from API, reusing token...")
+			sc, parseErr := a.zededaClient.ParseEdgeViewToken(evStatus.Token)
+			if parseErr == nil {
+				sessionConfig = sc
+				// Ensure URL is correct
+				if !strings.HasPrefix(sessionConfig.URL, "wss://") && !strings.HasPrefix(sessionConfig.URL, "ws://") {
+					if sessionConfig.URL == "" {
+						sessionConfig.URL = evStatus.DispURL
+						if !strings.HasPrefix(sessionConfig.URL, "http") && !strings.HasPrefix(sessionConfig.URL, "ws") {
+							sessionConfig.URL = "wss://" + sessionConfig.URL
+						}
+					}
+				}
+				fmt.Printf("Reused active session. URL: %s\n", sessionConfig.URL)
+			} else {
+				fmt.Printf("Failed to parse active token: %v\n", parseErr)
+			}
 		}
 
-		sessionConfig, err := a.zededaClient.ParseEdgeViewScript(script)
-		if err != nil {
-			return 0, "", fmt.Errorf("failed to parse session script: %w", err)
+		if sessionConfig == nil {
+			fmt.Println("DEBUG: No active session found or invalid, creating new one for tunnel...")
+			// Try to create a new session
+			script, err := a.zededaClient.InitSession(nodeID)
+			if err != nil {
+				return 0, "", fmt.Errorf("no active session found and failed to create one: %w", err)
+			}
+
+			sessionConfig, err = a.zededaClient.ParseEdgeViewScript(script)
+			if err != nil {
+				return 0, "", fmt.Errorf("failed to parse session script: %w", err)
+			}
 		}
 
 		expiresAt := time.Now().Add(4*time.Hour + 50*time.Minute)
@@ -433,12 +461,7 @@ func (a *App) StartTunnel(nodeID, targetIP string, targetPort int, protocol stri
 		cached, _ = a.sessionManager.GetCachedSession(nodeID)
 
 		// Give device MORE time to establish stable connection
-		// Native Terminal.app connects immediately, so we need enough time for device to come online
-		// Give device MORE time to establish stable connection
-		// Native Terminal.app connects immediately, so we need enough time for device to come online
 		fmt.Println("DEBUG: Requesting EdgeView session...")
-		// No artificial delay - rely on retries in StartProxy
-
 	}
 
 	// Infer protocol if not specified

@@ -1371,8 +1371,26 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 	// Wait a bit to ensure the device has finished setting up the TCP server structures
 	time.Sleep(200 * time.Millisecond)
 
-	// REMOVED Init Packet - Returning to baseline behavior to trace the "Session Reset" issue.
-	// The Init Packet was a hypothesis that didn't solve the silence and might interfere with the Reset analysis.
+	// RESTORED Init Packet
+	// Send empty tcpData to trigger the server-side Dial() for protocols like VNC
+	// that don't send data first.
+	initMsg := tcpData{
+		Version:   0,
+		MappingID: 1,
+		ChanNum:   chanNum,
+		Data:      []byte{},
+	}
+	initBytes, _ := json.Marshal(initMsg)
+
+	tunnel.wsMu.Lock()
+	if tunnel.wsConn != nil {
+		if err := sendWrappedMessage(tunnel.wsConn, initBytes, tunnel.config.Key, websocket.BinaryMessage); err != nil {
+			fmt.Printf("TUNNEL[%s] ChanNum=%d: Failed to send init packet: %v\n", tunnel.ID, chanNum, err)
+		} else {
+			fmt.Printf("TUNNEL[%s] ChanNum=%d: Sent init packet (empty tcpData)\n", tunnel.ID, chanNum)
+		}
+	}
+	tunnel.wsMu.Unlock()
 
 	done := make(chan struct{})
 
