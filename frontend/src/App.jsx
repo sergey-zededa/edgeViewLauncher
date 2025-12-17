@@ -62,6 +62,7 @@ function App() {
   const [tunnelLoadingMessage, setTunnelLoadingMessage] = useState('');
   const [sshUser, setSshUser] = useState('root');
   const [sshPassword, setSshPassword] = useState('');
+  const [sshPort, setSshPort] = useState('22');
   const [sshTunnelConfig, setSshTunnelConfig] = useState(null);
   const [logs, setLogs] = useState([]);
   const [showTerminal, setShowTerminal] = useState(false);
@@ -491,18 +492,24 @@ function App() {
       return;
     }
 
+    const targetPort = parseInt(sshPort, 10);
+    if (Number.isNaN(targetPort) || targetPort <= 0 || targetPort > 65535) {
+      setSshError('Enter a valid port between 1 and 65535');
+      return;
+    }
+
     try {
       setTunnelLoading('ssh');
       const sshTarget = ip;
-      setTunnelLoadingMessage(`Starting SSH tunnel to ${sshTarget}:22...`);
-      addLog(`Starting SSH tunnel to ${sshTarget}:22...`, 'info');
+      setTunnelLoadingMessage(`Starting SSH tunnel to ${sshTarget}:${targetPort}...`);
+      addLog(`Starting SSH tunnel to ${sshTarget}:${targetPort}...`, 'info');
 
-      const result = await StartTunnel(selectedNode.id, sshTarget, 22);
+      const result = await StartTunnel(selectedNode.id, sshTarget, targetPort);
       const localPort = result.port || result;
       const tunnelId = result.tunnelId;
 
       addLog(`SSH tunnel active on localhost:${localPort}`, 'success');
-      addTunnel('SSH', sshTarget, 22, localPort, tunnelId, sshUser);
+      addTunnel('SSH', sshTarget, targetPort, localPort, tunnelId, sshUser);
       setHighlightTunnels(true);
       setTimeout(() => setHighlightTunnels(false), 2000);
 
@@ -530,6 +537,7 @@ function App() {
 
       setSshTunnelConfig(null);
       setSshPassword(''); // Clear password
+      setSshPort('22'); // Reset port
     } catch (err) {
       console.error(err);
       handleTunnelError(err);
@@ -2338,9 +2346,8 @@ function App() {
                       <X size={14} />
                     </button>
                   </div>
-                  <div style={{ fontSize: '12px', marginBottom: '16px', color: '#ccc' }}>
-                    <div>Device: {selectedNode?.name}</div>
-                    <div style={{ marginTop: '4px' }}>Target IP: {sshTunnelConfig.ip}</div>
+                  <div style={{ fontSize: '12px', marginBottom: '20px', color: '#888', textAlign: 'center' }}>
+                    {selectedNode?.name} • <span style={{ fontFamily: 'monospace' }}>{sshTunnelConfig.ip}</span>
                   </div>
 
                   {sshError && (
@@ -2351,7 +2358,7 @@ function App() {
                       padding: '8px 12px',
                       borderRadius: '4px',
                       fontSize: '12px',
-                      marginBottom: '12px',
+                      marginBottom: '16px',
                       display: 'flex',
                       alignItems: 'center',
                       gap: '8px'
@@ -2361,19 +2368,34 @@ function App() {
                     </div>
                   )}
 
-                  <div className="form-group" style={{ marginBottom: '12px' }}>
-                    <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>Username</label>
-                    <input
-                      type="text"
-                      value={sshUser}
-                      onChange={(e) => setSshUser(e.target.value)}
-                      placeholder="root"
-                      style={{ width: '100%', padding: '8px', backgroundColor: '#1a1a1a', border: '1px solid #333', borderRadius: '4px', color: '#fff', outline: 'none', boxSizing: 'border-box' }}
-                    />
+                  <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
+                    <div className="form-group" style={{ flex: '3' }}>
+                      <label style={{ fontSize: '12px', display: 'block', marginBottom: '6px', color: '#ccc' }}>Username</label>
+                      <input
+                        type="text"
+                        value={sshUser}
+                        onChange={(e) => setSshUser(e.target.value)}
+                        placeholder="root"
+                        style={{ width: '100%', padding: '8px 10px', backgroundColor: '#1a1a1a', border: '1px solid #333', borderRadius: '4px', color: '#fff', outline: 'none', boxSizing: 'border-box' }}
+                      />
+                    </div>
+
+                    <div className="form-group" style={{ flex: '1' }}>
+                      <label style={{ fontSize: '12px', display: 'block', marginBottom: '6px', color: '#ccc' }}>Port</label>
+                      <input
+                        type="number"
+                        value={sshPort}
+                        onChange={(e) => setSshPort(e.target.value)}
+                        placeholder="22"
+                        min="1"
+                        max="65535"
+                        style={{ width: '100%', padding: '8px 10px', backgroundColor: '#1a1a1a', border: '1px solid #333', borderRadius: '4px', color: '#fff', outline: 'none', boxSizing: 'border-box' }}
+                      />
+                    </div>
                   </div>
 
-                  <div className="form-group" style={{ marginBottom: '16px' }}>
-                    <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>Password (Optional)</label>
+                  <div className="form-group" style={{ marginBottom: '24px' }}>
+                    <label style={{ fontSize: '12px', display: 'block', marginBottom: '6px', color: '#ccc' }}>Password (Optional)</label>
                     <input
                       type="password"
                       value={sshPassword}
