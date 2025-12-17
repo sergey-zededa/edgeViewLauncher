@@ -1,6 +1,6 @@
 {
   "name": "edgeview-launcher",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "EdgeView Launcher - Electron Edition",
   "main": "electron-main.js",
   "scripts": {
@@ -43,6 +43,7 @@
       "private": true
     },
     "win": {
+      "artifactName": "${name}-Setup-${version}.${ext}",
       "icon": "assets/icon.ico",
       "target": [
         {
@@ -60,6 +61,7 @@
       ]
     },
     "mac": {
+      "artifactName": "${name}-${version}-${arch}.${ext}",
       "category": "public.app-category.developer-tools",
       "target": [
         {
@@ -90,6 +92,7 @@
       ]
     },
     "linux": {
+      "artifactName": "${name}-${version}-${arch}.${ext}",
       "icon": "assets/icon.png",
       "maintainer": "ZEDEDA <support@zededa.com>",
       "target": [
