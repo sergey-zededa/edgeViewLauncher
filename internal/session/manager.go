@@ -603,7 +603,7 @@ func (m *Manager) ExecuteCommand(nodeID string, command string) (string, error) 
 	headers.Add("X-Hostname", hostname)
 
 	// Connect to WebSocket
-	tlsConfig := &tls.Config{InsecureSkipVerify: true}
+	tlsConfig := &tls.Config{InsecureSkipVerify: false}
 	netDialer := &net.Dialer{}
 	dialer := &websocket.Dialer{
 		TLSClientConfig:  tlsConfig,
@@ -1009,7 +1009,7 @@ func (m *Manager) connectToEdgeView(config *zededa.SessionConfig) (*websocket.Co
 
 	// Connect to WebSocket
 	tlsConfig := &tls.Config{
-		InsecureSkipVerify: true,
+		InsecureSkipVerify: false,
 	}
 	netDialer := &net.Dialer{}
 	dialer := &websocket.Dialer{
