@@ -1424,31 +1424,6 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 				copy(lastPacket, data)
 				
 				packetCount++
-				if packetCount <= 3 {
-					// DEBUG: Log the first 3 packets to diagnose invalid packet length errors
-					prefix := ""
-					if len(data) > 32 {
-						prefix = string(data[:32])
-					} else {
-						prefix = string(data)
-					}
-					
-					isText := true
-					for _, b := range []byte(prefix) {
-						if (b < 32 || b > 126) && b != '\r' && b != '\n' && b != '\t' {
-							isText = false
-							break
-						}
-					}
-
-					// Log only protocol level info, not full dumps unless error
-					if strings.HasPrefix(prefix, "SSH-") {
-						// fmt.Printf("TUNNEL[%s] ChanNum=%d: Packet #%d is valid SSH version: %s\n", tunnel.ID, chanNum, packetCount, strings.TrimSpace(prefix))
-					} else if isText {
-						// Only log if it looks like a text error
-						fmt.Printf("TUNNEL[%s] ChanNum=%d: Packet #%d received text (possible error): %s\n", tunnel.ID, chanNum, packetCount, strings.TrimSpace(string(data)))
-					}
-				}
 
 				if _, err := conn.Write(data); err != nil {
 					fmt.Printf("TUNNEL[%s] ChanNum=%d: WS->TCP write error: %v\n", tunnel.ID, chanNum, err)

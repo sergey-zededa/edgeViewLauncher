@@ -57,9 +57,8 @@ function App() {
   const [activeTunnels, setActiveTunnels] = useState([]); // Track active tunnels across all devices
   const [showGlobalTunnels, setShowGlobalTunnels] = useState(false);
   const [tunnelConnected, setTunnelConnected] = useState(false);
-  const [loadingMessage, setLoadingMessage] = useState('');
   const [tunnelLoading, setTunnelLoading] = useState(null);
-  const [tunnelLoadingMessage, setTunnelLoadingMessage] = useState('');
+  // Removed loadingMessage and tunnelLoadingMessage in favor of globalStatus
   const [sshUser, setSshUser] = useState('root');
   const [sshPassword, setSshPassword] = useState('');
   const [sshPort, setSshPort] = useState('22');
@@ -456,7 +455,7 @@ function App() {
     try {
       setTcpError('');
       setTunnelLoading('tcp');
-      setTunnelLoadingMessage(`Starting TCP tunnel to ${ip}:${port}...`);
+      setGlobalStatus({ type: 'loading', message: `Starting TCP tunnel to ${ip}:${port}...` });
       addLog(`Starting TCP tunnel to ${ip}:${port}...`, 'info');
 
       const result = await StartTunnel(selectedNode.id, ip, port);
@@ -479,7 +478,7 @@ function App() {
       addLog(`Failed to start TCP tunnel: ${msg}`, 'error');
     } finally {
       setTunnelLoading(null);
-      setTunnelLoadingMessage('');
+      setGlobalStatus(null);
     }
   };
 
@@ -501,7 +500,7 @@ function App() {
     try {
       setTunnelLoading('ssh');
       const sshTarget = ip;
-      setTunnelLoadingMessage(`Starting SSH tunnel to ${sshTarget}:${targetPort}...`);
+      setGlobalStatus({ type: 'loading', message: `Starting SSH tunnel to ${sshTarget}:${targetPort}...` });
       addLog(`Starting SSH tunnel to ${sshTarget}:${targetPort}...`, 'info');
 
       const result = await StartTunnel(selectedNode.id, sshTarget, targetPort);
@@ -545,7 +544,7 @@ function App() {
       addLog(`Failed to start SSH tunnel: ${err.message}`, 'error');
     } finally {
       setTunnelLoading(null);
-      setTunnelLoadingMessage('');
+      setGlobalStatus(null);
     }
   };
 
@@ -728,7 +727,8 @@ function App() {
     setLogs([]);
     setLoadingServices(true);
     setLoadingSSH(true);
-    setLoadingMessage("Fetching device services...");
+    // Use global status for SSH connection progress
+    setGlobalStatus({ type: 'loading', message: "Fetching device services..." });
     addLog(`Connecting to ${node.name}...`);
     setShowTerminal(false);
 
@@ -748,6 +748,17 @@ function App() {
       setServices({ error: err.toString() });
     }).finally(() => {
       setLoadingServices(false);
+      // Clear global status if it was "Fetching device services..."
+      // But loadSSHStatus might have set it to something else, so be careful.
+      // However, loadSSHStatus is called in parallel, so this might be tricky.
+      // Let's rely on loadSSHStatus to update it or clear it.
+      // If loadSSHStatus finishes first, we don't want to clear it.
+      // But loadSSHStatus sets globalStatus on start.
+      // Given the overlap, maybe we just don't clear it here? 
+      // Or we check if message is "Fetching device services..."?
+      // Since we can't check current state easily in closure, let's assume loadSSHStatus will handle it.
+      // Actually, handleConnect logic is a bit messy with parallel calls.
+      // Let's just not clear it here, as loadSSHStatus is likely still running or will run.
       GetSessionStatus(node.id).then(status => {
         if (status.active) {
           setSessionStatus(status);
@@ -761,7 +772,7 @@ function App() {
 
   const loadSSHStatus = async (nodeId, checkTunnel = true) => {
     setLoadingSSH(true);
-    setLoadingMessage("Checking SSH configuration...");
+    setGlobalStatus({ type: 'loading', message: "Checking SSH configuration..." });
     // REMOVED: addLog("Checking SSH status..."); (too verbose)
     let sessStatus = null;
     try {
@@ -778,7 +789,7 @@ function App() {
         console.error('Failed to get session status:', err);
       }
       if (checkTunnel) {
-        setLoadingMessage("Verifying EdgeView tunnel...");
+        setGlobalStatus({ type: 'loading', message: "Verifying EdgeView tunnel..." });
         // REMOVED: addLog("Verifying EdgeView tunnel connectivity..."); (too verbose)
         try {
           await VerifyTunnel(nodeId);
@@ -806,6 +817,7 @@ function App() {
       setTunnelConnected(false);
     } finally {
       setLoadingSSH(false);
+      setGlobalStatus(null);
     }
   };
 
@@ -818,7 +830,7 @@ function App() {
       try {
         const progress = await GetConnectionProgress(nodeId);
         if (progress && typeof progress.status === 'string' && progress.status.trim().length > 0) {
-          setLoadingMessage(progress.status);
+          setGlobalStatus({ type: 'loading', message: progress.status });
         }
       } catch (e) {
         // Ignore polling errors – connection attempts may still be in progress.
@@ -828,7 +840,7 @@ function App() {
     try {
       setShowTerminalMenu(false);
       setLoadingSSH(true);
-      setLoadingMessage('Starting EdgeView session...');
+      setGlobalStatus({ type: 'loading', message: 'Starting EdgeView session...' });
       addLog(`Starting EdgeView SSH session (${useInApp ? 'In-App Terminal' : 'Native Terminal'})...`, 'info');
 
       // Start polling connection progress while backend works.
@@ -877,13 +889,13 @@ function App() {
 
       cancelled = true;
       clearInterval(intervalId);
-      setLoadingMessage('');
+      setGlobalStatus(null);
       setLoadingSSH(false);
     } catch (err) {
       cancelled = true;
       clearInterval(intervalId);
       setLoadingSSH(false);
-      setLoadingMessage('');
+      setGlobalStatus(null);
       console.error('Failed to connect:', err);
       const userMessage = extractErrorMessage(err);
       addLog(`Connection failed: ${userMessage}`, 'error');
@@ -895,7 +907,7 @@ function App() {
   const handleSetupSSH = async () => {
     if (!selectedNode) return;
     setLoadingSSH(true);
-    setLoadingMessage("Enabling SSH access...");
+    setGlobalStatus({ type: 'loading', message: "Enabling SSH access..." });
     addLog("Enabling SSH access...", 'info');
     try {
       await SetupSSH(selectedNode.id);
@@ -905,6 +917,7 @@ function App() {
       console.error(err);
       addLog("Failed to setup SSH: " + err, 'error');
       setLoadingSSH(false);
+      setGlobalStatus(null);
     }
   };
 
@@ -912,7 +925,7 @@ function App() {
     if (!selectedNode) return;
     if (!confirm("Are you sure you want to disable SSH access? This will remove the public key from the device.")) return;
     setLoadingSSH(true);
-    setLoadingMessage("Disabling SSH access...");
+    setGlobalStatus({ type: 'loading', message: "Disabling SSH access..." });
     addLog("Disabling SSH access...", 'info');
     try {
       await DisableSSH(selectedNode.id);
@@ -922,12 +935,14 @@ function App() {
       console.error(err);
       addLog("Failed to disable SSH: " + err, 'error');
       setLoadingSSH(false);
+      setGlobalStatus(null);
     }
   };
 
   const handleToggleVGA = async (enabled) => {
     if (!selectedNode) return;
     setLoadingSSH(true);
+    setGlobalStatus({ type: 'loading', message: enabled ? "Enabling VGA..." : "Disabling VGA..." });
     try {
       await SetVGAEnabled(selectedNode.id, enabled);
       loadSSHStatus(selectedNode.id);  // Refresh to get updated status
@@ -936,12 +951,14 @@ function App() {
       console.error(err);
       addLog(`Failed to toggle VGA: ${err}`, 'error');
       setLoadingSSH(false);
+      setGlobalStatus(null);
     }
   };
 
   const handleToggleUSB = async (enabled) => {
     if (!selectedNode) return;
     setLoadingSSH(true);
+    setGlobalStatus({ type: 'loading', message: enabled ? "Enabling USB..." : "Disabling USB..." });
     try {
       await SetUSBEnabled(selectedNode.id, enabled);
       loadSSHStatus(selectedNode.id);  // Refresh to get updated status
@@ -950,12 +967,14 @@ function App() {
       console.error(err);
       addLog(`Failed to toggle USB: ${err}`, 'error');
       setLoadingSSH(false);
+      setGlobalStatus(null);
     }
   };
 
   const handleToggleConsole = async (enabled) => {
     if (!selectedNode) return;
     setLoadingSSH(true);
+    setGlobalStatus({ type: 'loading', message: enabled ? "Enabling Console..." : "Disabling Console..." });
     try {
       await SetConsoleEnabled(selectedNode.id, enabled);
       loadSSHStatus(selectedNode.id);  // Refresh to get updated status
@@ -964,6 +983,7 @@ function App() {
       console.error(err);
       addLog(`Failed to toggle Console: ${err}`, 'error');
       setLoadingSSH(false);
+      setGlobalStatus(null);
     }
   };
 
@@ -1805,25 +1825,7 @@ function App() {
                   </div>
                 </div>
 
-                <div className="ssh-details-wrapper" style={{ position: 'relative', minHeight: '80px' }}>
-                  {loadingSSH && (
-                    <div className="ssh-loading-overlay" style={{
-                      position: 'absolute',
-                      inset: 0,
-                      backgroundColor: 'rgba(30, 30, 30, 0.8)',
-                      zIndex: 10,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '8px',
-                      borderRadius: '6px'
-                    }}>
-                      <Activity className="animate-spin" size={18} />
-                      <span className="loading-text" style={{ fontSize: '13px', color: '#ccc' }}>{loadingMessage || "Checking status..."}</span>
-                    </div>
-                  )}
-                  
+                  <div className="ssh-details-wrapper" style={{ position: 'relative', minHeight: '80px' }}>
                   {sshStatus ? (
                   <div className="ssh-details" style={{ opacity: loadingSSH ? 0.3 : 1, transition: 'opacity 0.2s' }}>
                     <div className="status-grid">
@@ -1987,14 +1989,6 @@ function App() {
               </div>
             ) : services ? (
               <div className="services-list">
-                {tunnelLoading && (
-                  <div className="tunnel-loading-banner">
-                    <Activity className="loading-icon animate-spin" size={16} />
-                    <span className="loading-text">
-                      {tunnelLoadingMessage || 'Connecting tunnel...'}
-                    </span>
-                  </div>
-                )}
                 {(() => {
                   const servicesList = Array.isArray(services) ? services : (services.services || []);
                   const globalError = !Array.isArray(services) ? services.error : null;
@@ -2069,7 +2063,7 @@ function App() {
                                             setVncMenuAppId(null);
                                             try {
                                               setTunnelLoading('vnc');
-                                              setTunnelLoadingMessage(`Starting VNC tunnel to localhost:${app.vncPort}...`);
+                                              setGlobalStatus({ type: 'loading', message: `Starting VNC tunnel to localhost:${app.vncPort}...` });
                                               const vncTarget = 'localhost';
                                               addLog(`Starting VNC tunnel to ${vncTarget}:${app.vncPort}...`, 'info');
                                               const result = await StartTunnel(selectedNode.id, vncTarget, app.vncPort, 'vnc');
@@ -2093,7 +2087,7 @@ function App() {
                                               addLog(`Failed to start VNC tunnel: ${err.message}`, 'error');
                                             } finally {
                                               setTunnelLoading(null);
-                                              setTunnelLoadingMessage('');
+                                              setGlobalStatus(null);
                                             }
                                           }}
                                           style={{
@@ -2115,7 +2109,7 @@ function App() {
                                             setVncMenuAppId(null);
                                             try {
                                               setTunnelLoading('vnc');
-                                              setTunnelLoadingMessage(`Starting VNC tunnel to localhost:${app.vncPort}...`);
+                                              setGlobalStatus({ type: 'loading', message: `Starting VNC tunnel to localhost:${app.vncPort}...` });
                                               const vncTarget = 'localhost';
                                               addLog(`Starting VNC tunnel to ${vncTarget}:${app.vncPort}...`, 'info');
                                               const result = await StartTunnel(selectedNode.id, vncTarget, app.vncPort, 'vnc-tcp');
@@ -2136,7 +2130,7 @@ function App() {
                                               addLog(`Failed to start VNC tunnel: ${err.message}`, 'error');
                                             } finally {
                                               setTunnelLoading(null);
-                                              setTunnelLoadingMessage('');
+                                              setGlobalStatus(null);
                                             }
                                           }}
                                           style={{
