@@ -96,6 +96,9 @@ function App() {
 
   // Settings editing state
   const [editingCluster, setEditingCluster] = useState({ name: '', baseUrl: '', apiToken: '' });
+  const [viewingClusterName, setViewingClusterName] = useState('');
+  const [viewingUserInfo, setViewingUserInfo] = useState(null);
+  const [loadingTokenInfo, setLoadingTokenInfo] = useState(false);
   const [saveStatus, setSaveStatus] = useState('');
   const [tokenStatus, setTokenStatus] = useState(null);
   const [settingsError, setSettingsError] = useState(null); // Track settings save errors
@@ -243,23 +246,55 @@ function App() {
   }, [query, showSettings, selectedNode]);
 
 
+  const fetchViewingUserInfo = async (cluster) => {
+    if (!cluster || !cluster.apiToken || !cluster.baseUrl) {
+      setViewingUserInfo(null);
+      setTokenStatus(null);
+      return;
+    }
+    
+    setLoadingTokenInfo(true);
+    
+    // Use VerifyToken directly to check the specific cluster credentials
+    try {
+      // Don't set loading state here to avoid flickering, just update when done
+      const info = await VerifyToken(cluster.apiToken, cluster.baseUrl);
+      
+      if (info.valid) {
+        setViewingUserInfo({
+          tokenOwner: info.subject,
+          tokenExpiry: info.expiresAt,
+          tokenRole: info.role,
+          lastLogin: info.lastLogin
+        });
+        setTokenStatus({ valid: true, message: 'Token valid' });
+      } else {
+        setViewingUserInfo(null);
+        setTokenStatus({ valid: false, message: info.error || 'Invalid token' });
+      }
+    } catch (err) {
+      console.error('Failed to verify token:', err);
+      setViewingUserInfo(null);
+      setTokenStatus({ valid: false, message: 'Verification failed' });
+    } finally {
+      setLoadingTokenInfo(false);
+    }
+  };
+
   // Sync editingCluster with activeCluster when settings open and load user info
   useEffect(() => {
     if (showSettings) {
+      // If we are opening settings, default to viewing the active cluster
+      // Note: We avoid including config in dependencies to prevent overriding user selection
+      // when adding/removing clusters.
+      setViewingClusterName(config.activeCluster);
       const active = config.clusters.find(c => c.name === config.activeCluster);
       if (active) {
         setEditingCluster({ ...active });
-        // Token verification disabled - will be re-enabled in future
-        setTokenStatus(null);
-        // Load user info when opening settings
-        if (active.apiToken) {
-          loadUserInfo().catch(err => {
-            console.log('Failed to load user info when opening settings:', err);
-          });
-        }
+        fetchViewingUserInfo(active);
       }
     }
-  }, [showSettings, config.activeCluster, config.clusters]);
+  }, [showSettings]);
 
   // Helper to format relative time
   const getRelativeTime = (timestamp) => {
@@ -1081,8 +1116,11 @@ function App() {
   const addNewCluster = () => {
     const newName = `Cluster ${config.clusters.length + 1}`;
     const newClusters = [...config.clusters, { name: newName, baseUrl: '', apiToken: '' }];
-    setConfig({ ...config, clusters: newClusters, activeCluster: newName });
+    setConfig({ ...config, clusters: newClusters });
+    setViewingClusterName(newName);
     setEditingCluster({ name: newName, baseUrl: '', apiToken: '' });
+    setViewingUserInfo(null);
+    setTokenStatus(null);
   };
 
   const deleteCluster = (name) => {
@@ -1092,23 +1130,27 @@ function App() {
       newActive = newClusters.length > 0 ? newClusters[0].name : '';
     }
     setConfig({ ...config, clusters: newClusters, activeCluster: newActive });
+    // If we deleted the viewing cluster, switch view to the new active one (or first available)
+    if (name === viewingClusterName) {
+       setViewingClusterName(newActive);
+       const nextCluster = newClusters.find(c => c.name === newActive);
+       if (nextCluster) {
+         setEditingCluster({ ...nextCluster });
+       }
+    }
   };
 
-  const switchCluster = async (name) => {
-    setConfig({ ...config, activeCluster: name });
+  const handleClusterSelect = async (name) => {
+    setViewingClusterName(name);
     const cluster = config.clusters.find(c => c.name === name);
     if (cluster) {
       setEditingCluster({ ...cluster });
-      // Refresh user info when switching clusters
-      if (cluster.apiToken) {
-        try {
-          await loadUserInfo();
-        } catch (err) {
-          console.log('Failed to load user info for switched cluster:', err);
-          // Don't block the switch, just log the error
-        }
-      }
+      fetchViewingUserInfo(cluster);
     }
+  };
+
+  const activateCluster = () => {
+    saveSettings(viewingClusterName);
   };
 
   // Update handlers
@@ -1144,26 +1186,42 @@ function App() {
     setUpdateState(prev => ({ ...prev, status: 'dismissed' }));
   };
 
-  const saveSettings = async () => {
+  const saveSettings = async (targetActiveCluster = null) => {
     setSettingsError(null); // Clear previous errors
     setSaveStatus('Saving...');
 
     try {
       let clustersToSave = [...config.clusters];
-      let activeToSave = config.activeCluster;
+      // Default to current active, unless overridden (e.g. by Switch to this Cluster)
+      let activeToSave = targetActiveCluster || config.activeCluster;
 
-      // Update the currently active cluster with the edited values
+      // Update the currently viewed cluster with the edited values
       if (clustersToSave.length > 0) {
-        const activeIndex = clustersToSave.findIndex(c => c.name === config.activeCluster);
-        if (activeIndex !== -1) {
+        const editingIndex = clustersToSave.findIndex(c => c.name === viewingClusterName);
+        if (editingIndex !== -1) {
           // Sanitize Base URL - remove trailing slashes
           const sanitizedCluster = { ...editingCluster };
           if (sanitizedCluster.baseUrl) {
             sanitizedCluster.baseUrl = sanitizedCluster.baseUrl.replace(/\/+$/, '');
           }
 
-          clustersToSave[activeIndex] = sanitizedCluster;
-          activeToSave = sanitizedCluster.name;
+          clustersToSave[editingIndex] = sanitizedCluster;
+          
+          // If we are editing the active cluster (or renamed it), update activeToSave
+          // Only update activeToSave if we didn't explicitly override it
+          if (!targetActiveCluster && viewingClusterName === config.activeCluster) {
+            activeToSave = sanitizedCluster.name;
+          }
+          // If we explicitly switched to this cluster, ensure activeToSave uses the potentially renamed value
+          if (targetActiveCluster === viewingClusterName) {
+             activeToSave = sanitizedCluster.name;
+          }
+
+          // Update viewingClusterName to the new name so subsequent saves work
+          setViewingClusterName(sanitizedCluster.name);
+          
+          // Update viewing info with new credentials
+          fetchViewingUserInfo(sanitizedCluster);
         }
       } else {
         // If no clusters exist, create one from editingCluster
@@ -1175,6 +1233,8 @@ function App() {
 
         clustersToSave = [sanitizedCluster];
         activeToSave = sanitizedCluster.name;
+        setViewingClusterName(sanitizedCluster.name);
+        fetchViewingUserInfo(sanitizedCluster);
       }
 
       // Save using secure storage
@@ -1203,25 +1263,18 @@ function App() {
         setNodes([]);
         setProjects([]);
         setEnterprise(null);
+        
+        // Refresh global active user info if we changed the active cluster
+        if (newConfig.activeCluster === activeToSave) {
+           loadUserInfo().catch(console.error);
+        }
 
         if (active && active.apiToken) {
-          try {
-            await loadUserInfo();
-            // If user info loads successfully, token is valid
             setSaveStatus('Settings saved successfully!');
             setTimeout(() => {
               setSaveStatus('');
-              setShowSettings(false); // Only close on success
+              // Don't close settings immediately to allow user to verify
             }, 1500);
-          } catch (err) {
-            // Check if this is an authentication error
-            if (err.message && (err.message.includes('401') || err.message.includes('unauthorized'))) {
-              setSettingsError('Authentication failed. Please check your API token and Base URL.');
-              setSaveStatus('');
-              return; // Don't close settings
-            }
-            throw err; // Re-throw if it's a different error
-          }
         } else {
           setSaveStatus('Settings saved successfully!');
           setTimeout(() => {
@@ -1433,8 +1486,8 @@ function App() {
                 {config.clusters.map((cluster, idx) => (
                   <div
                     key={idx}
-                    className={`cluster-item ${cluster.name === config.activeCluster ? 'active' : ''}`}
-                    onClick={() => switchCluster(cluster.name)}
+                    className={`cluster-item ${cluster.name === viewingClusterName ? 'active' : ''}`}
+                    onClick={() => handleClusterSelect(cluster.name)}
                   >
                     <div className="cluster-name">{cluster.name}</div>
                     {cluster.name === config.activeCluster && <div className="active-badge">Active</div>}
@@ -1454,6 +1507,20 @@ function App() {
                 ))}
               </div>
               <div className="cluster-details">
+                {viewingClusterName !== config.activeCluster && (
+                  <div className="cluster-actions-bar" style={{ marginBottom: '15px', paddingBottom: '15px', borderBottom: '1px solid #333' }}>
+                    <div className="info-text" style={{ fontSize: '12px', color: '#888', marginBottom: '10px' }}>
+                      This cluster is not active.
+                    </div>
+                    <button 
+                      className="btn secondary" 
+                      onClick={activateCluster}
+                      style={{ width: '100%', justifyContent: 'center', padding: '8px' }}
+                    >
+                      Switch to this Cluster
+                    </button>
+                  </div>
+                )}
                 <div className="form-group">
                   <label>Cluster Name</label>
                   <input
@@ -1489,26 +1556,39 @@ function App() {
                   )}
                 </div>
 
-                {/* Token Info - only show for active cluster when userInfo is loaded */}
-                {userInfo && editingCluster.name === config.activeCluster && (userInfo.tokenOwner || userInfo.tokenExpiry || userInfo.tokenRole || userInfo.lastLogin) && (
+                {/* Token Info - show for viewing cluster */}
+                {viewingUserInfo && (
                   <div className="token-info-section">
                     <label>Token Status</label>
-                    <div className="token-info-content">
-                      {userInfo.tokenOwner && (
+                    <div className="token-info-content" style={{ opacity: loadingTokenInfo ? 0.5 : 1, transition: 'opacity 0.2s' }}>
+                      {viewingUserInfo.tokenOwner && (
                         <div className="token-info-row">
                           <span className="token-info-label">Owner:</span>
-                          <span className="token-info-value">{userInfo.tokenOwner}</span>
+                          <span className="token-info-value">{viewingUserInfo.tokenOwner}</span>
                         </div>
                       )}
-                      {userInfo.tokenRole && (
+                      {viewingUserInfo.tokenRole && (
                         <div className="token-info-row">
                           <span className="token-info-label">Role:</span>
-                          <span className="token-info-value">{userInfo.tokenRole}</span>
+                          <span className="token-info-value">{viewingUserInfo.tokenRole}</span>
                         </div>
                       )}
-                      {userInfo.tokenExpiry && (() => {
-                        const expiryDate = new Date(userInfo.tokenExpiry);
+                      {false && viewingUserInfo.tokenExpiry && (() => {
+                        const expiryDate = new Date(viewingUserInfo.tokenExpiry);
                         const now = new Date();
+                        
+                        // Check for invalid/zero date (Year 1)
+                        // Go zero time is 0001-01-01, JS parses this as year 1 or 1901 depending on browser
+                        // We check if year is less than 2000 to be safe
+                        if (expiryDate.getFullYear() < 2000) {
+                           return (
+                            <div className="token-info-row">
+                              <span className="token-info-label">Expires:</span>
+                              <span className="token-info-value">Unknown</span>
+                            </div>
+                           );
+                        }
+
                         const hoursLeft = (expiryDate - now) / (1000 * 60 * 60);
                         const isExpired = hoursLeft <= 0;
                         const isExpiringSoon = hoursLeft < 1 && hoursLeft > 0;
@@ -1540,8 +1620,9 @@ function App() {
                           </div>
                         );
                       })()}
-                      {userInfo.lastLogin && (() => {
-                        const lastLoginDate = new Date(userInfo.lastLogin);
+                      {viewingUserInfo.lastLogin && (() => {
+                        const lastLoginDate = new Date(viewingUserInfo.lastLogin);
+                        if (lastLoginDate.getFullYear() < 2000) return null;
                         return (
                           <div className="token-info-row">
                             <span className="token-info-label">Last Login:</span>
@@ -1613,7 +1694,7 @@ function App() {
                       {saveStatus}
                     </span>
                   )}
-                  <button className="save-btn" onClick={saveSettings}>
+                  <button className="save-btn" onClick={() => saveSettings(null)}>
                     <Save size={16} /> Save Changes
                   </button>
                 </div>

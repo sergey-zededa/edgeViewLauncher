@@ -8,6 +8,9 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 1. **NEVER create git tags** or trigger release builds (CI/CD) unless explicitly instructed by the user.
 2. **NEVER push to remote** (`git push`) unless explicitly asked.
 3. Do not modify `eve/` directory contents as they are reference implementations.
+4. **ALWAYS run tests and build** after modifying code to verify changes:
+   - Frontend: `cd frontend && npm test` (fix any failures) and `npm run build:frontend`.
+   - Backend: `go build -o edgeview-backend ./cmd/edgeview-backend`.
 
 ## Project Overview
 
