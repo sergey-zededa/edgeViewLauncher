@@ -193,7 +193,7 @@ function App() {
           // Closed tunnels detected by polling (IDs no longer present)
           prevForNode.forEach(t => {
             if (!newIds.has(t.id)) {
-              addLog(`Tunnel closed: ${t.type} localhost:${t.localPort} -> ${t.targetIP}:${t.targetPort}`, 'info');
+              addLog(`Tunnel closed: ${t.type} localhost:${t.localPort} -> ${t.targetIP}:${t.targetPort}`, 'closed');
             }
           });
 
@@ -550,9 +550,15 @@ function App() {
 
   const removeTunnel = async (tunnelId) => {
     try {
+      const tunnel = activeTunnels.find(t => t.id === tunnelId);
       await CloseTunnel(tunnelId);
       setActiveTunnels(prev => prev.filter(t => t.id !== tunnelId));
-      addLog(`Tunnel closed`, 'info');
+      
+      if (tunnel) {
+        addLog(`Tunnel closed: ${tunnel.type} localhost:${tunnel.localPort} -> ${tunnel.targetIP}:${tunnel.targetPort}`, 'closed');
+      } else {
+        addLog(`Tunnel closed`, 'closed');
+      }
     } catch (err) {
       console.error(err);
       addLog(`Failed to close tunnel: ${err.message}`, 'error');

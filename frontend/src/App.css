@@ -956,6 +956,10 @@ body {
     color: #d29922;
 }
 
+.log-entry.closed {
+    color: #d29922;
+}
+
 .log-time {
     color: var(--text-placeholder);
     margin-right: 8px;
