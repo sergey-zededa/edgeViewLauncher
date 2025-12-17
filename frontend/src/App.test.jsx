@@ -121,7 +121,8 @@ describe('App configuration and tunnels', () => {
 
     // The new cluster should be selected (viewing) but NOT active yet
     // Check for the "Switch to this Cluster" button which appears for non-active clusters
-    expect(screen.getByText('Switch to this Cluster')).toBeInTheDocument();
+    // Use findByRole to be resilient to potential render delays/updates
+    expect(await screen.findByRole('button', { name: /switch to this cluster/i })).toBeInTheDocument();
     
     // Should not have the active badge
     expect(screen.queryByText('Active')).not.toBeInTheDocument();
