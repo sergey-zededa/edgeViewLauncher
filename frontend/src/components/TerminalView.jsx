@@ -238,7 +238,7 @@ const TerminalView = ({ port }) => {
             {/* Toolbar */}
             <div className="terminal-toolbar" style={{
                 padding: '10px',
-                paddingLeft: '80px',
+                paddingLeft: window.electronAPI?.platform === 'darwin' ? '80px' : '10px',
                 backgroundColor: '#1a1a1a',
                 borderBottom: '1px solid #333',
                 WebkitAppRegion: 'drag',

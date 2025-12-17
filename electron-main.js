@@ -393,9 +393,9 @@ function createVncWindow(options) {
             contextIsolation: true,
             nodeIntegration: false
         },
+        frame: false,
         ...(process.platform === 'darwin' ? {
-            titleBarStyle: 'hiddenInset',
-            frame: false
+            titleBarStyle: 'hiddenInset'
         } : {})
     });
 
@@ -716,9 +716,9 @@ ipcMain.handle('open-terminal-window', async (event, options) => {
         },
         title: `SSH - ${nodeName}`,
         backgroundColor: '#1e1e1e',
+        frame: false,
         ...(process.platform === 'darwin' ? {
-            titleBarStyle: 'hiddenInset',
-            frame: false
+            titleBarStyle: 'hiddenInset'
         } : {})
     });
 

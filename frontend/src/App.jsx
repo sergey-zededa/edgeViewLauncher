@@ -104,6 +104,8 @@ function App() {
   const [settingsError, setSettingsError] = useState(null); // Track settings save errors
   const [globalStatus, setGlobalStatus] = useState(null);
   const [sshError, setSshError] = useState(null);
+  // Last SSH update timestamp
+  const [lastSSHUpdate, setLastSSHUpdate] = useState(0);
 
   const handleTokenPaste = (token) => {
     setEditingCluster({ ...editingCluster, apiToken: token });
@@ -863,6 +865,13 @@ function App() {
   };
 
   const startSession = async (nodeId, useInApp) => {
+    // Check if SSH was recently updated (within last 60 seconds)
+    if (Date.now() - lastSSHUpdate < 60000) {
+      if (!window.confirm("The SSH key was updated less than a minute ago. The device might not be ready yet.\\n\\nDo you want to try connecting anyway?")) {
+        return;
+      }
+    }
+
     let cancelled = false;
     let intervalId = null;
 
@@ -952,7 +961,17 @@ function App() {
     addLog("Enabling SSH access...", 'info');
     try {
       await SetupSSH(selectedNode.id);
-      addLog("SSH access enabled successfully", 'success');
+      setLastSSHUpdate(Date.now()); // Record update time
+      addLog("SSH key pushed to cloud successfully", 'success');
+      
+      // Warn about propagation delay
+      addLog("Device is syncing configuration... This typically takes 60-90 seconds.", 'warning');
+      setGlobalStatus({ 
+        type: 'info', 
+        message: 'SSH enabled. Waiting for device to apply changes...' 
+      });
+      setTimeout(() => setGlobalStatus(null), 10000);
+
       loadSSHStatus(selectedNode.id);
     } catch (err) {
       console.error(err);
