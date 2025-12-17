@@ -92,13 +92,17 @@ func (s *HTTPServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.app.ConnectToNode(req.NodeID, req.UseInAppTerminal)
+	port, tunnelID, err := s.app.ConnectToNode(req.NodeID, req.UseInAppTerminal)
 	if err != nil {
 		s.sendError(w, err)
 		return
 	}
 
-	s.sendSuccess(w, map[string]string{"message": result})
+	s.sendSuccess(w, map[string]interface{}{
+		"port":     port,
+		"tunnelId": tunnelID,
+		"message":  fmt.Sprintf("Session started on port %d", port),
+	})
 }
 
 func (s *HTTPServer) handleGetSettings(w http.ResponseWriter, _ *http.Request) {

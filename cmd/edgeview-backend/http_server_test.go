@@ -113,6 +113,65 @@ func TestHandleGetSessionStatus(t *testing.T) {
 	}
 }
 
+func TestHandleConnect(t *testing.T) {
+	// Setup mocks
+	fakeClient := &fakeZededaClient{
+		initSessionScript: "edgeview -token tok",
+		parseCfg:          &zededa.SessionConfig{URL: "wss://example", Token: "tok"},
+	}
+	fakeSess := &fakeSessionManager{
+		startProxyPort: 9002,
+		startProxyID:   "tunnel-connect-test",
+	}
+
+	// Create app with mocks
+	app := newTestApp(fakeClient, fakeSess)
+	srv := &HTTPServer{app: app, port: 0}
+
+	// Create request
+	reqBody := ConnectRequest{
+		NodeID:           "node-test",
+		UseInAppTerminal: true,
+	}
+	bodyBytes, _ := json.Marshal(reqBody)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/connect", bytes.NewReader(bodyBytes))
+
+	// Execute handler
+	srv.handleConnect(rr, req)
+
+	// Verify status code
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d. Body: %s", rr.Code, rr.Body.String())
+	}
+
+	// Verify response body
+	var resp APIResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("expected success=true, got false (error=%s)", resp.Error)
+	}
+
+	// Check data structure
+	data, ok := resp.Data.(map[string]interface{})
+	if !ok {
+		// Try re-marshaling if needed
+		raw, _ := json.Marshal(resp.Data)
+		if err := json.Unmarshal(raw, &data); err != nil {
+			t.Fatalf("failed to coerce data into map: %v", err)
+		}
+	}
+
+	if port, ok := data["port"].(float64); !ok || int(port) != 9002 {
+		t.Errorf("expected port 9002, got %v", data["port"])
+	}
+	if tid, ok := data["tunnelId"].(string); !ok || tid != "tunnel-connect-test" {
+		t.Errorf("expected tunnelId 'tunnel-connect-test', got %v", data["tunnelId"])
+	}
+}
+
 func TestHandleAddRecentDevice(t *testing.T) {
 	srv := newTestServer(t)
 

@@ -17,7 +17,7 @@ export const SearchNodes = (query) => {
 };
 
 export const ConnectToNode = (nodeId, useInApp) => {
-    return api.connectToNode(nodeId, useInApp).then(res => res.data.message);
+    return api.connectToNode(nodeId, useInApp).then(res => res.data);
 };
 
 export const GetSettings = () => {
