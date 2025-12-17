@@ -1,6 +1,36 @@
 # EdgeView Launcher
 
-EdgeView Launcher is a desktop application for connecting to ZEDEDA-managed edge devices via EdgeView. It provides SSH terminal access, VNC remote desktop, and TCP tunnels to services running on EVE-OS devices.
+EdgeView Launcher is a native desktop application for managing and connecting to ZEDEDA-managed edge devices via EdgeView. Unlike other solutions, this application runs directly on your operating system without requiring Docker containers or complex environment setup. It is available for macOS, Windows, and Linux.
+
+## Features
+
+*   **Native User Interface**: A standalone desktop application that integrates with your operating system.
+*   **Integrated Remote Desktop**: Built-in noVNC viewer for graphical access to device displays.
+*   **Integrated Terminal**: Full-featured xTerm-based SSH terminal for command-line access.
+*   **TCP Tunneling**: Create secure tunnels to services running on EVE-OS devices.
+*   **Session Management**: Handles authentication and session persistence automatically.
+
+## Quick Start
+
+### Installation
+
+Download the latest release for your operating system from the GitHub Releases page.
+
+**macOS Users**:
+If the application is not code signed, you may need to clear the quarantine attribute after moving the application to your Applications folder:
+
+```bash
+xattr -cr "/Applications/EdgeView Launcher.app"
+```
+
+### Configuration
+
+1.  Launch the application.
+2.  Navigate to the Settings tab.
+3.  Add a new cluster configuration with your ZEDEDA instance URL and API token.
+4.  Save the configuration and connect to start managing your devices.
+
+## Architecture
 
 This repository contains three main parts:
 - **Electron shell** (root JavaScript files) – window management, tray integration, and process orchestration
@@ -9,11 +39,10 @@ This repository contains three main parts:
 
 For a more detailed architectural overview, see `WARP.md` and the source code in `internal/`, `frontend/`, and the Electron entry files.
 
-## Prerequisites
+## Development Prerequisites
 
 - Go toolchain (for the backend)
 - Node.js + npm (for the frontend and Electron shell)
-- A ZEDEDA account with EdgeView access and a valid API token
 
 ## Development
 

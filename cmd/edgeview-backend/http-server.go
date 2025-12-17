@@ -827,7 +827,12 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 	c, chans, reqs, err := ssh.NewClientConn(sshConn, fmt.Sprintf("localhost:%d", port), config)
 	if err != nil {
 		log.Printf("SSH: Authentication failed: %v", err)
-		if strings.Contains(err.Error(), "unable to authenticate") {
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "unexpected message type 51") || strings.Contains(errMsg, "handshake failed") {
+			wsConn.WriteMessage(websocket.TextMessage, []byte("\r\n\x1b[1;33mAuthentication Failed: The device rejected the SSH key.\x1b[0m\r\n"))
+			wsConn.WriteMessage(websocket.TextMessage, []byte("If you recently updated the key, the device may still be applying the configuration.\r\n"))
+			wsConn.WriteMessage(websocket.TextMessage, []byte("Please wait 1-2 minutes and try again.\r\n"))
+		} else if strings.Contains(err.Error(), "unable to authenticate") {
 			wsConn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\n\x1b[1;31mAuthentication failed:\x1b[0m %v\r\n", err)))
 		} else {
 			wsConn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\nFailed to connect: %v\r\n", err)))
