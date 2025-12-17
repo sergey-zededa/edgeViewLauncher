@@ -46,6 +46,7 @@ vi.mock('./electronAPI', () => {
     CloseTunnel: vi.fn(fn),
     ListTunnels: vi.fn().mockResolvedValue([]),
     AddRecentDevice: vi.fn(fn),
+    VerifyToken: vi.fn().mockResolvedValue({ valid: true }),
     // Auto-update API mocks
     OnUpdateAvailable: vi.fn(noop),
     OnUpdateNotAvailable: vi.fn(noop),
@@ -106,7 +107,7 @@ describe('App configuration and tunnels', () => {
     electronAPI.SearchNodes.mockResolvedValue([]);
   });
 
-  it('addNewCluster adds a new cluster and sets it active', async () => {
+  it('addNewCluster adds a new cluster and sets it as viewing (not active)', async () => {
     render(<App />);
 
     // Settings panel should open automatically
@@ -118,8 +119,12 @@ describe('App configuration and tunnels', () => {
     const newCluster = await screen.findByText('Cluster 1');
     expect(newCluster).toBeInTheDocument();
 
-    // The new cluster should be marked active
-    expect(screen.getAllByText('Active').length).toBeGreaterThan(0);
+    // The new cluster should be selected (viewing) but NOT active yet
+    // Check for the "Switch to this Cluster" button which appears for non-active clusters
+    expect(screen.getByText('Switch to this Cluster')).toBeInTheDocument();
+    
+    // Should not have the active badge
+    expect(screen.queryByText('Active')).not.toBeInTheDocument();
   });
 
   it('deleteCluster removes a cluster and updates active cluster', async () => {
@@ -222,10 +227,12 @@ describe('App configuration and tunnels', () => {
     // Add a new cluster so we have something to save
     const addButton = screen.getByRole('button', { name: /add/i });
     fireEvent.click(addButton);
+    
+    // Activate it so it becomes the active cluster on save
+    const switchButton = screen.getByText('Switch to this Cluster');
+    fireEvent.click(switchButton);
 
-    const saveButton = screen.getByRole('button', { name: /save changes/i });
-    fireEvent.click(saveButton);
-
+    // No need to click save button, switch activates it immediately
     await waitFor(() => {
       expect(electronAPI.SecureStorageSaveSettings).toHaveBeenCalledTimes(1);
     });

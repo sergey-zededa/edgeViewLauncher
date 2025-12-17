@@ -1083,10 +1083,17 @@ func (a *App) VerifyEdgeViewTunnel(nodeID string) error {
 
 // VerifyToken checks if the provided token is valid
 func (a *App) VerifyToken(token, baseURL string) (*zededa.TokenInfo, error) {
+	token = strings.TrimSpace(token)
+	if baseURL != "" {
+		baseURL = strings.TrimSpace(baseURL)
+	}
+
 	// If a specific baseURL is provided (e.g. from settings form), use a temporary client
 	if baseURL != "" {
 		// Create a temp client to verify against the specified URL
-		tempClient := zededa.NewClient(baseURL, "")
+		// IMPORTANT: Must pass the token to the client so that subsequent calls
+		// like GetRoleName can use it for authentication.
+		tempClient := zededa.NewClient(baseURL, token)
 		return tempClient.VerifyToken(token)
 	}
 

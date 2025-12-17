@@ -1080,29 +1080,36 @@ body {
 
 .token-info-section label {
     display: block;
-    margin-bottom: 8px;
+    margin-bottom: 12px;
     font-size: 11px;
     color: var(--text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    text-align: center;
+    width: 100%;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 8px;
 }
 
 .token-info-content {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 8px;
+    padding: 0 16px;
 }
 
 .token-info-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 16px;
     font-size: 13px;
 }
 
 .token-info-label {
     color: var(--text-secondary);
-    min-width: 60px;
+    min-width: 80px;
+    text-align: right;
+    flex-shrink: 0;
 }
 
 .token-info-value {
