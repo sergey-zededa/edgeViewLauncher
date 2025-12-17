@@ -1,0 +1,85 @@
+.global-status-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 10px 20px;
+    color: white;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    animation: slideDown 0.3s ease-out;
+    font-size: 13px;
+    min-height: 40px;
+    box-sizing: border-box;
+}
+
+@keyframes slideDown {
+    from {
+        transform: translateY(-100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+/* Status Types */
+.global-status-banner.info {
+    background: linear-gradient(135deg, #4a90e2 0%, #357abd 100%);
+}
+
+.global-status-banner.success {
+    background: linear-gradient(135deg, #2ea043 0%, #238636 100%);
+}
+
+.global-status-banner.warning {
+    background: linear-gradient(135deg, #d29922 0%, #b08800 100%);
+}
+
+.global-status-banner.error {
+    background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+}
+
+.global-status-banner.loading {
+    background: linear-gradient(135deg, #6e7681 0%, #484f58 100%);
+}
+
+.status-content {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+}
+
+.status-spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    flex-shrink: 0;
+}
+
+.dismiss-btn {
+    background: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.8);
+    cursor: pointer;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    transition: all 0.2s;
+}
+
+.dismiss-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+    color: white;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}

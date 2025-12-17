@@ -5,6 +5,7 @@ import eveOsIcon from './assets/eve-os.png';
 import Tooltip from './components/Tooltip';
 import About from './components/About';
 import UpdateBanner from './components/UpdateBanner';
+import GlobalStatusBanner from './components/GlobalStatusBanner';
 import './components/Tooltip.css';
 import './App.css';
 
@@ -98,6 +99,8 @@ function App() {
   const [saveStatus, setSaveStatus] = useState('');
   const [tokenStatus, setTokenStatus] = useState(null);
   const [settingsError, setSettingsError] = useState(null); // Track settings save errors
+  const [globalStatus, setGlobalStatus] = useState(null);
+  const [sshError, setSshError] = useState(null);
 
   const handleTokenPaste = (token) => {
     setEditingCluster({ ...editingCluster, apiToken: token });
@@ -481,6 +484,7 @@ function App() {
 
   const startSshModalTunnel = async (mode = 'builtin') => {
     if (!sshTunnelConfig || !selectedNode) return;
+    setSshError(null);
     const { ip } = sshTunnelConfig;
     if (!ip) {
       addLog('No SSH target IP configured', 'error');
@@ -529,6 +533,7 @@ function App() {
     } catch (err) {
       console.error(err);
       handleTunnelError(err);
+      setSshError(err.message);
       addLog(`Failed to start SSH tunnel: ${err.message}`, 'error');
     } finally {
       setTunnelLoading(null);
@@ -958,19 +963,25 @@ function App() {
 
   const handleResetEdgeView = async () => {
     if (!selectedNode) {
-      setError({ type: 'error', message: "No node selected for reset." });
+      setGlobalStatus({ type: 'error', message: "No node selected for reset." });
       return;
     }
-    setLoadingSSH(true);
-    setLoadingMessage("Resetting EdgeView session...");
+    
+    // Use global status instead of blocking UI with loadingSSH
+    setGlobalStatus({ type: 'loading', message: "Resetting EdgeView session..." });
     addLog("Initiating EdgeView session reset...");
-    setError(null);
+    
     try {
       await ResetEdgeView(selectedNode.id);
       addLog("Reset command sent successfully", 'success');
-      setError({ type: 'success', message: 'EdgeView session restarted. Tunnel will reconnect in ~10 seconds.' });
+      
+      setGlobalStatus({ 
+        type: 'info', 
+        message: 'EdgeView session restarted. Tunnel will reconnect in ~10 seconds...' 
+      });
+
+      // Wait 10s then refresh, keeping the info message
       setTimeout(() => {
-        setError(null);
         if (selectedNode) {
           addLog("Refreshing status after reset (waiting for tunnel)...");
           loadSSHStatus(selectedNode.id).catch(err => {
@@ -980,9 +991,14 @@ function App() {
             } else {
               addLog(`Failed to refresh status: ${err} `, 'error');
             }
+          }).finally(() => {
+             // Clear global status after refresh attempt
+             setGlobalStatus(null);
           });
+        } else {
+            setGlobalStatus(null);
         }
-      }, 15000);
+      }, 10000);
     } catch (err) {
       console.error("ResetEdgeView failed:", err);
       const errMsg = err.message || String(err);
@@ -990,16 +1006,14 @@ function App() {
       // Check if it's a server error
       if (errMsg.includes('500') || errMsg.includes('internal server error')) {
         addLog(`Reset failed: ZEDEDA server error - unable to enable EdgeView on device`, 'error');
-        setError({
+        setGlobalStatus({
           type: 'error',
-          message: 'EdgeView session reset failed. The server cannot enable EdgeView on this device. The device may be offline or not support EdgeView.'
+          message: 'EdgeView session reset failed. The server cannot enable EdgeView on this device.'
         });
       } else {
         addLog(`Reset failed: ${errMsg}`, 'error');
-        setError({ type: 'error', message: `Failed to reset EdgeView: ${errMsg}` });
+        setGlobalStatus({ type: 'error', message: `Failed to reset EdgeView: ${errMsg}` });
       }
-    } finally {
-      setLoadingSSH(false);
     }
   };
 
@@ -1289,6 +1303,12 @@ function App() {
         onDownload={handleDownloadUpdate}
         onInstall={handleInstallUpdate}
         onDismiss={handleDismissUpdate}
+      />
+
+      {/* Global Status Banner */}
+      <GlobalStatusBanner
+        status={globalStatus}
+        onDismiss={() => setGlobalStatus(null)}
       />
 
       {/* Migration Status Banner */}
@@ -1779,15 +1799,27 @@ function App() {
                   </div>
                 </div>
 
-                {loadingSSH ? (
-                  <div className="ssh-loading">
-                    <div className="loading-spinner-container">
+                <div className="ssh-details-wrapper" style={{ position: 'relative', minHeight: '80px' }}>
+                  {loadingSSH && (
+                    <div className="ssh-loading-overlay" style={{
+                      position: 'absolute',
+                      inset: 0,
+                      backgroundColor: 'rgba(30, 30, 30, 0.8)',
+                      zIndex: 10,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px',
+                      borderRadius: '6px'
+                    }}>
                       <Activity className="animate-spin" size={18} />
+                      <span className="loading-text" style={{ fontSize: '13px', color: '#ccc' }}>{loadingMessage || "Checking status..."}</span>
                     </div>
-                    <span className="loading-text">{loadingMessage || "Checking status..."}</span>
-                  </div>
-                ) : sshStatus ? (
-                  <div className="ssh-details">
+                  )}
+                  
+                  {sshStatus ? (
+                  <div className="ssh-details" style={{ opacity: loadingSSH ? 0.3 : 1, transition: 'opacity 0.2s' }}>
                     <div className="status-grid">
                       {(sshStatus.instID !== undefined || sshStatus.maxInst !== undefined) && (
                         <div className="status-item">
@@ -1914,9 +1946,10 @@ function App() {
                       </div>
                     </div>
                   </div>
-                ) : (
+                  ) : !loadingSSH && (
                   <div className="error-text">Failed to check status</div>
-                )}
+                  )}
+                </div>
               </div>
             )}
 
@@ -2298,7 +2331,10 @@ function App() {
                     <h4 style={{ margin: 0, fontSize: '14px' }}>Start SSH Session</h4>
                     <button
                       className="icon-btn"
-                      onClick={() => setSshTunnelConfig(null)}
+                      onClick={() => {
+                        setSshTunnelConfig(null);
+                        setSshError(null);
+                      }}
                       title="Close"
                     >
                       <X size={14} />
@@ -2308,6 +2344,24 @@ function App() {
                     <div>Device: {selectedNode?.name}</div>
                     <div style={{ marginTop: '4px' }}>Target IP: {sshTunnelConfig.ip}</div>
                   </div>
+
+                  {sshError && (
+                    <div className="error-banner-inline" style={{
+                      backgroundColor: 'rgba(231, 76, 60, 0.1)',
+                      border: '1px solid rgba(231, 76, 60, 0.3)',
+                      color: '#ff6b6b',
+                      padding: '8px 12px',
+                      borderRadius: '4px',
+                      fontSize: '12px',
+                      marginBottom: '12px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}>
+                      <AlertCircle size={14} />
+                      <span>{sshError}</span>
+                    </div>
+                  )}
 
                   <div className="form-group" style={{ marginBottom: '12px' }}>
                     <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>Username</label>

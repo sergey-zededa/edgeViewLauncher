@@ -17,6 +17,11 @@ vi.mock('./components/UpdateBanner', () => ({
   default: () => <div data-testid="update-banner-mock" />,
 }));
 
+vi.mock('./components/GlobalStatusBanner', () => ({
+  __esModule: true,
+  default: ({ status }) => status ? <div data-testid="global-status-banner-mock">{status.message}</div> : null,
+}));
+
 vi.mock('./electronAPI', () => {
   const fn = () => Promise.resolve();
   const noop = () => () => {}; // Cleanup function for event listeners
@@ -407,6 +412,9 @@ describe('App configuration and tunnels', () => {
     electronAPI.SearchNodes.mockResolvedValue([node]);
     electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
 
+    // Wait for SSH setup logs to make sure component is fully rendered
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'enabled' });
+
     render(<App />);
 
     const nodeItem = await screen.findByText('Node 1');
@@ -415,6 +423,117 @@ describe('App configuration and tunnels', () => {
     await screen.findByText('Running Applications');
 
     expect(screen.getByText('Activity Log')).toBeInTheDocument();
+  });
+
+  it('shows GlobalStatusBanner during EdgeView reset', async () => {
+    // Setup authenticated user with a node
+    const validKey = 'A'.repeat(171);
+    const validToken = `ENT1234:${validKey}`;
+    const config = {
+      baseUrl: 'https://cluster.example',
+      apiToken: validToken,
+      clusters: [{ name: 'Prod', baseUrl: 'https://cluster.example', apiToken: validToken }],
+      activeCluster: 'Prod',
+      recentDevices: [],
+    };
+    electronAPI.GetSettings.mockResolvedValue(config);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(config);
+
+    const node = { id: 'node-1', name: 'Node 1', status: 'online', edgeView: true };
+    electronAPI.SearchNodes.mockResolvedValue([node]);
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
+    
+    // Valid session so we see the reset button
+    electronAPI.GetSSHStatus.mockResolvedValue({ 
+      status: 'enabled', 
+      expiry: Math.floor(Date.now() / 1000) + 3600 
+    });
+    electronAPI.GetSessionStatus.mockResolvedValue({ 
+      active: true, 
+      expiresAt: new Date(Date.now() + 3600000).toISOString() 
+    });
+
+    render(<App />);
+
+    // Select node
+    const nodeItem = await screen.findByText('Node 1');
+    fireEvent.click(nodeItem);
+
+    // Wait for details to load
+    await screen.findByText('EdgeView Session');
+
+    // Click reset button
+    const resetButton = await screen.findByTitle('Restart EdgeView session');
+    fireEvent.click(resetButton);
+
+    // Verify global status banner appears with loading message
+    // Note: Since ResetEdgeView is mocked to resolve immediately, we might see the success message
+    // But since we are testing async state updates, we can check for the banner presence
+    await waitFor(() => {
+      expect(screen.getByTestId('global-status-banner-mock')).toBeInTheDocument();
+    });
+
+    // Verify ResetEdgeView was called
+    expect(electronAPI.ResetEdgeView).toHaveBeenCalledWith('node-1');
+  });
+
+  it('shows inline error in SSH modal on connection failure', async () => {
+    // Setup authenticated user with a node
+    const validKey = 'A'.repeat(171);
+    const validToken = `ENT1234:${validKey}`;
+    const config = {
+      baseUrl: 'https://cluster.example',
+      apiToken: validToken,
+      clusters: [{ name: 'Prod', baseUrl: 'https://cluster.example', apiToken: validToken }],
+      activeCluster: 'Prod',
+      recentDevices: [],
+    };
+    electronAPI.GetSettings.mockResolvedValue(config);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(config);
+
+    const node = { id: 'node-1', name: 'Node 1', status: 'online', edgeView: true };
+    electronAPI.SearchNodes.mockResolvedValue([node]);
+    
+    // Services with one app having SSH option
+    const services = [{ name: 'App 1', ips: ['10.0.0.1'] }];
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify(services));
+    
+    // Mock session active so we can click buttons
+    electronAPI.GetSessionStatus.mockResolvedValue({ active: true, expiresAt: new Date(Date.now() + 3600000).toISOString() });
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'enabled' });
+
+    // Mock StartTunnel to fail
+    electronAPI.StartTunnel.mockRejectedValue(new Error('Connection timed out'));
+
+    render(<App />);
+
+    // Select node
+    const nodeItem = await screen.findByText('Node 1');
+    fireEvent.click(nodeItem);
+
+    // Wait for services
+    await screen.findByText('Running Applications');
+
+    // Expand service
+    const connectButton = screen.getByRole('button', { name: /connect/i });
+    fireEvent.click(connectButton);
+
+    // Click Launch SSH to open modal
+    const launchSshButton = await screen.findByText('Launch SSH');
+    fireEvent.click(launchSshButton.closest('.option-btn'));
+
+    // Wait for modal to appear
+    await screen.findByText('Start SSH Session');
+
+    // Click "Open Built-in Terminal" in the modal
+    const openBuiltinBtn = screen.getByText('Open Built-in Terminal').closest('button');
+    fireEvent.click(openBuiltinBtn);
+
+    // Wait for inline error to appear
+    await screen.findByText('Connection timed out');
+    
+    // Verify error is visible (we added a unique class or icon, but text check is sufficient)
+    expect(screen.getByText('Connection timed out')).toBeInTheDocument();
   });
 
   it('does not render Activity Log when no node is selected', async () => {
