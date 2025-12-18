@@ -616,6 +616,25 @@ body {
     gap: 8px;
 }
 
+.tunnel-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+    border-radius: 4px;
+    font-size: 11px;
+}
+
+.tunnel-badge.encrypted {
+    color: #238636;
+    background: rgba(35, 134, 54, 0.1);
+}
+
+.tunnel-badge.unencrypted {
+    color: #d29922;
+    background: rgba(210, 153, 34, 0.1);
+}
+
 .icon-btn {
     background: transparent;
     border: 1px solid var(--border-color);

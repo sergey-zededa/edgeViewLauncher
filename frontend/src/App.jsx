@@ -164,6 +164,7 @@ function App() {
             createdAt: t.CreatedAt,
             status: t.Status || 'active',
             error: t.Error || '',
+            isEncrypted: t.IsEncrypted,
           };
         });
 
@@ -507,8 +508,11 @@ function App() {
       setTcpTunnelConfig(null);
       setTcpPortInput('');
       setTcpIpInput('');
-    } catch (err) {
-      console.error(err);
+      
+      // Refresh session status to reflect potential encryption updates
+      await loadSSHStatus(selectedNode.id, false);
+      
+      const newConfig = await GetSettings();
       handleTunnelError(err);
       const msg = err.message || String(err);
       setTcpError(msg);
@@ -574,6 +578,9 @@ function App() {
       setSshTunnelConfig(null);
       setSshPassword(''); // Clear password
       setSshPort('22'); // Reset port
+      
+      // Refresh session status to reflect potential encryption updates
+      await loadSSHStatus(selectedNode.id, false);
     } catch (err) {
       console.error(err);
       handleTunnelError(err);
@@ -824,6 +831,7 @@ function App() {
       addLog(`SSH Status: ${status.status} `);
       try {
         sessStatus = await GetSessionStatus(nodeId);
+        console.log("GetSessionStatus result:", sessStatus);
         setSessionStatus(sessStatus);
         if (sessStatus.active) {
           addLog(`EdgeView session active (expires: ${new Date(sessStatus.expiresAt).toLocaleString(undefined, getTimeFormatOptions())})`, 'success');
@@ -922,6 +930,10 @@ function App() {
         addLog(`Launching native terminal: ${sshCommand}`, 'info');
         await window.electronAPI.openExternalTerminal(sshCommand);
       }
+      
+      // Refresh session status to reflect potential encryption updates
+      await loadSSHStatus(nodeId, false);
+
       const newConfig = await GetSettings();
       setConfig(newConfig);
       try {
@@ -1734,6 +1746,15 @@ function App() {
                           {tunnel.type === 'SSH' && <Terminal size={14} className="tunnel-icon" />}
                           {tunnel.type === 'TCP' && <Activity size={14} className="tunnel-icon" />}
                           <span>{tunnel.type}</span>
+                          {tunnel.isEncrypted ? (
+                            <span className="tunnel-badge encrypted" title="End-to-End Encrypted">
+                              <Lock size={10} />
+                            </span>
+                          ) : (
+                            <span className="tunnel-badge unencrypted" title="Not Encrypted">
+                              <Unlock size={10} />
+                            </span>
+                          )}
                         </div>
                         <div className="tunnel-target">
                           <span>{tunnel.targetIP}:{tunnel.targetPort}</span>
@@ -1807,6 +1828,15 @@ function App() {
                           {tunnel.type === 'SSH' && <Terminal size={14} className="tunnel-icon" />}
                           {tunnel.type === 'TCP' && <Activity size={14} className="tunnel-icon" />}
                           <span>{tunnel.type}</span>
+                          {tunnel.isEncrypted ? (
+                            <span className="tunnel-badge encrypted" title="End-to-End Encrypted">
+                              <Lock size={10} />
+                            </span>
+                          ) : (
+                            <span className="tunnel-badge unencrypted" title="Not Encrypted">
+                              <Unlock size={10} />
+                            </span>
+                          )}
                         </div>
                         <div className="tunnel-target">
                           <span>{tunnel.targetIP}:{tunnel.targetPort}</span>
@@ -1951,6 +1981,16 @@ function App() {
                           <div className="status-value">{sshStatus.maxSessions}</div>
                         </div>
                       )}
+                      <div className="status-item">
+                        <div className="status-label">ENCRYPTION</div>
+                        <div className={`status-value ${(sessionStatus?.isEncrypted || sshStatus?.isEncrypted) ? 'success' : 'mismatch'}`}>
+                          {(sessionStatus?.isEncrypted || sshStatus?.isEncrypted) ? (
+                            <><Lock size={14} /> Encrypted</>
+                          ) : (
+                            <><Unlock size={14} /> Unencrypted</>
+                          )}
+                        </div>
+                      </div>
                       <div className="status-item">
                         <div className="status-label">SESSION</div>
                         <div className={`status-value ${isSessionConnected ? 'success' : 'error'}`}>
