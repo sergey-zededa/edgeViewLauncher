@@ -3,7 +3,10 @@ package session
 import (
 	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/hmac"
+	"crypto/md5"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
@@ -90,6 +93,14 @@ func (m *Manager) GetCachedSession(nodeID string) (*CachedSession, bool) {
 	return session, true
 }
 
+// InvalidateSession removes a session from the cache
+func (m *Manager) InvalidateSession(nodeID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.sessions, nodeID)
+	fmt.Printf("DEBUG: Invalidated cached session for %s\n", nodeID)
+}
+
 // StoreCachedSession stores a session configuration
 func (m *Manager) StoreCachedSession(nodeID string, config *zededa.SessionConfig, port int, expiresAt time.Time) {
 	m.mu.Lock()
@@ -100,6 +111,14 @@ func (m *Manager) StoreCachedSession(nodeID string, config *zededa.SessionConfig
 		Port:      port,
 		ExpiresAt: expiresAt,
 	}
+}
+
+// IsEncrypted returns whether the tunnel is using encryption
+func (t *Tunnel) IsEncrypted() bool {
+	if t.config == nil {
+		return false
+	}
+	return t.config.Enc
 }
 
 // RegisterTunnel stores a new tunnel in the registry
@@ -179,7 +198,7 @@ func (m *Manager) GetAllTunnels() []*Tunnel {
 }
 
 const (
-	edgeViewVersion = "0.8.6"
+	edgeViewVersion = "0.8.4"
 	clientIPMsg     = "YourEndPointIPAddr:"
 )
 
@@ -243,9 +262,11 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 		fmt.Printf("DEBUG: MaxInst not set, defaulting to InstID=0\n")
 	}
 
-	// Start local listener first
+		// Start local listener first
 	var listener net.Listener
 	var err error
+
+	fmt.Printf("DEBUG: StartProxy called for node %s -> %s (protocol: %s). Initial InstID: %d (MaxInst: %d)\n", nodeID, target, protocol, initialInstID, config.MaxInst)
 
 	for port := 9001; port <= 9010; port++ {
 		listener, err = net.Listen("tcp", fmt.Sprintf("localhost:%d", port))
@@ -273,6 +294,7 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 	// Track which instances we've tried in the current attempt
 	triedInstances := make(map[int]bool)
 	currentInstID := initialInstID
+	seenNoDeviceOnline := false
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		if attempt > 1 {
@@ -282,6 +304,7 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 		// Set the instance ID for this attempt
 		config.InstID = currentInstID
 		triedInstances[currentInstID] = true
+		fmt.Printf("DEBUG: Connecting to EdgeView with Enc=%v\n", config.Enc)
 
 		// Connect to EdgeView
 		wsConn, clientIP, err = m.connectToEdgeView(config)
@@ -306,7 +329,7 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 		}
 		queryBytes, _ := json.Marshal(query)
 
-		if err := sendWrappedMessage(wsConn, queryBytes, config.Key, websocket.TextMessage); err != nil {
+		if err := sendWrappedMessage(wsConn, queryBytes, config.Key, websocket.TextMessage, config.Enc); err != nil {
 			wsConn.Close()
 			lastErr = fmt.Errorf("failed to send tcp command: %w", err)
 			if attempt < maxRetries {
@@ -318,10 +341,11 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 			listener.Close()
 			return 0, "", lastErr
 		}
+		fmt.Printf("DEBUG: TCP command sent successfully (InstID: %d)\n", currentInstID)
 
 		// Wait for +++tcpSetupOK+++ (with timeout)
 		fmt.Printf("DEBUG: Waiting for tcpSetupOK from device (attempt %d/%d)...\n", attempt, maxRetries)
-		setupErr := m.waitForTcpSetupOK(wsConn, config.Key, 30*time.Second)
+		setupErr := m.waitForTcpSetupOK(wsConn, config.Key, 30*time.Second, config.Enc)
 		if setupErr == nil {
 			fmt.Println("DEBUG: tcpSetupOK received, tunnel established successfully!")
 			break // Success
@@ -329,6 +353,7 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 
 		// Setup failed - check if it's "no device online" error
 		if setupErr == ErrNoDeviceOnline {
+			seenNoDeviceOnline = true
 			fmt.Printf("DEBUG: Device is not online (attempt %d/%d). The device may not be connected to EdgeView yet.\n", attempt, maxRetries)
 		} else {
 			fmt.Printf("DEBUG: Tunnel setup failed: %v (attempt %d/%d)\n", setupErr, attempt, maxRetries)
@@ -384,9 +409,9 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 
 	if wsConn == nil {
 		listener.Close()
-		// Provide a more helpful error message for "no device online"
-		if lastErr == ErrNoDeviceOnline {
-			return 0, "", fmt.Errorf("device is not connected to EdgeView after %d attempts. Please ensure:\n  1. The device is powered on and connected to the internet\n  2. EdgeView is enabled on the device\n  3. The device has had sufficient time to establish its EdgeView connection (typically 20-30 seconds after enabling)", maxRetries)
+		// If we saw "no device online" at any point, prioritize that error to trigger session refresh
+		if seenNoDeviceOnline || lastErr == ErrNoDeviceOnline {
+			return 0, "", fmt.Errorf("device is not connected to EdgeView (no device online) after %d attempts", maxRetries)
 		}
 		return 0, "", fmt.Errorf("failed to establish tunnel after %d attempts: %w", maxRetries, lastErr)
 	}
@@ -471,7 +496,7 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 }
 
 // waitForTcpSetupOK waits for the +++tcpSetupOK+++ message from EdgeView
-func (m *Manager) waitForTcpSetupOK(wsConn *websocket.Conn, key string, timeout time.Duration) error {
+func (m *Manager) waitForTcpSetupOK(wsConn *websocket.Conn, key string, timeout time.Duration, encrypt bool) error {
 	setupDone := make(chan error, 1)
 	go func() {
 		for {
@@ -481,7 +506,10 @@ func (m *Manager) waitForTcpSetupOK(wsConn *websocket.Conn, key string, timeout 
 				return
 			}
 
-			payload, err := unwrapMessage(msg, key)
+			// Log raw message length
+			fmt.Printf("DEBUG: waitForTcpSetupOK received raw message (len=%d)\n", len(msg))
+
+			payload, err := unwrapMessage(msg, key, encrypt)
 			if err != nil {
 				// Check for specific errors returned by unwrapMessage
 				if err == ErrBusyInstance {
@@ -489,20 +517,28 @@ func (m *Manager) waitForTcpSetupOK(wsConn *websocket.Conn, key string, timeout 
 					return
 				}
 				if err == ErrNoDeviceOnline {
-					setupDone <- ErrNoDeviceOnline
-					return
+					fmt.Printf("DEBUG: waitForTcpSetupOK received 'no device online'. Device not yet connected, continuing wait...\n")
+					continue
 				}
 
 				// Check for plain-text errors in the raw message if unwrapMessage didn't catch them specifically
 				// (though unwrapMessage should handle most now)
 				if strings.Contains(string(msg), "no device online") {
-					setupDone <- ErrNoDeviceOnline
-					return
+					fmt.Printf("DEBUG: waitForTcpSetupOK received 'no device online' (raw). Continuing wait...\n")
+					continue
 				}
-				continue // Non-envelope message, ignore
+				// Log unwrap failures but CONTINUE waiting unless it's a fatal error
+				// The device might send banners or keepalives that aren't envelopes
+				fmt.Printf("DEBUG: waitForTcpSetupOK unwrap failed (ignoring): %v\n", err)
+				if len(msg) < 1000 {
+					fmt.Printf("DEBUG: raw payload: %q\n", string(msg))
+				}
+				continue
 			}
 
 			payloadStr := string(payload)
+			fmt.Printf("DEBUG: waitForTcpSetupOK payload: %q\n", payloadStr)
+
 			if strings.Contains(payloadStr, "+++tcpSetupOK+++") {
 				setupDone <- nil
 				return
@@ -513,7 +549,6 @@ func (m *Manager) waitForTcpSetupOK(wsConn *websocket.Conn, key string, timeout 
 			}
 		}
 	}()
-
 	select {
 	case err := <-setupDone:
 		return err
@@ -638,7 +673,7 @@ func (m *Manager) ExecuteCommand(nodeID string, command string) (string, error) 
 	}
 	fmt.Printf("DEBUG: Query payload: %s\n", string(queryBytes))
 
-	if err := sendWrappedMessage(wsConn, queryBytes, config.Key, websocket.TextMessage); err != nil {
+	if err := sendWrappedMessage(wsConn, queryBytes, config.Key, websocket.TextMessage, config.Enc); err != nil {
 		return "", fmt.Errorf("failed to send query: %w", err)
 	}
 	fmt.Println("DEBUG: Command sent successfully, waiting for response...")
@@ -665,7 +700,7 @@ func (m *Manager) ExecuteCommand(nodeID string, command string) (string, error) 
 		fmt.Printf("DEBUG: Received message %d, size: %d bytes\n", messageCount, len(msg))
 
 		// Try to unwrap the message
-		unwrapped, err := unwrapMessage(msg, config.Key)
+		unwrapped, err := unwrapMessage(msg, config.Key, config.Enc)
 		if err == nil {
 			fmt.Printf("DEBUG: Message %d unwrapped successfully, size: %d bytes\n", messageCount, len(unwrapped))
 			// Show actual content for debugging
@@ -782,7 +817,7 @@ func (m *Manager) QueryDevice(ctx context.Context, config *zededa.SessionConfig,
 			return "", fmt.Errorf("failed to marshal query: %w", err)
 		}
 
-		if err := sendWrappedMessage(wsConn, queryBytes, config.Key, websocket.TextMessage); err != nil {
+		if err := sendWrappedMessage(wsConn, queryBytes, config.Key, websocket.TextMessage, config.Enc); err != nil {
 			wsConn.Close()
 			return "", fmt.Errorf("failed to send query: %w", err)
 		}
@@ -795,8 +830,8 @@ func (m *Manager) QueryDevice(ctx context.Context, config *zededa.SessionConfig,
 		wsConn.SetReadDeadline(time.Time{}) // Reset deadline
 
 		if err == nil {
-			// We received a message immediately. Check if it's an error.
-			payload, unwrapErr := unwrapMessage(nextMsg, config.Key)
+		// We received a message immediately. Check if it's an error.
+		payload, unwrapErr := unwrapMessage(nextMsg, config.Key, config.Enc)
 			if unwrapErr != nil {
 				rawMsg := string(nextMsg)
 
@@ -871,7 +906,7 @@ func (m *Manager) QueryDevice(ctx context.Context, config *zededa.SessionConfig,
 			}
 
 			// Verify and Unwrap
-			payload, err := unwrapMessage(message, config.Key)
+			payload, err := unwrapMessage(message, config.Key, config.Enc)
 			if err != nil {
 				// Check for specific server errors (Raw messages)
 				msgStr := string(message)
@@ -910,21 +945,37 @@ func (m *Manager) QueryDevice(ctx context.Context, config *zededa.SessionConfig,
 	}
 }
 
-// sendWrappedMessage exactly matches original EdgeView crypto.go:64-84 (signAuthenData)
-func sendWrappedMessage(conn *websocket.Conn, payload []byte, key string, messageType int) error {
-	envelope := envelopeMsg{
-		Message: payload,
-	}
+// sendWrappedMessage exactly matches original EdgeView crypto.go:64-84 (signAuthenData) and encryption logic
+func sendWrappedMessage(conn *websocket.Conn, payload []byte, key string, messageType int, encrypt bool) error {
+	envelope := envelopeMsg{}
 
-	// HMAC-SHA256 Sign (matching original)
-	h := hmac.New(sha256.New, []byte(key))
-	h.Write(envelope.Message)
-	hash := h.Sum(nil)
+	if encrypt {
+		// Encrypt Data
+		nonceHash := sha256.Sum256([]byte(key))
+		viBytes := md5.Sum([]byte(key))
+		
+		// fmt.Printf("DEBUG: Encrypting with KeyLen=%d, NonceHash=%x, IV=%x\n", len(key), nonceHash[:4], viBytes[:4])
 
-	// Copy hash into fixed-size array (CRITICAL: original uses copy!)
-	n := copy(envelope.Sha256Hash[:], hash)
-	if len(hash) != 32 || n != 32 {
-		return fmt.Errorf("hash copy bytes not correct: %d", n)
+		block, err := aes.NewCipher(nonceHash[:])
+		if err != nil {
+			return fmt.Errorf("cipher init failed: %w", err)
+		}
+
+		cfb := cipher.NewCFBEncrypter(block, viBytes[:])
+		cipherText := make([]byte, len(payload))
+		cfb.XORKeyStream(cipherText, payload)
+
+		envelope.Message = cipherText
+		// Hash of ORIGINAL payload
+		hash := sha256.Sum256(payload)
+		envelope.Sha256Hash = hash // array assignment
+	} else {
+		// Sign Only
+		envelope.Message = payload
+		h := hmac.New(sha256.New, []byte(key))
+		h.Write(envelope.Message)
+		hash := h.Sum(nil)
+		copy(envelope.Sha256Hash[:], hash)
 	}
 
 	// Marshal and send
@@ -936,7 +987,7 @@ func sendWrappedMessage(conn *websocket.Conn, payload []byte, key string, messag
 	return conn.WriteMessage(messageType, jdata)
 }
 
-func unwrapMessage(data []byte, key string) ([]byte, error) {
+func unwrapMessage(data []byte, key string, encrypt bool) ([]byte, error) {
 	// First, check for known plain-text error responses that are not
 	// wrapped in the usual JSON+HMAC envelope.
 	raw := string(data)
@@ -945,12 +996,13 @@ func unwrapMessage(data []byte, key string) ([]byte, error) {
 		if len(trimmed) > 4096 {
 			trimmed = trimmed[:4096] + "... (truncated)"
 		}
-		fmt.Printf("DEBUG: unwrapMessage detected 'no device online' plain-text response: %s\n", trimmed)
+		// fmt.Printf("DEBUG: unwrapMessage detected 'no device online' plain-text response: %s\n", trimmed)
 		return nil, ErrNoDeviceOnline
 	}
 
 	if strings.Contains(raw, "can't have more than 2 peers") {
-		fmt.Printf("DEBUG: unwrapMessage detected 'busy instance' plain-text response\n")
+		fmt.Printf("DEBUG: unwrapMessage detected 'busy instance' plain-text response. Raw length: %d\n", len(raw))
+		fmt.Printf("DEBUG: Raw payload: %q\n", raw)
 		return nil, ErrBusyInstance
 	}
 
@@ -960,25 +1012,48 @@ func unwrapMessage(data []byte, key string) ([]byte, error) {
 		if len(raw) > 4096 {
 			raw = raw[:4096] + "... (truncated)"
 		}
-		fmt.Printf("DEBUG: unwrapMessage failed to unmarshal envelope. Raw data (len=%d): %s\n", len(data), raw)
+		// fmt.Printf("DEBUG: unwrapMessage failed to unmarshal envelope. Raw data (len=%d): %s\n", len(data), raw)
 		return nil, fmt.Errorf("failed to unmarshal envelope: %w", err)
 	}
 
-	// Verify HMAC signature (matching original)
-	h := hmac.New(sha256.New, []byte(key))
-	h.Write(envelope.Message)
-	expectedHash := h.Sum(nil)
+	if encrypt {
+		// Decrypt first
+		nonceHash := sha256.Sum256([]byte(key))
+		viBytes := md5.Sum([]byte(key))
 
-	// Compare using array slice
-	if !hmac.Equal(envelope.Sha256Hash[:], expectedHash) {
-		if len(raw) > 4096 {
-			raw = raw[:4096] + "... (truncated)"
+		block, err := aes.NewCipher(nonceHash[:])
+		if err != nil {
+			return nil, fmt.Errorf("cipher init failed: %w", err)
 		}
-		fmt.Printf("DEBUG: unwrapMessage HMAC verification failed. Raw data (len=%d): %s\n", len(data), raw)
-		return nil, fmt.Errorf("HMAC verification failed")
-	}
 
-	return envelope.Message, nil
+		cfb := cipher.NewCFBDecrypter(block, viBytes[:])
+		plainText := make([]byte, len(envelope.Message))
+		cfb.XORKeyStream(plainText, envelope.Message)
+
+		// Verify Hash (of decrypted payload)
+		hash := sha256.Sum256(plainText)
+		if !bytes.Equal(envelope.Sha256Hash[:], hash[:]) {
+			return nil, fmt.Errorf("encrypted message hash verification failed")
+		}
+
+		return plainText, nil
+	} else {
+		// Verify HMAC signature (matching original)
+		h := hmac.New(sha256.New, []byte(key))
+		h.Write(envelope.Message)
+		expectedHash := h.Sum(nil)
+
+		// Compare using array slice
+		if !hmac.Equal(envelope.Sha256Hash[:], expectedHash) {
+			if len(raw) > 4096 {
+				raw = raw[:4096] + "... (truncated)"
+			}
+			fmt.Printf("DEBUG: unwrapMessage HMAC verification failed. Raw data (len=%d): %s\n", len(data), raw)
+			return nil, fmt.Errorf("HMAC verification failed")
+		}
+
+		return envelope.Message, nil
+	}
 }
 
 // connectToEdgeView establishes a WebSocket connection to EdgeView
@@ -1005,8 +1080,10 @@ func (m *Manager) connectToEdgeView(config *zededa.SessionConfig) (*websocket.Co
 	headers := http.Header{}
 	headers.Add("X-Session-Token", tokenHash)
 	headers.Add("X-Hostname", hostname)
+	headers.Add("X-EdgeView-Version", edgeViewVersion)
 
 	fmt.Printf("DEBUG: Connecting to %s (InstID: %d)\n", config.URL, config.InstID)
+	fmt.Printf("DEBUG: Headers - X-Hostname: %s, X-Session-Token (hash): %s, X-EdgeView-Version: %s\n", hostname, tokenHash, edgeViewVersion)
 
 	// Connect to WebSocket
 	tlsConfig := &tls.Config{
@@ -1093,14 +1170,14 @@ func (m *Manager) attemptTunnelReconnect(tunnel *Tunnel) bool {
 		}
 		queryBytes, _ := json.Marshal(query)
 
-		if err := sendWrappedMessage(wsConn, queryBytes, tunnel.config.Key, websocket.TextMessage); err != nil {
+		if err := sendWrappedMessage(wsConn, queryBytes, tunnel.config.Key, websocket.TextMessage, tunnel.config.Enc); err != nil {
 			fmt.Printf("TUNNEL[%s] Reconnect: failed to send tcp command: %v\n", tunnel.ID, err)
 			wsConn.Close()
 			continue
 		}
 
 		// Wait for tcpSetupOK
-		if err := m.waitForTcpSetupOK(wsConn, tunnel.config.Key, 30*time.Second); err != nil {
+		if err := m.waitForTcpSetupOK(wsConn, tunnel.config.Key, 30*time.Second, tunnel.config.Enc); err != nil {
 			fmt.Printf("TUNNEL[%s] Reconnect: tcpSetupOK failed: %v\n", tunnel.ID, err)
 			wsConn.Close()
 			continue
@@ -1170,7 +1247,7 @@ func (m *Manager) tunnelKeepAlive(ctx context.Context, tunnel *Tunnel) {
 				Data:      []byte{},
 			}
 			dataBytes, _ := json.Marshal(keepaliveData)
-			err := sendWrappedMessage(tunnel.wsConn, dataBytes, tunnel.config.Key, websocket.BinaryMessage)
+			err := sendWrappedMessage(tunnel.wsConn, dataBytes, tunnel.config.Key, websocket.BinaryMessage, tunnel.config.Enc)
 			tunnel.wsMu.Unlock()
 
 			if err != nil {
@@ -1238,7 +1315,7 @@ func (m *Manager) tunnelWSReader(ctx context.Context, tunnel *Tunnel) {
 				return
 			}
 
-			payload, err := unwrapMessage(msg, tunnel.config.Key)
+			payload, err := unwrapMessage(msg, tunnel.config.Key, tunnel.config.Enc)
 			if err != nil {
 				// Check for 'no device online' - this means the EdgeView dispatcher
 				// lost connection to the device. We need to attempt reconnection.
@@ -1385,7 +1462,7 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 
 	tunnel.wsMu.Lock()
 	if tunnel.wsConn != nil {
-		if err := sendWrappedMessage(tunnel.wsConn, initBytes, tunnel.config.Key, websocket.BinaryMessage); err != nil {
+		if err := sendWrappedMessage(tunnel.wsConn, initBytes, tunnel.config.Key, websocket.BinaryMessage, tunnel.config.Enc); err != nil {
 			fmt.Printf("TUNNEL[%s] ChanNum=%d: Failed to send init packet: %v\n", tunnel.ID, chanNum, err)
 		} else {
 			fmt.Printf("TUNNEL[%s] ChanNum=%d: Sent init packet (empty tcpData)\n", tunnel.ID, chanNum)
@@ -1475,12 +1552,12 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 					continue
 				}
 
-				err := sendWrappedMessage(tunnel.wsConn, tdBytes, tunnel.config.Key, websocket.BinaryMessage)
-				tunnel.wsMu.Unlock()
-				if err != nil {
-					fmt.Printf("TUNNEL[%s] ChanNum=%d: WS write error: %v\n", tunnel.ID, chanNum, err)
-					return
-				}
+			err := sendWrappedMessage(tunnel.wsConn, tdBytes, tunnel.config.Key, websocket.BinaryMessage, tunnel.config.Enc)
+			tunnel.wsMu.Unlock()
+			if err != nil {
+				fmt.Printf("TUNNEL[%s] ChanNum=%d: WS write error: %v\n", tunnel.ID, chanNum, err)
+				return
+			}
 			}
 			if err != nil {
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {

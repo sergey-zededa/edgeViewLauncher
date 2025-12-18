@@ -165,6 +165,12 @@ func (m *fakeSessionManager) ListTunnels(nodeID string) []*session.Tunnel { retu
 
 func (m *fakeSessionManager) GetAllTunnels() []*session.Tunnel { return nil }
 
+func (m *fakeSessionManager) InvalidateSession(nodeID string) {
+	if m.cached != nil {
+		delete(m.cached, nodeID)
+	}
+}
+
 // --- Existing tests ---
 
 // TestAddRecentDevice verifies ordering, de-duplication and max length.
@@ -434,6 +440,57 @@ func TestStartTunnel_StartProxyRetriesAndFails(t *testing.T) {
 	_, _, err := a.StartTunnel("node-offline", "10.0.0.1", 5900, "")
 	if err == nil || !strings.Contains(err.Error(), "failed to start tunnel after") {
 		t.Fatalf("expected retry failure error, got: %v", err)
+	}
+}
+
+// TestStartTunnel_ReusesSessionAndUpdatesCache ensures that if a session exists in Cloud API,
+// StartTunnel reuses it AND updates the local cache with the fresh configuration (e.g. Enc flag).
+func TestStartTunnel_ReusesSessionAndUpdatesCache(t *testing.T) {
+	// Setup: Cache is empty for this node (simulating cold start or expired session)
+	fakeSess := &fakeSessionManager{
+		cached:         make(map[string]*session.CachedSession),
+		startProxyPort: 60002,
+		startProxyID:   "tunnel-reuse",
+	}
+
+	// Setup: Cloud API has fresh session with Enc=true
+	freshCfg := &zededa.SessionConfig{URL: "wss://new", Token: "new", Enc: true}
+	fakeClient := &fakeZededaClient{
+		edgeStatus: &zededa.EdgeViewStatus{
+			Token:   "new-token",
+			DispURL: "wss://new",
+		},
+		parseCfg: freshCfg,
+	}
+
+	a := newTestApp(fakeClient, fakeSess)
+
+	// Action
+	port, _, err := a.StartTunnel("node-reuse", "10.0.0.1", 5900, "")
+	if err != nil {
+		t.Fatalf("StartTunnel returned error: %v", err)
+	}
+
+	// Assertions
+	if port != 60002 {
+		t.Errorf("expected port 60002, got %d", port)
+	}
+
+	// Verify InitSession was NOT called (we reused)
+	if fakeClient.initSessionScript != "" {
+		t.Errorf("expected InitSession NOT to be called, but it was")
+	}
+
+	// CRITICAL: Verify cache was updated with fresh config (Enc=true)
+	cached, ok := fakeSess.cached["node-reuse"]
+	if !ok {
+		t.Fatalf("session removed from cache?")
+	}
+	if !cached.Config.Enc {
+		t.Errorf("expected cached config Enc=true (updated), got false (stale)")
+	}
+	if cached.Config.Token != "new" {
+		t.Errorf("expected cached token 'new', got %q", cached.Config.Token)
 	}
 }
 

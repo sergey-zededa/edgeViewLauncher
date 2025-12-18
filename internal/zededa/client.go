@@ -419,6 +419,7 @@ type SessionConfig struct {
 	InstID  int
 	MaxInst int
 	Key     string // JWT Key (Nonce)
+	Enc     bool   // Encryption enabled
 }
 
 // ParseEdgeViewToken extracts Session Details from the JWT token
@@ -448,10 +449,13 @@ func (c *Client) ParseEdgeViewToken(token string) (*SessionConfig, error) {
 		Sub string `json:"sub"` // Device UUID
 		Num int    `json:"num"` // Max instances
 		Key string `json:"key"` // Nonce key
+		Enc bool   `json:"enc"` // Encryption enabled
 	}
 	if err := json.Unmarshal(payloadBytes, &claims); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal JWT claims: %w", err)
 	}
+
+	// fmt.Printf("DEBUG: JWT Claims: Dep=%s, Sub=%s, Num=%d, Key=%s, Enc=%v\n", claims.Dep, claims.Sub, claims.Num, claims.Key, claims.Enc)
 
 	if claims.Dep == "" {
 		return nil, fmt.Errorf("JWT payload missing 'dep' field")
@@ -484,6 +488,7 @@ func (c *Client) ParseEdgeViewToken(token string) (*SessionConfig, error) {
 		InstID:  instID,
 		MaxInst: claims.Num,
 		Key:     claims.Key,
+		Enc:     claims.Enc,
 	}, nil
 }
 
@@ -905,6 +910,7 @@ type EdgeViewStatus struct {
 	ConsoleEnabled bool
 	Token          string // Active EdgeView JWT token
 	DispURL        string // Dispatcher URL
+	IsEncrypted    bool   // Encryption enabled in JWT info
 }
 
 // GetEdgeViewStatus returns the detailed EdgeView status from the device
@@ -940,11 +946,17 @@ func (c *Client) GetEdgeViewStatus(nodeID string) (*EdgeViewStatus, error) {
 		}
 
 		if jwtInfo, ok := evConfig["jwtInfo"].(map[string]interface{}); ok {
+			// Debug: Log jwtInfo to verify "enc" field presence and type
+			// fmt.Printf("DEBUG: jwtInfo map: %+v\n", jwtInfo)
+
 			if num, ok := jwtInfo["numInst"].(float64); ok {
 				status.MaxSessions = int(num)
 			}
 			if exp, ok := jwtInfo["expireSec"].(string); ok {
 				status.Expiry = exp
+			}
+			if enc, ok := jwtInfo["encrypt"].(bool); ok {
+				status.IsEncrypted = enc
 			}
 			// Fallback: DispURL might be in jwtInfo too
 			if status.DispURL == "" {

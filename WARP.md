@@ -105,6 +105,11 @@ Key Go backend routes (`http-server.go`):
 - `GET /api/ssh/term?port=<port>` – WebSocket endpoint for SSH terminal
 - `GET/POST /api/settings` – Cluster configuration CRUD
 
+## API Documentation
+
+For full API documentation of the ZEDEDA Cloud API, refer to the Swagger definition:
+[ZEDEDA Edge Node Service Swagger](https://zedcontrol.zededa.net/api/v1/docs/zapiservices/zedge_node_service.swagger.json)
+
 ## File Locations
 
 - Config file: `~/.edgeview-config.json` (clusters, recent devices)

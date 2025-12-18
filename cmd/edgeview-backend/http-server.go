@@ -540,8 +540,9 @@ type TunnelInfo struct {
 	TargetIP  string    `json:"TargetIP"`
 	LocalPort int       `json:"LocalPort"`
 	CreatedAt time.Time `json:"CreatedAt"`
-	Status    string    `json:"Status,omitempty"`
-	Error     string    `json:"Error,omitempty"`
+	Status      string    `json:"Status,omitempty"`
+	Error       string    `json:"Error,omitempty"`
+	IsEncrypted bool      `json:"IsEncrypted"`
 }
 
 func (s *HTTPServer) handleListTunnels(w http.ResponseWriter, r *http.Request) {
@@ -556,16 +557,17 @@ func (s *HTTPServer) handleListTunnels(w http.ResponseWriter, r *http.Request) {
 	for _, t := range tunnels {
 		name, projectID := s.app.GetNodeMeta(t.NodeID)
 		infos = append(infos, TunnelInfo{
-			ID:        t.ID,
-			NodeID:    t.NodeID,
-			NodeName:  name,
-			ProjectID: projectID,
-			Type:      t.Type,
-			TargetIP:  t.TargetIP,
-			LocalPort: t.LocalPort,
-			CreatedAt: t.CreatedAt,
-			Status:    t.Status,
-			Error:     t.Error,
+			ID:          t.ID,
+			NodeID:      t.NodeID,
+			NodeName:    name,
+			ProjectID:   projectID,
+			Type:        t.Type,
+			TargetIP:    t.TargetIP,
+			LocalPort:   t.LocalPort,
+			CreatedAt:   t.CreatedAt,
+			Status:      t.Status,
+			Error:       t.Error,
+			IsEncrypted: t.IsEncrypted(), // Helper method we'll add to Tunnel
 		})
 	}
 

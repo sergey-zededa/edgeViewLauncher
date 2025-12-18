@@ -47,6 +47,7 @@ type sessionAPI interface {
 	CloseTunnel(tunnelID string) error
 	ListTunnels(nodeID string) []*session.Tunnel
 	GetAllTunnels() []*session.Tunnel
+	InvalidateSession(nodeID string)
 }
 
 // App struct
@@ -411,7 +412,8 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (int, string, 
 // StartTunnel starts a TCP tunnel to a specific IP and port on the device
 // protocol is optional: "vnc", "ssh", "tcp". If empty, it's inferred from port.
 func (a *App) StartTunnel(nodeID, targetIP string, targetPort int, protocol string) (int, string, error) {
-	fmt.Printf("StartTunnel called for %s -> %s:%d (protocol: %s)\n", nodeID, targetIP, targetPort, protocol)
+	callID := time.Now().UnixNano()
+	fmt.Printf("StartTunnel[%d] called for %s -> %s:%d (protocol: %s)\n", callID, nodeID, targetIP, targetPort, protocol)
 
 	// Get cached session
 	cached, ok := a.sessionManager.GetCachedSession(nodeID)
@@ -436,6 +438,20 @@ func (a *App) StartTunnel(nodeID, targetIP string, targetPort int, protocol stri
 						}
 					}
 				}
+				// Force update of cached session with potentially newer info (e.g. encryption)
+				// We don't change expiration or port yet, just the config
+				// But we need to use the existing cache's expiry if available, or set a new one?
+				// Since we are reusing an active session, let's refresh the expiry in our cache too.
+				newExpires := time.Now().Add(4*time.Hour + 50*time.Minute)
+				
+				// Preserve port if reusing for same purpose (but here we are starting a new tunnel so port is dynamic)
+				// Actually, StartTunnel doesn't care about cached port unless it's reusing the whole session for the SAME tunnel.
+				// Here we just want to update the config.
+				
+				a.sessionManager.StoreCachedSession(nodeID, sessionConfig, 0, newExpires)
+				// Re-fetch to ensure 'cached' variable points to the updated data
+				cached, _ = a.sessionManager.GetCachedSession(nodeID)
+				
 				fmt.Printf("Reused active session. URL: %s\n", sessionConfig.URL)
 			} else {
 				fmt.Printf("Failed to parse active token: %v\n", parseErr)
@@ -492,12 +508,47 @@ func (a *App) StartTunnel(nodeID, targetIP string, targetPort int, protocol stri
 			return port, tunnelID, nil
 		}
 
-		// This path is unlikely to be hit for "no device online" since StartProxy is async,
-		// but keeping it for completeness if StartProxy logic changes.
-		if strings.Contains(err.Error(), "no device online") && attempt < maxRetries {
-			fmt.Printf("DEBUG: Device offline, retrying in 2 seconds... (attempt %d/%d)\n", attempt, maxRetries)
-			time.Sleep(2 * time.Second)
-			continue
+		// Handle "no device online" specifically (or timeouts which might be same cause)
+		if strings.Contains(err.Error(), "no device online") || strings.Contains(err.Error(), "timeout waiting for tcpSetupOK") {
+			fmt.Printf("DEBUG: Device offline or timeout (attempt %d/%d)...\n", attempt, maxRetries)
+			
+			// If this was the last attempt, try one final hail-mary: refresh the session
+			// This handles cases where the session token is stale on the dispatcher side
+			if attempt == maxRetries {
+				fmt.Println("DEBUG: Last attempt failed with 'no device online'. Forcefully refreshing session...")
+				a.sessionManager.InvalidateSession(nodeID)
+				
+				// Init new session
+				script, initErr := a.zededaClient.InitSession(nodeID)
+				if initErr != nil {
+					fmt.Printf("DEBUG: Failed to init fresh session: %v\n", initErr)
+					// Return original error
+					break
+				}
+				
+				// Parse and store
+				newConfig, parseErr := a.zededaClient.ParseEdgeViewScript(script)
+				if parseErr != nil {
+					fmt.Printf("DEBUG: Failed to parse fresh script: %v\n", parseErr)
+					break
+				}
+				
+				expiresAt := time.Now().Add(4*time.Hour + 50*time.Minute)
+				a.sessionManager.StoreCachedSession(nodeID, newConfig, 0, expiresAt)
+				cached = &session.CachedSession{Config: newConfig, ExpiresAt: expiresAt} // Update local var
+				
+				// One more try with fresh session
+				fmt.Println("DEBUG: Retrying with fresh session...")
+				port, tunnelID, err = a.sessionManager.StartProxy(a.ctx, cached.Config, nodeID, target, protocol)
+				if err == nil {
+					fmt.Printf("Tunnel started on localhost:%d -> %s (ID: %s) after session refresh\n", port, target, tunnelID)
+					return port, tunnelID, nil
+				}
+			} else {
+				// Standard backoff for intermediate attempts
+				time.Sleep(2 * time.Second)
+				continue
+			}
 		}
 
 		// Other error, don't retry
@@ -522,9 +573,10 @@ func (a *App) ListTunnels(nodeID string) []*session.Tunnel {
 
 // SessionStatus represents the EdgeView session state
 type SessionStatus struct {
-	Active    bool   `json:"active"`
-	ExpiresAt string `json:"expiresAt,omitempty"` // RFC3339 format
-	Port      int    `json:"port,omitempty"`
+	Active      bool   `json:"active"`
+	ExpiresAt   string `json:"expiresAt,omitempty"` // RFC3339 format
+	Port        int    `json:"port,omitempty"`
+	IsEncrypted bool   `json:"isEncrypted"`
 }
 
 // GetSessionStatus returns the cached session status for a node
@@ -534,10 +586,17 @@ func (a *App) GetSessionStatus(nodeID string) SessionStatus {
 		return SessionStatus{Active: false}
 	}
 
+	enc := false
+	if cached.Config != nil {
+		enc = cached.Config.Enc
+	}
+	fmt.Printf("DEBUG: GetSessionStatus for %s: Active=true, Enc=%v\n", nodeID, enc)
+
 	return SessionStatus{
-		Active:    true,
-		ExpiresAt: cached.ExpiresAt.Format(time.RFC3339),
-		Port:      cached.Port,
+		Active:      true,
+		ExpiresAt:   cached.ExpiresAt.Format(time.RFC3339),
+		Port:        cached.Port,
+		IsEncrypted: enc,
 	}
 }
 
@@ -783,6 +842,7 @@ type SSHStatus struct {
 	VGAEnabled     bool   `json:"vgaEnabled"`
 	USBEnabled     bool   `json:"usbEnabled"`
 	ConsoleEnabled bool   `json:"consoleEnabled"`
+	IsEncrypted    bool   `json:"isEncrypted"`
 }
 
 // GetSSHStatus returns the current SSH status of the node
@@ -827,6 +887,7 @@ func (a *App) GetSSHStatus(nodeID string) *SSHStatus {
 		VGAEnabled:     evStatus.VGAEnabled,
 		USBEnabled:     evStatus.USBEnabled,
 		ConsoleEnabled: evStatus.ConsoleEnabled,
+		IsEncrypted:    evStatus.IsEncrypted,
 	}
 
 	// Override expiry with cached session if available and valid

@@ -170,7 +170,21 @@ class SecureStorageManager {
             console.log('[SecureStorage] Backup created at:', this.backupPath);
 
             // Extract tokens
-            const tokensMap = {};
+            let tokensMap = {};
+            
+            // Load existing secure tokens to merge with
+            if (fs.existsSync(this.secureTokensPath)) {
+                try {
+                    const existingTokens = this.getAllTokens();
+                    if (existingTokens) {
+                        tokensMap = existingTokens;
+                    }
+                } catch (err) {
+                    console.warn('[SecureStorage] Failed to load existing tokens for merge:', err);
+                    // Continue with empty map if decryption fails
+                }
+            }
+
             let tokenCount = 0;
 
             config.clusters.forEach(cluster => {
@@ -251,10 +265,17 @@ class SecureStorageManager {
                 const tokens = this.getAllTokens();
                 
                 if (tokens && config.clusters) {
-                    config.clusters = config.clusters.map(cluster => ({
-                        ...cluster,
-                        apiToken: tokens[cluster.name] || ''
-                    }));
+                    config.clusters = config.clusters.map(cluster => {
+                        const secureToken = tokens[cluster.name];
+                        return {
+                            ...cluster,
+                            // Use secure token if available, otherwise preserve existing legacy token
+                            apiToken: secureToken || cluster.apiToken || '',
+                            // If we injected a secure token, ensure the flag is true so backend knows 
+                            // not to write it to disk. Preserve existing flag otherwise.
+                            tokenEncrypted: secureToken ? true : (cluster.tokenEncrypted || false)
+                        };
+                    });
                 }
             }
 
