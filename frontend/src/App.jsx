@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { SearchNodes, ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo } from './electronAPI';
-import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download } from 'lucide-react';
+import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
 import Tooltip from './components/Tooltip';
 import About from './components/About';
@@ -31,6 +31,103 @@ function VersionDisplay() {
   );
 }
 
+// Custom Select Component for Port Selection
+const PortSelect = ({ ports, selectedValue, onChange, placeholder }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const dropdownRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const selectedPort = ports.find(p => p.publicPort.toString() === selectedValue.toString());
+
+  return (
+    <div className="custom-select-container" ref={dropdownRef} style={{ position: 'relative', flex: 1 }}>
+      <div
+        className="custom-select-trigger"
+        onClick={() => setIsOpen(!isOpen)}
+        style={{
+          padding: '8px 12px',
+          backgroundColor: '#1a1a1a',
+          border: '1px solid #333',
+          borderRadius: '4px',
+          color: '#fff',
+          cursor: 'pointer',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          fontSize: '13px',
+          userSelect: 'none'
+        }}
+      >
+        <span style={{ color: selectedValue ? '#fff' : '#888', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {selectedPort 
+            ? `${selectedPort.publicPort} (Ext) → ${selectedPort.privatePort} (${selectedPort.containerName})`
+            : placeholder}
+        </span>
+        <ChevronDown size={14} style={{ color: '#888', transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
+      </div>
+      {isOpen && (
+        <div className="custom-select-options" style={{
+          position: 'absolute',
+          top: '100%',
+          left: 0,
+          right: 0,
+          marginTop: '4px',
+          backgroundColor: '#1e1e1e',
+          border: '1px solid #333',
+          borderRadius: '4px',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+          zIndex: 1000,
+          maxHeight: '200px',
+          overflowY: 'auto'
+        }}>
+          {ports.length === 0 ? (
+            <div style={{ padding: '8px 12px', color: '#666', fontSize: '12px' }}>No exposed ports</div>
+          ) : (
+            ports.map((pm, idx) => (
+              <div
+                key={idx}
+                className="custom-option"
+                onClick={() => {
+                  onChange(pm.publicPort);
+                  setIsOpen(false);
+                }}
+                style={{
+                  padding: '8px 12px',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  color: '#ccc',
+                  borderBottom: idx < ports.length - 1 ? '1px solid #2a2a2a' : 'none',
+                  transition: 'background 0.1s'
+                }}
+                onMouseEnter={(e) => e.target.style.backgroundColor = '#2a2a2a'}
+                onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <span style={{ color: '#fff', fontWeight: '500' }}>{pm.publicPort}</span>
+                    <span style={{ color: '#666' }}>→</span>
+                    <span style={{ color: '#999' }}>{pm.privatePort}</span>
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#58a6ff', marginLeft: '12px' }}>{pm.containerName}</div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 function App() {
   const [config, setConfig] = useState({ baseUrl: '', apiToken: '', clusters: [], activeCluster: '' });
   const [query, setQuery] = useState('');
@@ -53,6 +150,7 @@ function App() {
   const [sessionStatus, setSessionStatus] = useState(null);
   const [loadingSSH, setLoadingSSH] = useState(false);
   const [expandedServiceId, setExpandedServiceId] = useState(null);
+  const [expandedServiceContainers, setExpandedServiceContainers] = useState({});
   const [highlightTunnels, setHighlightTunnels] = useState(false);
   const [activeTunnels, setActiveTunnels] = useState([]); // Track active tunnels across all devices
   const [showGlobalTunnels, setShowGlobalTunnels] = useState(false);
@@ -533,6 +631,9 @@ function App() {
       await loadSSHStatus(selectedNode.id, false);
       
       const newConfig = await GetSettings();
+      // handleTunnelError(err); // Removed invalid call
+    } catch (err) {
+      console.error(err);
       handleTunnelError(err);
       const msg = err.message || String(err);
       setTcpError(msg);
@@ -822,7 +923,7 @@ function App() {
       // But loadSSHStatus might have set it to something else, so be careful.
       // However, loadSSHStatus is called in parallel, so this might be tricky.
       // Let's rely on loadSSHStatus to update it or clear it.
-      // If loadSSHStatus finishes first, we don't want to clear it.
+      // If loadSSHStatus finishes first, we don't want it to clear status if loadSSHStatus set it to something else.
       // But loadSSHStatus sets globalStatus on start.
       // Given the overlap, maybe we just don't clear it here? 
       // Or we check if message is "Fetching device services..."?
@@ -2319,6 +2420,11 @@ function App() {
                                     {app.ips && app.ips.length > 0 && (
                                       <span title="IP Addresses">{app.ips.join(', ')}</span>
                                     )}
+                                    {app.appType === 'APP_TYPE_DOCKER_COMPOSE' && (
+                                      <span style={{ marginLeft: '8px', display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.85em', color: '#58a6ff' }}>
+                                        <Layers size={12} /> Compose
+                                      </span>
+                                    )}
                                     {app.vncPort && (
                                       <span style={{ marginLeft: app.ips && app.ips.length > 0 ? '8px' : '0' }}>
                                         • VNC: Port {app.vncPort}
@@ -2328,6 +2434,16 @@ function App() {
                                 </div>
                               </div>
                               <div className="service-actions">
+                                {app.appType === 'APP_TYPE_DOCKER_COMPOSE' && app.containers && app.containers.length > 0 && (
+                                  <button
+                                    className={`connect-btn ${expandedServiceContainers[idx] ? 'active' : 'secondary'}`}
+                                    onClick={() => setExpandedServiceContainers(prev => ({ ...prev, [idx]: !prev[idx] }))}
+                                    style={{ marginRight: '8px' }}
+                                    title="Show containers"
+                                  >
+                                    <Box size={14} /> {expandedServiceContainers[idx] ? 'Hide' : 'Containers'}
+                                  </button>
+                                )}
                                 <button
                                   className={`connect-btn ${expandedServiceId === idx ? 'active' : 'secondary'}`}
                                   onClick={() => setExpandedServiceId(expandedServiceId === idx ? null : idx)}
@@ -2338,6 +2454,45 @@ function App() {
                                 </button>
                               </div>
                             </div>
+                            {expandedServiceContainers[idx] && app.containers && (
+                              <div style={{ marginTop: '12px', borderTop: '1px solid #333', paddingTop: '12px', width: '100%', overflowX: 'auto' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                                  <thead>
+                                    <tr style={{ color: '#888', textAlign: 'left', borderBottom: '1px solid #333' }}>
+                                      <th style={{ padding: '8px 12px', width: '40px', textAlign: 'left' }}>Status</th>
+                                      <th style={{ padding: '8px 12px', width: '30%', textAlign: 'left' }}>Name</th>
+                                      <th style={{ padding: '8px 12px', textAlign: 'left' }}>Port Mapping (Host → Container)</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {app.containers.map((c, cIdx) => (
+                                      <tr key={cIdx} style={{ borderBottom: '1px solid #2a2a2a' }}>
+                                        <td style={{ padding: '8px 12px', textAlign: 'left' }}>
+                                          <div style={{
+                                            width: '8px', height: '8px', borderRadius: '50%',
+                                            backgroundColor: c.containerState?.toLowerCase().includes('running') ? '#2ecc71' : '#e74c3c'
+                                          }} title={c.containerState} />
+                                        </td>
+                                        <td style={{ padding: '8px 12px', textAlign: 'left', fontSize: '13px' }}>{c.containerName}</td>
+                                        <td style={{ padding: '8px 12px', fontFamily: 'monospace', textAlign: 'left', fontSize: '12px' }}>
+                                          {c.portMaps && c.portMaps.filter(pm => pm.publicPort > 0).length > 0 ? (
+                                            c.portMaps.filter(pm => pm.publicPort > 0).map((pm, pIdx) => (
+                                              <div key={pIdx} style={{ marginBottom: '2px' }}>
+                                                <span style={{ color: '#a5d6ff' }}>{pm.runtimeIp || '0.0.0.0'}:{pm.publicPort}</span>
+                                                <span style={{ color: '#666', margin: '0 6px' }}>→</span>
+                                                <span style={{ color: '#8b949e' }}>localhost:{pm.privatePort}</span>
+                                              </div>
+                                            ))
+                                          ) : (
+                                            <span style={{ color: '#484f58', fontStyle: 'italic' }}>No public ports</span>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
                             {expandedServiceId === idx && (
                               <div className="service-options">
                                 {app.vncPort && (
@@ -2483,7 +2638,7 @@ function App() {
                                     }
                                     if (tunnelLoading) return;
                                     const ip = app.ips && app.ips.length > 0 ? app.ips[0] : '127.0.0.1';
-                                    setTcpTunnelConfig({ ip, appName: app.name });
+                                    setTcpTunnelConfig({ ip, appName: app.name, containers: app.containers });
                                     setTcpIpInput(ip);
                                     setTcpPortInput('80');
                                     setTcpError('');
@@ -2526,89 +2681,83 @@ function App() {
                   justifyContent: 'center',
                   zIndex: 2100,
                 }}
+                onClick={(e) => {
+                  if (e.target === e.currentTarget) setTcpTunnelConfig(null);
+                }}
               >
-                <div
-                  style={{
-                    backgroundColor: '#1e1e1e',
-                    borderRadius: '8px',
-                    padding: '16px 20px',
-                    minWidth: '320px',
-                    maxWidth: '420px',
-                    boxShadow: '0 12px 30px rgba(0, 0, 0, 0.4)',
-                    border: '1px solid #333',
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                    <h4 style={{ margin: 0, fontSize: '14px' }}>Start TCP Tunnel</h4>
-                    <button
-                      className="icon-btn"
-                      onClick={() => {
-                        setTcpTunnelConfig(null);
-                        setTcpPortInput('');
-                        setTcpIpInput('');
-                        setTcpError('');
-                      }}
-                      title="Close"
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                  <div style={{ fontSize: '12px', marginBottom: '10px', color: '#ccc' }}>
-                    <div>Device: {selectedNode?.name}</div>
-                    {tcpTunnelConfig.appName && <div>Application: {tcpTunnelConfig.appName}</div>}
-                  </div>
-                  <div className="form-group" style={{ marginBottom: '8px' }}>
-                    <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>Target IP</label>
+                <div style={{
+                  backgroundColor: '#1e1e1e',
+                  padding: '24px',
+                  borderRadius: '8px',
+                  width: '400px',
+                  boxShadow: '0 4px 20px rgba(0, 0, 0, 0.5)',
+                  border: '1px solid #333'
+                }}>
+                  <h3 style={{ marginTop: 0, marginBottom: '20px' }}>Start TCP Tunnel</h3>
+                  
+                  <div className="form-group" style={{ marginBottom: '16px' }}>
+                    <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', color: '#888' }}>Target IP</label>
                     <input
                       type="text"
                       value={tcpIpInput}
                       onChange={(e) => setTcpIpInput(e.target.value)}
-                      placeholder="e.g. 10.0.0.1, localhost"
-                      style={{ width: '100%', padding: '8px', backgroundColor: '#1a1a1a', border: '1px solid #333', borderRadius: '4px', color: '#fff', outline: 'none', boxSizing: 'border-box' }}
+                      style={{ width: '100%', padding: '8px', backgroundColor: '#2a2a2a', border: '1px solid #444', borderRadius: '4px', color: '#fff' }}
                     />
                   </div>
-                  <div className="form-group" style={{ marginBottom: '8px' }}>
-                    <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>Target Port</label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="65535"
-                      value={tcpPortInput}
-                      onChange={(e) => setTcpPortInput(e.target.value)}
-                      placeholder="e.g. 80, 8080"
-                      style={{ width: '30%', minWidth: '80px', padding: '8px', backgroundColor: '#1a1a1a', border: '1px solid #333', borderRadius: '4px', color: '#fff', outline: 'none', boxSizing: 'border-box' }}
-                    />
+
+                  <div className="form-group" style={{ marginBottom: '20px' }}>
+                    <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', color: '#888' }}>Target Port</label>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <input
+                        type="number"
+                        value={tcpPortInput}
+                        onChange={(e) => setTcpPortInput(e.target.value)}
+                        placeholder="e.g. 8080"
+                        style={{ width: '100px', padding: '8px', backgroundColor: '#2a2a2a', border: '1px solid #444', borderRadius: '4px', color: '#fff' }}
+                      />
+                      
+                      {tcpTunnelConfig.containers && tcpTunnelConfig.containers.length > 0 && (() => {
+                        // Flatten all exposed ports
+                        const exposedPorts = tcpTunnelConfig.containers.flatMap(c => 
+                          (c.portMaps || [])
+                            .filter(pm => pm.publicPort > 0)
+                            .map(pm => ({ ...pm, containerName: c.containerName }))
+                        );
+                        
+                        if (exposedPorts.length > 0) {
+                          return (
+                            <PortSelect
+                              ports={exposedPorts}
+                              selectedValue={tcpPortInput}
+                              onChange={setTcpPortInput}
+                              placeholder="Select exposed port..."
+                            />
+                          );
+                        }
+                        return null;
+                      })()}
+                    </div>
                   </div>
+
                   {tcpError && (
-                    <div className="error-text" style={{ marginBottom: '8px' }}>
+                    <div style={{ color: '#ff6b6b', fontSize: '13px', marginBottom: '16px' }}>
                       {tcpError}
                     </div>
                   )}
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '4px' }}>
+
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
                     <button
-                      className="connect-btn secondary"
-                      onClick={() => {
-                        setTcpTunnelConfig(null);
-                        setTcpPortInput('');
-                        setTcpIpInput('');
-                        setTcpError('');
-                      }}
+                      className="btn secondary"
+                      onClick={() => setTcpTunnelConfig(null)}
                     >
                       Cancel
                     </button>
                     <button
-                      className={`connect-btn primary ${tunnelLoading === 'tcp' ? 'loading' : ''}`}
+                      className="btn primary"
                       onClick={startCustomTunnel}
-                      disabled={tunnelLoading}
+                      disabled={!tcpIpInput || !tcpPortInput || !!tunnelLoading}
                     >
-                      {tunnelLoading === 'tcp' ? (
-                        <>
-                          <Activity size={14} className="animate-spin" />
-                          <span style={{ marginLeft: '6px' }}>Starting...</span>
-                        </>
-                      ) : (
-                        'Start Tunnel'
-                      )}
+                      {tunnelLoading === 'tcp' ? 'Starting...' : 'Start Tunnel'}
                     </button>
                   </div>
                 </div>
@@ -2684,7 +2833,6 @@ function App() {
                         style={{ width: '100%', padding: '8px 10px', backgroundColor: '#1a1a1a', border: '1px solid #333', borderRadius: '4px', color: '#fff', outline: 'none', boxSizing: 'border-box' }}
                       />
                     </div>
-
                     <div className="form-group" style={{ flex: '1' }}>
                       <label style={{ fontSize: '12px', display: 'block', marginBottom: '6px', color: '#ccc' }}>Port</label>
                       <input
