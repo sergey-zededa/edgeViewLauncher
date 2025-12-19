@@ -940,12 +940,14 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 
 	// Transform and enrich with Cloud API (immediate, reliable)
 	type Service struct {
-		Name          string   `json:"name"`
-		Status        string   `json:"status"`
-		ID            string   `json:"id"`
-		IPs           []string `json:"ips,omitempty"`
-		VNCPort       int      `json:"vncPort,omitempty"`
-		EdgeViewState string   `json:"edgeViewState,omitempty"` // This will be populated by background task
+		Name          string                 `json:"name"`
+		Status        string                 `json:"status"`
+		ID            string                 `json:"id"`
+		IPs           []string               `json:"ips,omitempty"`
+		VNCPort       int                    `json:"vncPort,omitempty"`
+		EdgeViewState string                 `json:"edgeViewState,omitempty"` // This will be populated by background task
+		Containers    []zededa.ContainerInfo `json:"containers,omitempty"`
+		AppType       string                 `json:"appType,omitempty"`
 	}
 
 	type ServicesResponse struct {
@@ -990,28 +992,74 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 
 		// Primary enrichment: Cloud API
 		if details, ok := appDetails[app.ID]; ok {
-			// Extract own IPs
+			// Extract IPs
 			var ips []string
-			for _, adapter := range details.NetworkAdapters {
-				if ipAddr, ok := adapter["ipaddr"].(string); ok && ipAddr != "" {
-					ips = append(ips, ipAddr)
+			
+			// 1. Try to get IPs from Container Status (RuntimeIP)
+			// This is the most accurate source for Docker Compose apps
+			for _, container := range details.Containers {
+				for _, pm := range container.PortMaps {
+					if pm.RuntimeIP != "" && pm.RuntimeIP != "0.0.0.0" {
+						// Add unique
+						found := false
+						for _, ip := range ips {
+							if ip == pm.RuntimeIP {
+								found = true
+								break
+							}
+						}
+						if !found {
+							ips = append(ips, pm.RuntimeIP)
+						}
+					}
 				}
+			}
+
+			// 2. If no Runtime IPs, fall back to Network Adapters
+			if len(ips) == 0 {
+				for _, adapter := range details.NetworkAdapters {
+					if ipAddr, ok := adapter["ipaddr"].(string); ok && ipAddr != "" {
+						ips = append(ips, ipAddr)
+					}
+				}
+			}
+
+			// For Docker Compose, we always want the Runtime IPs as they are the most reliable reachable endpoints
+			if details.AppType == "APP_TYPE_DOCKER_COMPOSE" && len(dockerRuntimeIPs) > 0 {
+				// Prioritize Docker Runtime IPs by prepending them
+				ips = append(dockerRuntimeIPs, ips...)
+				fmt.Printf("DEBUG: Added Docker Runtime IPs for app %s: %v\n", app.Name, dockerRuntimeIPs)
 			}
 
 			if len(ips) > 0 {
 				svc.IPs = ips
-				fmt.Printf("DEBUG: Found own IPs for app %s: %v\n", app.Name, ips)
-			} else if details.AppType == "APP_TYPE_DOCKER_COMPOSE" && len(dockerRuntimeIPs) > 0 {
-				// Inherit IPs from Docker Runtime
-				svc.IPs = dockerRuntimeIPs
-				fmt.Printf("DEBUG: Inherited Docker Runtime IPs for app %s: %v\n", app.Name, dockerRuntimeIPs)
+				fmt.Printf("DEBUG: Final IPs for app %s: %v\n", app.Name, ips)
 			}
 
 			// Extract VNC info from Cloud API
 			if details.VMInfo.VNC {
 				svc.VNCPort = 5900 + details.VMInfo.VNCDisplay
 				fmt.Printf("DEBUG: Found VNC port %d for app %s (from Cloud API)\n", svc.VNCPort, app.Name)
+			} else {
+				// Fallback: Check if any container exposes VNC port (59xx)
+				for _, container := range details.Containers {
+					for _, pm := range container.PortMaps {
+						// Check public port
+						if pm.PublicPort >= 5900 && pm.PublicPort <= 5999 {
+							svc.VNCPort = pm.PublicPort
+							fmt.Printf("DEBUG: Found inferred VNC port %d for app %s (from container map)\n", svc.VNCPort, app.Name)
+							break
+						}
+					}
+					if svc.VNCPort > 0 {
+						break
+					}
+				}
 			}
+
+			// Populate container info and AppType
+			svc.Containers = details.Containers
+			svc.AppType = details.AppType
 		}
 
 		// Secondary enrichment: Check cache (from background EdgeView)
@@ -1022,8 +1070,11 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 				fmt.Printf("DEBUG: Using cached EdgeView IPs for app %s\n", app.Name)
 				svc.IPs = cached.IPs
 			}
-			// Always use cached VNC/State (Cloud API doesn't have these)
-			svc.VNCPort = cached.VNCPort
+			// Always use cached VNC/State (Cloud API doesn't have these, or has static config)
+			// Only overwrite if cache has valid data (avoid zeroing out Cloud API data)
+			if cached.VNCPort > 0 {
+				svc.VNCPort = cached.VNCPort
+			}
 			svc.EdgeViewState = cached.State
 		}
 		a.enrichmentMu.RUnlock()
@@ -1033,12 +1084,8 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 
 	// Start EdgeView enrichment in background (optional VNC port, state)
 	// This runs async and doesn't block the response
-	// TODO: Background EdgeView enrichment disabled temporarily to avoid InstID conflicts with TCP tunnels
-	// The Cloud API already provides all essential data (IPs, VNC port, status)
-	// EdgeView enrichment was only adding minor state differences
-	/*
-		go func() {
-			fmt.Println("DEBUG: Starting background EdgeView enrichment...")
+	go func() {
+		fmt.Println("DEBUG: Starting background EdgeView enrichment...")
 
 			// Try to get or create session
 			cached, ok := a.sessionManager.GetCachedSession(nodeID)
@@ -1119,7 +1166,6 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 
 			fmt.Println("DEBUG: Background EdgeView enrichment completed")
 		}()
-	*/
 
 	// Return immediately with Cloud API data
 	response := ServicesResponse{

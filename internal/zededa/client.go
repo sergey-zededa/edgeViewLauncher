@@ -203,6 +203,22 @@ type VMInfo struct {
 	VNCDisplay int  `json:"vncDisplay"`
 }
 
+type PortMap struct {
+	IP          string `json:"ip"`
+	PrivatePort int    `json:"privatePort"`
+	PublicPort  int    `json:"publicPort"`
+	Type        string `json:"type"`
+	RuntimeIP   string `json:"runtimeIp"`
+}
+
+type ContainerInfo struct {
+	Name     string    `json:"containerName"`
+	Image    string    `json:"containerImage"`
+	State    string    `json:"containerState"`
+	Uptime   string    `json:"uptime"`
+	PortMaps []PortMap `json:"portMaps"`
+}
+
 type AppInstanceDetails struct {
 	ID              string                   `json:"id"`
 	Name            string                   `json:"name"`
@@ -210,6 +226,8 @@ type AppInstanceDetails struct {
 	AppType         string                   `json:"appType"`
 	DeploymentType  string                   `json:"deploymentType"`
 	VMInfo          VMInfo                   `json:"vminfo"`
+	Containers      []ContainerInfo          `json:"containerStatusList"`
+	DockerCompose   string                   `json:"dockerComposeYamlText"`
 }
 
 // GetAppInstanceDetails fetches detailed app instance information including network adapters
@@ -218,7 +236,7 @@ func (c *Client) GetAppInstanceDetails(appInstanceID string) (*AppInstanceDetail
 		return nil, fmt.Errorf("API token not configured")
 	}
 
-	url := fmt.Sprintf("%s/api/v1/apps/instances/id/%s", c.BaseURL, appInstanceID)
+	url := fmt.Sprintf("%s/api/v1/apps/instances/id/%s/status", c.BaseURL, appInstanceID)
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
