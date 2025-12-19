@@ -171,6 +171,22 @@ func (m *fakeSessionManager) InvalidateSession(nodeID string) {
 	}
 }
 
+func (m *fakeSessionManager) StartCollectInfo(nodeID string) (string, error) {
+	return "job-123", nil
+}
+
+func (m *fakeSessionManager) GetCollectInfoJob(jobID string) *session.CollectInfoJob {
+	return &session.CollectInfoJob{
+		ID:        jobID,
+		NodeID:    "node-1",
+		Status:    "completed",
+		Filename:  "test-file.tar.gz",
+		FilePath:  "/tmp/test-file.tar.gz",
+		TotalSize: 1024,
+		Progress:  1024,
+	}
+}
+
 // --- Existing tests ---
 
 // TestAddRecentDevice verifies ordering, de-duplication and max length.

@@ -66,6 +66,9 @@ vi.mock('./electronAPI', () => {
     SecureStorageMigrate: vi.fn().mockResolvedValue({ success: true }),
     SecureStorageGetSettings: vi.fn(),
     SecureStorageSaveSettings: vi.fn().mockResolvedValue({ success: true }),
+    StartCollectInfo: vi.fn(fn).mockResolvedValue({ jobId: 'job-123' }),
+    GetCollectInfoStatus: vi.fn(fn).mockResolvedValue({ status: 'starting', progress: 0, totalSize: 100 }),
+    DownloadCollectInfo: vi.fn(id => `http://localhost:8080/api/collect-info/download?jobId=${id}`),
   };
 });
 
@@ -575,6 +578,67 @@ describe('App configuration and tunnels', () => {
     await screen.findByText('Node 1');
 
     expect(screen.queryByText('Activity Log')).not.toBeInTheDocument();
+  });
+
+  it('shows Collect Info modal and tracks progress', async () => {
+    // Setup authenticated user with a node
+    const validKey = 'A'.repeat(171);
+    const validToken = `ENT1234:${validKey}`;
+    const config = {
+      baseUrl: 'https://cluster.example',
+      apiToken: validToken,
+      clusters: [{ name: 'Prod', baseUrl: 'https://cluster.example', apiToken: validToken }],
+      activeCluster: 'Prod',
+      recentDevices: [],
+    };
+    electronAPI.GetSettings.mockResolvedValue(config);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(config);
+
+    const node = { id: 'node-1', name: 'Node 1', status: 'online', edgeView: true };
+    electronAPI.SearchNodes.mockResolvedValue([node]);
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
+    
+    // Mock session active so we can click buttons
+    electronAPI.GetSessionStatus.mockResolvedValue({ active: true, expiresAt: new Date(Date.now() + 3600000).toISOString() });
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'enabled' });
+
+    // Mock Collect Info API
+    electronAPI.StartCollectInfo.mockResolvedValue({ jobId: 'job-1' });
+    electronAPI.GetCollectInfoStatus
+      .mockResolvedValueOnce({ status: 'starting', progress: 0, totalSize: 0 })
+      .mockResolvedValueOnce({ status: 'downloading', progress: 50, totalSize: 100 })
+      .mockResolvedValue({ status: 'completed', progress: 100, totalSize: 100, filename: 'test.tar.gz' });
+    // Mock Save
+    electronAPI.SaveCollectInfo = vi.fn().mockResolvedValue({ success: true, filePath: '/tmp/test.tar.gz' });
+
+    render(<App />);
+
+    // Select node
+    const nodeItem = await screen.findByText('Node 1');
+    fireEvent.click(nodeItem);
+
+    // Wait for services
+    await screen.findByText('Running Applications');
+
+    // Click Collect Info button
+    const collectButton = screen.getByText('Collect Info');
+    fireEvent.click(collectButton);
+
+    // Should see Global Status Banner with loading
+    await screen.findByText('Initiating system info collection for Node 1...');
+    
+    // Should verify progress updates
+    await waitFor(() => {
+        expect(screen.getByTestId('global-status-banner-mock')).toHaveTextContent(/Collecting info/);
+    }, { timeout: 3000 });
+    
+    // Should see completion and save
+    await waitFor(() => {
+        expect(electronAPI.SaveCollectInfo).toHaveBeenCalledWith('job-1', 'test.tar.gz');
+    }, { timeout: 3000 });
+    
+    // Should show success
+    await screen.findByText(/File saved successfully/);
   });
 });
 

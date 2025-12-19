@@ -48,6 +48,8 @@ type sessionAPI interface {
 	ListTunnels(nodeID string) []*session.Tunnel
 	GetAllTunnels() []*session.Tunnel
 	InvalidateSession(nodeID string)
+	StartCollectInfo(nodeID string) (string, error)
+	GetCollectInfoJob(jobID string) *session.CollectInfoJob
 }
 
 // App struct
@@ -1140,6 +1142,50 @@ func (a *App) VerifyEdgeViewTunnel(nodeID string) error {
 	// The SSH status check is sufficient to verify EdgeView is enabled
 	// Users can still connect via SSH successfully even if this check would fail
 	return nil
+}
+
+// StartCollectInfo starts a collect info job
+func (a *App) StartCollectInfo(nodeID string) (string, error) {
+	// Check if we have a cached session
+	_, ok := a.sessionManager.GetCachedSession(nodeID)
+	if !ok {
+		fmt.Println("DEBUG: No cached session found for CollectInfo, checking Cloud API status...")
+
+		// Check Cloud API status to revive session
+		evStatus, err := a.zededaClient.GetEdgeViewStatus(nodeID)
+		if err == nil && evStatus != nil && evStatus.Token != "" && evStatus.DispURL != "" {
+			fmt.Println("Found active EdgeView session from API, reusing token...")
+			
+			sc, parseErr := a.zededaClient.ParseEdgeViewToken(evStatus.Token)
+			if parseErr == nil {
+				// Ensure URL is correct
+				if !strings.HasPrefix(sc.URL, "wss://") && !strings.HasPrefix(sc.URL, "ws://") {
+					if sc.URL == "" {
+						sc.URL = evStatus.DispURL
+						if !strings.HasPrefix(sc.URL, "http") && !strings.HasPrefix(sc.URL, "ws") {
+							sc.URL = "wss://" + sc.URL
+						}
+					}
+				}
+				
+				// Revive session in cache
+				expiresAt := time.Now().Add(4*time.Hour + 50*time.Minute)
+				a.sessionManager.StoreCachedSession(nodeID, sc, 0, expiresAt)
+				fmt.Printf("Revived active session for CollectInfo. URL: %s\n", sc.URL)
+			} else {
+				return "", fmt.Errorf("failed to parse active token: %w", parseErr)
+			}
+		} else {
+			return "", fmt.Errorf("no active EdgeView session found")
+		}
+	}
+
+	return a.sessionManager.StartCollectInfo(nodeID)
+}
+
+// GetCollectInfoJob returns the job status
+func (a *App) GetCollectInfoJob(jobID string) *session.CollectInfoJob {
+	return a.sessionManager.GetCollectInfoJob(jobID)
 }
 
 // VerifyToken checks if the provided token is valid

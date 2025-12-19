@@ -121,6 +121,23 @@ export const ListTunnels = (nodeId) => {
         return Array.isArray(data) ? data : [];
     });
 };
+export const StartCollectInfo = (nodeId) => {
+    return api.startCollectInfo(nodeId).then(res => res.data);
+};
+
+export const GetCollectInfoStatus = (jobId) => {
+    return api.getCollectInfoStatus(jobId).then(res => res.data);
+};
+
+export const DownloadCollectInfo = (jobId) => {
+    // This is a direct URL, not an API call
+    return `http://localhost:8080/api/collect-info/download?jobId=${jobId}`;
+};
+
+export const SaveCollectInfo = (jobId, filename) => {
+    return window.electronAPI.saveCollectInfo(jobId, filename);
+};
+
 export const VerifyToken = (token, baseUrl) => {
     return window.electronAPI.verifyToken(token, baseUrl).then(res => res.data);
 };

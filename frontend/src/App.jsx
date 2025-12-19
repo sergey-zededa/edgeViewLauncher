@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { SearchNodes, ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings } from './electronAPI';
-import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info } from 'lucide-react';
+import { SearchNodes, ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo } from './electronAPI';
+import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
 import Tooltip from './components/Tooltip';
 import About from './components/About';
@@ -106,6 +106,10 @@ function App() {
   const [sshError, setSshError] = useState(null);
   // Last SSH update timestamp
   const [lastSSHUpdate, setLastSSHUpdate] = useState(0);
+
+  // Collect Info State (removed modal state, kept only for tracking job if needed, but logic is moved to global status)
+  // Actually we need to track jobId to poll status.
+  const collectInfoJobRef = useRef(null);
 
   const handleTokenPaste = (token) => {
     setEditingCluster({ ...editingCluster, apiToken: token });
@@ -1115,6 +1119,110 @@ function App() {
     }
   };
 
+  const handleCollectInfo = async () => {
+    if (!selectedNode) return;
+    
+    // Clear any previous job tracking
+    collectInfoJobRef.current = null;
+    
+    setGlobalStatus({ type: 'loading', message: `Initiating system info collection for ${selectedNode.name}...` });
+    
+    try {
+      addLog(`Starting collect info request for ${selectedNode.name}...`);
+      const response = await StartCollectInfo(selectedNode.id);
+      const jobId = response.jobId;
+      collectInfoJobRef.current = jobId;
+      
+      setGlobalStatus({ type: 'loading', message: 'Waiting for device response...' });
+
+      // Poll progress
+      const pollInterval = setInterval(async () => {
+        // If job cancelled or switched node, stop polling
+        if (!collectInfoJobRef.current || collectInfoJobRef.current !== jobId) {
+          clearInterval(pollInterval);
+          return;
+        }
+
+        try {
+          const status = await GetCollectInfoStatus(jobId);
+          
+          if (status.status === 'downloading') {
+            const progressMB = Math.round(status.progress / 1024 / 1024);
+            const totalMB = Math.round(status.totalSize / 1024 / 1024);
+            const percent = status.totalSize > 0 ? Math.round((status.progress / status.totalSize) * 100) : 0;
+            
+            // Format message with progress
+            setGlobalStatus({ 
+              type: 'loading', 
+              message: `Collecting info: ${progressMB} MB / ${totalMB} MB (${percent}%)` 
+            });
+          } else if (status.status === 'completed') {
+            clearInterval(pollInterval);
+            addLog('Collect info request completed successfully', 'success');
+            
+            setGlobalStatus({ type: 'success', message: 'Collection complete. Saving file...' });
+            
+            // Auto-trigger save
+            try {
+              const saveResult = await SaveCollectInfo(jobId, status.filename);
+              if (saveResult.success) {
+                setGlobalStatus({ type: 'success', message: `File saved successfully to ${saveResult.filePath}` });
+                addLog(`Saved system info to ${saveResult.filePath}`, 'success');
+                // Auto-dismiss success message after 5 seconds
+                setTimeout(() => setGlobalStatus(null), 5000);
+              } else if (saveResult.canceled) {
+                setGlobalStatus(null);
+                addLog('File save cancelled by user', 'info');
+              } else {
+                setGlobalStatus({ type: 'error', message: `Failed to save file: ${saveResult.error}` });
+                addLog(`Failed to save file: ${saveResult.error}`, 'error');
+              }
+            } catch (saveErr) {
+              setGlobalStatus({ type: 'error', message: `Failed to save file: ${saveErr.message}` });
+              addLog(`Failed to save file: ${saveErr.message}`, 'error');
+            }
+            
+            // Cleanup job ref
+            if (collectInfoJobRef.current === jobId) {
+              collectInfoJobRef.current = null;
+            }
+          } else if (status.status === 'failed') {
+            clearInterval(pollInterval);
+            addLog(`Collect info request failed: ${status.error}`, 'error');
+            setGlobalStatus({ type: 'error', message: `Collection failed: ${status.error}` });
+            if (collectInfoJobRef.current === jobId) {
+              collectInfoJobRef.current = null;
+            }
+          }
+        } catch (err) {
+          console.error("Failed to poll collect info:", err);
+          const userMessage = extractErrorMessage(err);
+          addLog(`Collect info polling failed: ${userMessage}`, 'error');
+          setGlobalStatus({ type: 'error', message: `Polling failed: ${userMessage}` });
+          clearInterval(pollInterval);
+          if (collectInfoJobRef.current === jobId) {
+            collectInfoJobRef.current = null;
+          }
+        }
+      }, 1000);
+
+    } catch (err) {
+      console.error("Failed to start collect info:", err);
+      // Clean up the error message for display
+      const userMessage = extractErrorMessage(err);
+      setGlobalStatus({ type: 'error', message: `Failed to start: ${userMessage}` });
+      addLog(`Failed to start collect info: ${userMessage}`, 'error');
+    }
+  };
+
+  const handleDownloadCollectInfo = () => {
+    // Deprecated in favor of integrated save
+  };
+
+  const closeCollectInfoModal = () => {
+    // Deprecated
+  };
+
   const handleBack = () => {
     setSelectedNode(null);
     setServices(null);
@@ -1494,6 +1602,8 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* Collect Info Modal - Removed in favor of GlobalStatusBanner */}
 
       {showAbout && <About onClose={() => setShowAbout(false)} />}
 
@@ -2095,6 +2205,23 @@ function App() {
                         >
                           <Terminal size={13} style={{ marginRight: '6px' }} />
                           {sshStatus.consoleEnabled ? 'Console Enabled' : 'Enable Console'}
+                        </div>
+
+                        {/* Collect Info */}
+                        <div
+                          className={`config-chip ${isSessionConnected ? '' : 'disabled'}`}
+                          onClick={isSessionConnected ? handleCollectInfo : undefined}
+                          title={isSessionConnected ? "Collect system information (tech-support bundle)" : "Session must be active to collect info"}
+                          style={{
+                            display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
+                            fontSize: '12px', fontWeight: '500', cursor: isSessionConnected ? 'pointer' : 'default', transition: 'all 0.2s',
+                            backgroundColor: isSessionConnected ? 'rgba(56, 139, 253, 0.15)' : 'rgba(255, 255, 255, 0.1)',
+                            color: isSessionConnected ? '#58a6ff' : '#c9d1d9',
+                            border: isSessionConnected ? '1px solid rgba(56, 139, 253, 0.3)' : 'none'
+                          }}
+                        >
+                          <Download size={13} style={{ marginRight: '6px' }} />
+                          Collect Info
                         </div>
 
                       </div>

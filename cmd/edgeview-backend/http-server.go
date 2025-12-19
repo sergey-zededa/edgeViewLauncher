@@ -443,6 +443,9 @@ func (s *HTTPServer) Start() {
 	router.HandleFunc("/api/set-vga", s.handleSetVGAEnabled)
 	router.HandleFunc("/api/set-usb", s.handleSetUSBEnabled)
 	router.HandleFunc("/api/set-console", s.handleSetConsoleEnabled)
+	router.HandleFunc("/api/collect-info/start", s.handleStartCollectInfo).Methods("POST")
+	router.HandleFunc("/api/collect-info/status", s.handleGetCollectInfoStatus).Methods("GET")
+	router.HandleFunc("/api/collect-info/download", s.handleDownloadCollectInfo).Methods("GET")
 
 	// Health check
 	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -940,6 +943,54 @@ func (s *HTTPServer) handleGetConnectionProgress(w http.ResponseWriter, r *http.
 
 	status := s.app.GetConnectionProgress(nodeID)
 	s.sendSuccess(w, map[string]string{"status": status})
+}
+
+func (s *HTTPServer) handleStartCollectInfo(w http.ResponseWriter, r *http.Request) {
+	var req NodeIDRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, err)
+		return
+	}
+	jobID, err := s.app.StartCollectInfo(req.NodeID)
+	if err != nil {
+		s.sendError(w, err)
+		return
+	}
+	s.sendSuccess(w, map[string]string{"jobId": jobID})
+}
+
+func (s *HTTPServer) handleGetCollectInfoStatus(w http.ResponseWriter, r *http.Request) {
+	jobID := r.URL.Query().Get("jobId")
+	if jobID == "" {
+		s.sendError(w, fmt.Errorf("jobId required"))
+		return
+	}
+	job := s.app.GetCollectInfoJob(jobID)
+	if job == nil {
+		s.sendError(w, fmt.Errorf("job not found"))
+		return
+	}
+	s.sendSuccess(w, job)
+}
+
+func (s *HTTPServer) handleDownloadCollectInfo(w http.ResponseWriter, r *http.Request) {
+	jobID := r.URL.Query().Get("jobId")
+	if jobID == "" {
+		http.Error(w, "jobId required", http.StatusBadRequest)
+		return
+	}
+	job := s.app.GetCollectInfoJob(jobID)
+	if job == nil {
+		http.Error(w, "job not found", http.StatusNotFound)
+		return
+	}
+	if job.Status != "completed" {
+		http.Error(w, "job not completed", http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", job.Filename))
+	http.ServeFile(w, r, job.FilePath)
 }
 
 func (s *HTTPServer) handleVerifyToken(w http.ResponseWriter, r *http.Request) {

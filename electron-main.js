@@ -980,3 +980,42 @@ ipcMain.handle('get-system-time-format', async () => {
 
     return null;
 });
+
+// Save Collected File
+ipcMain.handle('save-collected-file', async (event, { jobId, filename }) => {
+    const { dialog } = require('electron');
+    const fs = require('fs');
+    const { pipeline } = require('stream/promises');
+    const { Readable } = require('stream');
+
+    if (!BACKEND_PORT) {
+        return { success: false, error: 'Backend not ready' };
+    }
+
+    try {
+        const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+            defaultPath: filename,
+            title: 'Save System Info',
+            filters: [{ name: 'Archive', extensions: ['tar.gz', 'tar'] }]
+        });
+
+        if (canceled || !filePath) {
+            return { canceled: true };
+        }
+
+        const url = `http://localhost:${BACKEND_PORT}/api/collect-info/download?jobId=${jobId}`;
+        const response = await fetch(url);
+        
+        if (!response.ok) {
+            throw new Error(`Server returned ${response.status} ${response.statusText}`);
+        }
+
+        const fileStream = fs.createWriteStream(filePath);
+        await pipeline(Readable.fromWeb(response.body), fileStream);
+
+        return { success: true, filePath };
+    } catch (error) {
+        console.error('Failed to save collected file:', error);
+        return { success: false, error: error.message };
+    }
+});
