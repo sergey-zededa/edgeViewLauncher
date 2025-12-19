@@ -169,6 +169,9 @@ function App() {
             status: t.Status || 'active',
             error: t.Error || '',
             isEncrypted: t.IsEncrypted,
+            bytesSent: t.BytesSent || 0,
+            bytesReceived: t.BytesReceived || 0,
+            lastActivity: t.LastActivity ? new Date(t.LastActivity).getTime() : 0,
           };
         });
 
@@ -316,6 +319,16 @@ function App() {
     }
     if (hours > 0) return `${hours}h ${minutes}m`;
     return `${minutes}m`;
+  };
+
+  // Helper to format bytes
+  const formatBytes = (bytes, decimals = 1) => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
   };
 
   // Derive a unified EdgeView expiry timestamp (ms since epoch) from
@@ -473,7 +486,10 @@ function App() {
       targetPort,
       localPort,
       username,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      bytesSent: 0,
+      bytesReceived: 0,
+      lastActivity: 0
     };
     setActiveTunnels(prev => [...prev, tunnel]);
     return tunnel;
@@ -1886,6 +1902,17 @@ function App() {
                         >
                           <Copy size={12} />
                         </button>
+                        <div className="tunnel-stats">
+                          <div 
+                            className={`activity-dot ${Date.now() - (tunnel.lastActivity || 0) < 5000 ? 'active' : ''}`} 
+                            title={Date.now() - (tunnel.lastActivity || 0) < 5000 ? "Active (Data transferring)" : "Idle"}
+                          ></div>
+                          <span className="stats-text" title="Data Transferred">
+                            <span title="Bytes Sent">TX: {formatBytes(tunnel.bytesSent)}</span>
+                            <span className="divider">|</span>
+                            <span title="Bytes Received">RX: {formatBytes(tunnel.bytesReceived)}</span>
+                          </span>
+                        </div>
                       </div>
                       <div className="tunnel-actions">
                         {tunnel.type === 'VNC' && (
@@ -1976,6 +2003,17 @@ function App() {
                         >
                           <Copy size={12} />
                         </button>
+                        <div className="tunnel-stats">
+                          <div 
+                            className={`activity-dot ${Date.now() - (tunnel.lastActivity || 0) < 5000 ? 'active' : ''}`} 
+                            title={Date.now() - (tunnel.lastActivity || 0) < 5000 ? "Active (Data transferring)" : "Idle"}
+                          ></div>
+                          <span className="stats-text" title="Data Transferred">
+                            <span title="Bytes Sent">TX: {formatBytes(tunnel.bytesSent)}</span>
+                            <span className="divider">|</span>
+                            <span title="Bytes Received">RX: {formatBytes(tunnel.bytesReceived)}</span>
+                          </span>
+                        </div>
                       </div>
                       <div className="tunnel-actions">
                         {tunnel.type === 'VNC' && (

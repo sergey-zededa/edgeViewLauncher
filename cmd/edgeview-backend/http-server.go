@@ -546,6 +546,9 @@ type TunnelInfo struct {
 	Status      string    `json:"Status,omitempty"`
 	Error       string    `json:"Error,omitempty"`
 	IsEncrypted bool      `json:"IsEncrypted"`
+	BytesSent     int64     `json:"BytesSent"`
+	BytesReceived int64     `json:"BytesReceived"`
+	LastActivity  time.Time `json:"LastActivity"`
 }
 
 func (s *HTTPServer) handleListTunnels(w http.ResponseWriter, r *http.Request) {
@@ -559,6 +562,7 @@ func (s *HTTPServer) handleListTunnels(w http.ResponseWriter, r *http.Request) {
 	infos := make([]TunnelInfo, 0, len(tunnels))
 	for _, t := range tunnels {
 		name, projectID := s.app.GetNodeMeta(t.NodeID)
+		sent, received, lastActivity := t.GetStats()
 		infos = append(infos, TunnelInfo{
 			ID:          t.ID,
 			NodeID:      t.NodeID,
@@ -571,6 +575,9 @@ func (s *HTTPServer) handleListTunnels(w http.ResponseWriter, r *http.Request) {
 			Status:      t.Status,
 			Error:       t.Error,
 			IsEncrypted: t.IsEncrypted(), // Helper method we'll add to Tunnel
+			BytesSent:     sent,
+			BytesReceived: received,
+			LastActivity:  lastActivity,
 		})
 	}
 

@@ -59,6 +59,11 @@ type Tunnel struct {
 	channels  map[uint16]chan []byte // ChanNum -> channel for incoming data
 	channelMu sync.RWMutex
 	nextChan  uint32 // Atomic counter for channel allocation
+
+	// Stats (Atomic)
+	bytesSent     int64
+	bytesReceived int64
+	lastActivity  int64 // Unix nano
 }
 
 type Manager struct {
@@ -114,6 +119,31 @@ func (m *Manager) StoreCachedSession(nodeID string, config *zededa.SessionConfig
 		Port:      port,
 		ExpiresAt: expiresAt,
 	}
+}
+
+// Stats helpers
+func (t *Tunnel) AddBytesSent(n int) {
+	if n > 0 {
+		atomic.AddInt64(&t.bytesSent, int64(n))
+		atomic.StoreInt64(&t.lastActivity, time.Now().UnixNano())
+	}
+}
+
+func (t *Tunnel) AddBytesReceived(n int) {
+	if n > 0 {
+		atomic.AddInt64(&t.bytesReceived, int64(n))
+		atomic.StoreInt64(&t.lastActivity, time.Now().UnixNano())
+	}
+}
+
+func (t *Tunnel) GetStats() (sent, received int64, lastActivity time.Time) {
+	sent = atomic.LoadInt64(&t.bytesSent)
+	received = atomic.LoadInt64(&t.bytesReceived)
+	nano := atomic.LoadInt64(&t.lastActivity)
+	if nano > 0 {
+		lastActivity = time.Unix(0, nano)
+	}
+	return
 }
 
 // IsEncrypted returns whether the tunnel is using encryption
@@ -1373,6 +1403,8 @@ func (m *Manager) tunnelWSReader(ctx context.Context, tunnel *Tunnel) {
 			// Data received for channel
 
 			if len(td.Data) > 0 {
+				tunnel.AddBytesReceived(len(td.Data))
+
 				// Dispatch to the appropriate channel
 				tunnel.channelMu.RLock()
 				ch, ok := tunnel.channels[td.ChanNum]
@@ -1561,6 +1593,10 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 				fmt.Printf("TUNNEL[%s] ChanNum=%d: WS write error: %v\n", tunnel.ID, chanNum, err)
 				return
 			}
+			
+			// Update stats
+			tunnel.AddBytesSent(n)
+
 			}
 			if err != nil {
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {

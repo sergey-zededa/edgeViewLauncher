@@ -84,3 +84,41 @@ func TestFailTunnel(t *testing.T) {
 		t.Errorf("expected error %q, got %q", errMsg, failed.Error)
 	}
 }
+
+func TestTunnelStats(t *testing.T) {
+	tunnel := &Tunnel{}
+
+	// Initial check
+	sent, received, lastAct := tunnel.GetStats()
+	if sent != 0 || received != 0 {
+		t.Errorf("expected 0 stats, got sent=%d received=%d", sent, received)
+	}
+	if !lastAct.IsZero() {
+		t.Errorf("expected zero last activity, got %v", lastAct)
+	}
+
+	// Add stats
+	tunnel.AddBytesSent(100)
+	time.Sleep(1 * time.Millisecond) // Ensure time moves forward
+	tunnel.AddBytesReceived(200)
+
+	sent, received, lastAct = tunnel.GetStats()
+	if sent != 100 {
+		t.Errorf("expected sent 100, got %d", sent)
+	}
+	if received != 200 {
+		t.Errorf("expected received 200, got %d", received)
+	}
+	if lastAct.IsZero() {
+		t.Errorf("expected non-zero last activity")
+	}
+
+	// Verify last activity updates
+	time.Sleep(1 * time.Millisecond)
+	before := lastAct
+	tunnel.AddBytesSent(50)
+	_, _, after := tunnel.GetStats()
+	if !after.After(before) {
+		t.Errorf("expected last activity to update")
+	}
+}

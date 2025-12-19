@@ -394,6 +394,7 @@ describe('App configuration and tunnels', () => {
     const withinSection = within(activeTunnelsSection);
     expect(withinSection.getByText('VNC')).toBeInTheDocument();
     expect(withinSection.getByText(/localhost:6000/)).toBeInTheDocument();
+    expect(withinSection.getByText(/TX: 0 B/)).toBeInTheDocument();
   });
 
   it('renders Activity Log section when a node is selected', async () => {

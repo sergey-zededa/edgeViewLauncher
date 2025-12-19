@@ -1424,5 +1424,51 @@ body {
 
 .banner-dismiss:hover {
     opacity: 1;
-    background: rgba(0, 0, 0, 0.05);
+
+/* Tunnel Activity Stats */
+.tunnel-stats {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: 12px;
+    padding-left: 12px;
+    border-left: 1px solid var(--border-color);
+}
+
+.activity-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: #484f58; /* Inactive/Grey */
+    transition: all 0.3s ease;
+}
+
+.activity-dot.active {
+    background-color: #238636; /* Active/Green */
+    box-shadow: 0 0 4px rgba(35, 134, 54, 0.6);
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(35, 134, 54, 0.4);
+    }
+    70% {
+        box-shadow: 0 0 0 4px rgba(35, 134, 54, 0);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(35, 134, 54, 0);
+    }
+}
+
+.stats-text {
+    font-size: 11px;
+    font-family: monospace;
+    color: var(--text-secondary);
+    display: flex;
+    gap: 4px;
+}
+
+.stats-text .divider {
+    color: var(--border-color);
 }
