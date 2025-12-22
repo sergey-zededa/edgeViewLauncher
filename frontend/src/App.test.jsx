@@ -78,6 +78,9 @@ import App, { ActivityLog } from './App';
 describe('App configuration and tunnels', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Reset specific mocks that use mockResolvedValueOnce to prevent test pollution
+    electronAPI.GetSettings.mockReset();
+    electronAPI.SecureStorageGetSettings.mockReset();
 
     // Mock global window.electronAPI with required methods
     Object.defineProperty(window, 'electronAPI', {
@@ -233,8 +236,16 @@ describe('App configuration and tunnels', () => {
     fireEvent.click(addButton);
     
     // Activate it so it becomes the active cluster on save
-    const switchButton = screen.getByText('Switch to this Cluster');
-    fireEvent.click(switchButton);
+    const switchButton = screen.queryByText('Switch to this Cluster');
+    
+    // If we're adding the first cluster, it might auto-activate
+    if (switchButton) {
+      fireEvent.click(switchButton);
+    } else {
+      // If auto-activated (or button missing), we need to save manually
+      const saveButton = screen.getByRole('button', { name: /save changes/i });
+      fireEvent.click(saveButton);
+    }
 
     // No need to click save button, switch activates it immediately
     await waitFor(() => {
