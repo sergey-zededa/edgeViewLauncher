@@ -1523,6 +1523,20 @@ Do you want to try connecting anyway?`)) {
             sanitizedCluster.baseUrl = sanitizedCluster.baseUrl.replace(/\/+$/, '');
           }
 
+          // Check for duplicate cluster (same URL and token)
+          // Exclude current editing index from check
+          const duplicateIndex = clustersToSave.findIndex((c, idx) => 
+            idx !== editingIndex && 
+            c.baseUrl === sanitizedCluster.baseUrl && 
+            c.apiToken === sanitizedCluster.apiToken
+          );
+
+          if (duplicateIndex !== -1) {
+            // Duplicate found - don't save, show error or just select existing?
+            // To be safe and simple: warn user.
+            throw new Error('A cluster with this configuration already exists.');
+          }
+
           clustersToSave[editingIndex] = sanitizedCluster;
 
           // If we are editing the active cluster (or renamed it), update activeToSave
@@ -1814,16 +1828,11 @@ Do you want to try connecting anyway?`)) {
                     {cluster.name !== config.activeCluster && (
                       <button
                         className="switch-cluster-btn"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          const clusterName = cluster.name;
-                          // Ensure we select it first so we edit the right one
-                          handleClusterSelect(clusterName);
-                          // We need to wait for state update or pass name directly to saveSettings
-                          // Since activateCluster relies on viewingClusterName state which might not be updated yet
-                          // Let's modify activateCluster to accept a name or just call saveSettings directly
-                          saveSettings(clusterName);
-                        }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        // Explicitly switch to this cluster
+                        saveSettings(cluster.name);
+                      }}
                         title="Switch to this Cluster"
                       >
                         <Play size={12} />
@@ -1852,7 +1861,7 @@ Do you want to try connecting anyway?`)) {
                     </div>
                     <button
                       className="btn secondary"
-                      onClick={activateCluster}
+                      onClick={() => saveSettings(viewingClusterName)}
                       style={{ width: '100%', justifyContent: 'center', padding: '8px' }}
                     >
                       Switch to this Cluster
