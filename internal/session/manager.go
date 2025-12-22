@@ -67,8 +67,8 @@ type Tunnel struct {
 }
 
 type Manager struct {
-	sessions    map[string]*CachedSession // key is nodeID
-	tunnels     map[string]*Tunnel        // key is tunnel ID
+	sessions    map[string]*CachedSession  // key is nodeID
+	tunnels     map[string]*Tunnel         // key is tunnel ID
 	collectJobs map[string]*CollectInfoJob // key is job ID
 	mu          sync.RWMutex
 	tunnelMu    sync.RWMutex
@@ -295,28 +295,28 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 		fmt.Printf("DEBUG: MaxInst not set, defaulting to InstID=0\n")
 	}
 
-		// Start local listener first
+	// Start local listener first
 	var listener net.Listener
 	var err error
 
-	fmt.Printf("DEBUG: StartProxy called for node %s -> %s (protocol: %s). Initial InstID: %d (MaxInst: %d)\n", nodeID, target, protocol, initialInstID, config.MaxInst)
+	// fmt.Printf("DEBUG: StartProxy called for node %s -> %s (protocol: %s). Initial InstID: %d (MaxInst: %d)\n", nodeID, target, protocol, initialInstID, config.MaxInst)
 
 	for port := 9001; port <= 9010; port++ {
-		listener, err = net.Listen("tcp", fmt.Sprintf("localhost:%d", port))
+		listener, err = net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 		if err == nil {
 			break
 		}
 	}
 
 	if listener == nil {
-		listener, err = net.Listen("tcp", "localhost:0")
+		listener, err = net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			return 0, "", fmt.Errorf("failed to start local listener: %w", err)
 		}
 	}
 
 	localPort := listener.Addr().(*net.TCPAddr).Port
-	fmt.Printf("[%s] Tunnel listening on localhost:%d for target %s (protocol: %s)\n", time.Now().Format("2006-01-02 15:04:05"), localPort, target, protocol)
+	fmt.Printf("[%s] Tunnel listening on 127.0.0.1:%d for target %s (protocol: %s)\n", time.Now().Format("2006-01-02 15:04:05"), localPort, target, protocol)
 
 	// Try to establish WebSocket and get tcpSetupOK with retries
 	const maxRetries = 5
@@ -337,7 +337,7 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 		// Set the instance ID for this attempt
 		config.InstID = currentInstID
 		triedInstances[currentInstID] = true
-		fmt.Printf("DEBUG: Connecting to EdgeView with Enc=%v\n", config.Enc)
+		// fmt.Printf("DEBUG: Connecting to EdgeView with Enc=%v\n", config.Enc)
 
 		// Connect to EdgeView
 		wsConn, clientIP, err = m.connectToEdgeView(config)
@@ -374,13 +374,13 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 			listener.Close()
 			return 0, "", lastErr
 		}
-		fmt.Printf("DEBUG: TCP command sent successfully (InstID: %d)\n", currentInstID)
+		// fmt.Printf("DEBUG: TCP command sent successfully (InstID: %d)\n", currentInstID)
 
 		// Wait for +++tcpSetupOK+++ (with timeout)
 		fmt.Printf("DEBUG: Waiting for tcpSetupOK from device (attempt %d/%d)...\n", attempt, maxRetries)
 		setupErr := m.waitForTcpSetupOK(wsConn, config.Key, 30*time.Second, config.Enc)
 		if setupErr == nil {
-			fmt.Println("DEBUG: tcpSetupOK received, tunnel established successfully!")
+			// fmt.Println("DEBUG: tcpSetupOK received, tunnel established successfully!")
 			break // Success
 		}
 
@@ -491,7 +491,7 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 				}
 				conn, err := upgrader.Upgrade(w, r, nil)
 				if err != nil {
-					fmt.Printf("Failed to upgrade WS: %v\n", err)
+					// fmt.Printf("Failed to upgrade WS: %v\n", err)
 					return
 				}
 
@@ -540,7 +540,7 @@ func (m *Manager) waitForTcpSetupOK(wsConn *websocket.Conn, key string, timeout 
 			}
 
 			// Log raw message length
-			fmt.Printf("DEBUG: waitForTcpSetupOK received raw message (len=%d)\n", len(msg))
+			// fmt.Printf("DEBUG: waitForTcpSetupOK received raw message (len=%d)\n", len(msg))
 
 			payload, err := unwrapMessage(msg, key, encrypt)
 			if err != nil {
@@ -550,27 +550,27 @@ func (m *Manager) waitForTcpSetupOK(wsConn *websocket.Conn, key string, timeout 
 					return
 				}
 				if err == ErrNoDeviceOnline {
-					fmt.Printf("DEBUG: waitForTcpSetupOK received 'no device online'. Device not yet connected, continuing wait...\n")
+					// fmt.Printf("DEBUG: waitForTcpSetupOK received 'no device online'. Device not yet connected, continuing wait...\n")
 					continue
 				}
 
 				// Check for plain-text errors in the raw message if unwrapMessage didn't catch them specifically
 				// (though unwrapMessage should handle most now)
 				if strings.Contains(string(msg), "no device online") {
-					fmt.Printf("DEBUG: waitForTcpSetupOK received 'no device online' (raw). Continuing wait...\n")
+					// fmt.Printf("DEBUG: waitForTcpSetupOK received 'no device online' (raw). Continuing wait...\n")
 					continue
 				}
 				// Log unwrap failures but CONTINUE waiting unless it's a fatal error
 				// The device might send banners or keepalives that aren't envelopes
-				fmt.Printf("DEBUG: waitForTcpSetupOK unwrap failed (ignoring): %v\n", err)
+				// fmt.Printf("DEBUG: waitForTcpSetupOK unwrap failed (ignoring): %v\n", err)
 				if len(msg) < 1000 {
-					fmt.Printf("DEBUG: raw payload: %q\n", string(msg))
+					// fmt.Printf("DEBUG: raw payload: %q\n", string(msg))
 				}
 				continue
 			}
 
 			payloadStr := string(payload)
-			fmt.Printf("DEBUG: waitForTcpSetupOK payload: %q\n", payloadStr)
+			// fmt.Printf("DEBUG: waitForTcpSetupOK payload: %q\n", payloadStr)
 
 			if strings.Contains(payloadStr, "+++tcpSetupOK+++") {
 				setupDone <- nil
@@ -592,7 +592,7 @@ func (m *Manager) waitForTcpSetupOK(wsConn *websocket.Conn, key string, timeout 
 
 // LaunchTerminal opens a new terminal window with the SSH command
 func (m *Manager) LaunchTerminal(port int, keyPath string) error {
-	sshCmd := fmt.Sprintf("ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i \"%s\" -p %d root@localhost", keyPath, port)
+	sshCmd := fmt.Sprintf("ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i \"%s\" -p %d root@127.0.0.1", keyPath, port)
 
 	var cmd *exec.Cmd
 
@@ -648,131 +648,154 @@ func (m *Manager) ExecuteCommand(nodeID string, command string) (string, error) 
 	}
 
 	config := cached.Config
+	initialInstID := config.InstID
+	currentInstID := initialInstID
 
-	// Compute token hash
-	tokenToHash := config.Token
-	if config.InstID > 0 {
-		tokenToHash = fmt.Sprintf("%s.%d", config.Token, config.InstID)
-	}
-	h := sha256.New()
-	h.Write([]byte(tokenToHash))
-	hash16 := h.Sum(nil)[:16]
-	tokenHash := base64.RawURLEncoding.EncodeToString(hash16)
+	// Try with instance rotation if needed
+	const maxRetries = 3
+	var lastErr error
 
-	// Construct hostname
-	hostname, _ := os.Hostname()
-	// Reference client does NOT append UUID, only InstID
-	if config.InstID > 0 {
-		hostname += fmt.Sprintf("-inst-%d", config.InstID)
-	}
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		// fmt.Printf("DEBUG: ExecuteCommand (attempt %d/%d) using InstID %d (MaxInst: %d)\n", attempt+1, maxRetries, currentInstID, config.MaxInst)
 
-	// Prepare headers
-	headers := http.Header{}
-	headers.Add("X-Session-Token", tokenHash)
-	headers.Add("X-Hostname", hostname)
+		// 1. Compute token hash for the current instance
+		tokenToHash := config.Token
+		if currentInstID > 0 {
+			tokenToHash = fmt.Sprintf("%s.%d", config.Token, currentInstID)
+		}
+		h := sha256.New()
+		h.Write([]byte(tokenToHash))
+		hash16 := h.Sum(nil)[:16]
+		tokenHash := base64.RawURLEncoding.EncodeToString(hash16)
 
-	// Connect to WebSocket
-	tlsConfig := &tls.Config{InsecureSkipVerify: false}
-	netDialer := &net.Dialer{}
-	dialer := &websocket.Dialer{
-		TLSClientConfig:  tlsConfig,
-		NetDialContext:   netDialer.DialContext,
-		HandshakeTimeout: 45 * time.Second,
-	}
+		// 2. Construct hostname (with instance if needed)
+		hostname, _ := os.Hostname()
+		if currentInstID > 0 {
+			hostname += fmt.Sprintf("-inst-%d", currentInstID)
+		}
 
-	wsConn, _, err := dialer.Dial(config.URL, headers)
-	if err != nil {
-		return "", fmt.Errorf("failed to connect: %w", err)
-	}
-	defer wsConn.Close()
+		// 3. Prepare headers
+		headers := http.Header{}
+		headers.Add("X-Session-Token", tokenHash)
+		headers.Add("X-Hostname", hostname)
 
-	// Read initial message
-	_, _, err = wsConn.ReadMessage()
-	if err != nil {
-		return "", fmt.Errorf("failed to read initial message: %w", err)
-	}
+		// 4. Connect to WebSocket
+		tlsConfig := &tls.Config{InsecureSkipVerify: false}
+		netDialer := &net.Dialer{}
+		dialer := &websocket.Dialer{
+			TLSClientConfig:  tlsConfig,
+			NetDialContext:   netDialer.DialContext,
+			HandshakeTimeout: 15 * time.Second, // Faster timeout for command connections
+		}
 
-	// Send command
-	query := cmdOpt{
-		Version: edgeViewVersion,
-		System:  command, // "app", "log", etc.
-		IsJSON:  false,   // app command returns plain text, not JSON
-	}
+		wsConn, _, err := dialer.Dial(config.URL, headers)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to connect: %w", err)
+			continue // Try next attempt/instance
+		}
 
-	fmt.Printf("DEBUG: Sending EdgeView command: %s\n", command)
-	queryBytes, err := json.Marshal(query)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal query: %w", err)
-	}
-	fmt.Printf("DEBUG: Query payload: %s\n", string(queryBytes))
-
-	if err := sendWrappedMessage(wsConn, queryBytes, config.Key, websocket.TextMessage, config.Enc); err != nil {
-		return "", fmt.Errorf("failed to send query: %w", err)
-	}
-	fmt.Println("DEBUG: Command sent successfully, waiting for response...")
-
-	// Read response with timeout (increased to 30s for app command which may take longer)
-	timeoutDuration := 30 * time.Second
-	if command == "app" {
-		fmt.Println("DEBUG: Using extended timeout (30s) for app command")
-	} else {
-		timeoutDuration = 10 * time.Second
-	}
-	wsConn.SetReadDeadline(time.Now().Add(timeoutDuration))
-
-	var output strings.Builder
-	messageCount := 0
-	for {
+		// 5. Read initial message and check for immediate errors
+		wsConn.SetReadDeadline(time.Now().Add(5 * time.Second))
 		_, msg, err := wsConn.ReadMessage()
 		if err != nil {
-			// Timeout or connection closed - return what we have
-			fmt.Printf("DEBUG: Stopped reading after %d messages (error: %v)\n", messageCount, err)
-			break
+			wsConn.Close()
+			lastErr = fmt.Errorf("failed to read initial message: %w", err)
+			continue
 		}
-		messageCount++
-		fmt.Printf("DEBUG: Received message %d, size: %d bytes\n", messageCount, len(msg))
 
-		// Try to unwrap the message
-		unwrapped, err := unwrapMessage(msg, config.Key, config.Enc)
-		if err == nil {
-			fmt.Printf("DEBUG: Message %d unwrapped successfully, size: %d bytes\n", messageCount, len(unwrapped))
-			// Show actual content for debugging
-			contentPreview := string(unwrapped)
-			if len(contentPreview) > 200 {
-				contentPreview = contentPreview[:200] + "..."
+		// Check for plain-text errors in the first message (e.g., Busy Instance)
+		if strings.Contains(string(msg), "can't have more than 2 peers") {
+			wsConn.Close()
+			// fmt.Printf("DEBUG: InstID %d busy. Rotating...\n", currentInstID)
+			if config.MaxInst > 1 {
+				currentInstID = (currentInstID + 1) % config.MaxInst
+
+				// Update the cached session so the next command starts from the new instance ID
+				m.mu.Lock()
+				if cached, ok := m.sessions[nodeID]; ok {
+					cached.Config.InstID = currentInstID
+					// fmt.Printf("DEBUG: Updated cached session for node %s to start with InstID %d\n", nodeID, currentInstID)
+				}
+				m.mu.Unlock()
 			}
-			fmt.Printf("DEBUG: Message %d content: %s\n", messageCount, contentPreview)
-			output.Write(unwrapped)
-		} else {
-			// Check if it's a known plain-text error message
-			msgStr := string(msg)
-			if strings.Contains(msgStr, "no device online") || strings.Contains(msgStr, "can't have more than 2 peers") {
-				fmt.Printf("DEBUG: Received error message: %s\n", strings.TrimSpace(msgStr))
+			lastErr = ErrBusyInstance
+			continue
+		}
+
+		// 6. Send command
+		query := cmdOpt{
+			Version: edgeViewVersion,
+			System:  command, // "app", "log", etc.
+			IsJSON:  false,   // app command returns plain text, not JSON
+		}
+
+		queryBytes, _ := json.Marshal(query)
+		if err := sendWrappedMessage(wsConn, queryBytes, config.Key, websocket.TextMessage, config.Enc); err != nil {
+			wsConn.Close()
+			lastErr = fmt.Errorf("failed to send query: %w", err)
+			continue
+		}
+
+		// 7. Read response loop
+		wsConn.SetReadDeadline(time.Now().Add(30 * time.Second))
+
+		var output strings.Builder
+		messageCount := 0
+		var commandErr error
+
+		for {
+			_, msg, err := wsConn.ReadMessage()
+			if err != nil {
+				// Connection closed or timeout - break and return what we have
+				break
+			}
+			messageCount++
+
+			// Try to unwrap the message
+			unwrapped, err := unwrapMessage(msg, config.Key, config.Enc)
+			if err == nil {
+				output.Write(unwrapped)
 			} else {
-				fmt.Printf("DEBUG: Message %d unwrap failed: %v, using raw\n", messageCount, err)
+				// Handle specific errors returned by unwrapMessage
+				if err == ErrBusyInstance {
+					commandErr = ErrBusyInstance
+					break
+				}
+				if err == ErrNoDeviceOnline {
+					commandErr = ErrNoDeviceOnline
+					break
+				}
+				// Other error, just log and append raw (e.g. banners)
+				output.Write(msg)
 			}
-			// If unwrap fails, use raw message
-			output.Write(msg)
+		}
+		wsConn.Close()
+
+		if commandErr == ErrBusyInstance {
+			// fmt.Printf("DEBUG: InstID %d busy during execution. Rotating...\n", currentInstID)
+			if config.MaxInst > 1 {
+				currentInstID = (currentInstID + 1) % config.MaxInst
+			}
+			lastErr = ErrBusyInstance
+			continue
+		}
+		if commandErr == ErrNoDeviceOnline {
+			return "", ErrNoDeviceOnline
 		}
 
-		// Continue reading until timeout to get all app data
-		// (EdgeView sends device info first, then app instances in subsequent messages)
+		// Successfully read some output
+		result := output.String()
+		if command == "app" && strings.TrimSpace(result) == "+++Done+++" {
+			// This often means we just missed the real data or the device is slow.
+			// Treat as retry-able if we have attempts left.
+			lastErr = fmt.Errorf("received empty app info")
+			continue
+		}
+
+		return result, nil
 	}
 
-	fmt.Printf("DEBUG: Total output collected: %d bytes\n", output.Len())
-
-	// Warn if we only got +++Done+++ for app command
-	result := output.String()
-	if command == "app" && strings.TrimSpace(result) == "+++Done+++" {
-		fmt.Println("WARNING: App command returned only '+++Done+++' with no app data!")
-		fmt.Println("WARNING: This means the device is not returning application information.")
-		fmt.Println("WARNING: Possible causes:")
-		fmt.Println("         1. No applications are running on the device")
-		fmt.Println("         2. EdgeView app query is not supported on this EVE version")
-		fmt.Println("         3. Device needs more time to collect app data (try increasing wait time)")
-	}
-
-	return result, nil
+	return "", fmt.Errorf("failed to execute command after %d attempts: %w", maxRetries, lastErr)
 }
 
 // QueryDevice sends a command to the device and returns the response
@@ -863,8 +886,8 @@ func (m *Manager) QueryDevice(ctx context.Context, config *zededa.SessionConfig,
 		wsConn.SetReadDeadline(time.Time{}) // Reset deadline
 
 		if err == nil {
-		// We received a message immediately. Check if it's an error.
-		payload, unwrapErr := unwrapMessage(nextMsg, config.Key, config.Enc)
+			// We received a message immediately. Check if it's an error.
+			payload, unwrapErr := unwrapMessage(nextMsg, config.Key, config.Enc)
 			if unwrapErr != nil {
 				rawMsg := string(nextMsg)
 
@@ -875,7 +898,7 @@ func (m *Manager) QueryDevice(ctx context.Context, config *zededa.SessionConfig,
 				}
 
 				if strings.Contains(rawMsg, "can't have more than 2 peers") {
-					fmt.Printf("DEBUG: Instance %d is busy. Retrying...\n", config.InstID)
+					// fmt.Printf("DEBUG: Instance %d is busy. Retrying...\n", config.InstID)
 					wsConn.Close()
 
 					// Increment InstID, respecting MaxInst limit
@@ -883,16 +906,16 @@ func (m *Manager) QueryDevice(ctx context.Context, config *zededa.SessionConfig,
 					if config.InstID >= config.MaxInst {
 						return "", fmt.Errorf("all instances busy (tried up to %d of %d max)", config.InstID, config.MaxInst)
 					}
-					fmt.Printf("DEBUG: Retrying with InstID=%d (MaxInst=%d)\n", config.InstID, config.MaxInst)
+					// fmt.Printf("DEBUG: Retrying with InstID=%d (MaxInst=%d)\n", config.InstID, config.MaxInst)
 					continue // RETRY LOOP
 				}
 				// Other unwrap error?
 			} else {
 				// Valid payload. It might be the response we want!
 				payloadStr := string(payload)
-				fmt.Printf("DEBUG: Received immediate payload (%d bytes)\n", len(payloadStr))
+				// fmt.Printf("DEBUG: Received immediate payload (%d bytes)\n", len(payloadStr))
 				// Show full output for debugging
-				fmt.Printf("DEBUG: FULL immediate payload:\n%s\n", payloadStr)
+				// fmt.Printf("DEBUG: FULL immediate payload:\n%s\n", payloadStr)
 
 				if strings.Contains(payloadStr, "no device online") {
 					wsConn.Close()
@@ -905,18 +928,19 @@ func (m *Manager) QueryDevice(ctx context.Context, config *zededa.SessionConfig,
 
 				if isJSON {
 					if strings.HasPrefix(payloadStr, "{") || strings.HasPrefix(payloadStr, "[") {
-						fmt.Printf("DEBUG: Returning JSON response immediately\n")
+						// fmt.Printf("DEBUG: Returning JSON response immediately\n")
 						wsConn.Close()
 						return payloadStr, nil
 					}
-					fmt.Printf("DEBUG: Payload doesn't look like JSON, continuing to read loop\n")
+					// fmt.Printf("DEBUG: Payload doesn't look like JSON, continuing to read loop\n")
 				} else {
 					if len(payloadStr) > 0 {
-						fmt.Printf("DEBUG: Returning text response immediately\n")
+						// fmt.Println("DEBUG: Requesting EdgeView session...")
+						// fmt.Printf("DEBUG: Returning text response immediately\n")
 						wsConn.Close()
 						return payloadStr, nil
 					}
-					fmt.Printf("DEBUG: Empty payload, continuing to read loop\n")
+					// fmt.Printf("DEBUG: Empty payload, continuing to read loop\n")
 				}
 			}
 		}
@@ -986,7 +1010,7 @@ func sendWrappedMessage(conn *websocket.Conn, payload []byte, key string, messag
 		// Encrypt Data
 		nonceHash := sha256.Sum256([]byte(key))
 		viBytes := md5.Sum([]byte(key))
-		
+
 		// fmt.Printf("DEBUG: Encrypting with KeyLen=%d, NonceHash=%x, IV=%x\n", len(key), nonceHash[:4], viBytes[:4])
 
 		block, err := aes.NewCipher(nonceHash[:])
@@ -1115,8 +1139,8 @@ func (m *Manager) connectToEdgeView(config *zededa.SessionConfig) (*websocket.Co
 	headers.Add("X-Hostname", hostname)
 	headers.Add("X-EdgeView-Version", edgeViewVersion)
 
-	fmt.Printf("DEBUG: Connecting to %s (InstID: %d)\n", config.URL, config.InstID)
-	fmt.Printf("DEBUG: Headers - X-Hostname: %s, X-Session-Token (hash): %s, X-EdgeView-Version: %s\n", hostname, tokenHash, edgeViewVersion)
+	// fmt.Printf("DEBUG: Connecting to %s (InstID: %d)\n", config.URL, config.InstID)
+	// fmt.Printf("DEBUG: Headers - X-Hostname: %s, X-Session-Token (hash): %s, X-EdgeView-Version: %s\n", hostname, tokenHash, edgeViewVersion)
 
 	// Connect to WebSocket
 	tlsConfig := &tls.Config{
@@ -1500,7 +1524,7 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 		if err := sendWrappedMessage(tunnel.wsConn, initBytes, tunnel.config.Key, websocket.BinaryMessage, tunnel.config.Enc); err != nil {
 			fmt.Printf("TUNNEL[%s] ChanNum=%d: Failed to send init packet: %v\n", tunnel.ID, chanNum, err)
 		} else {
-			fmt.Printf("TUNNEL[%s] ChanNum=%d: Sent init packet (empty tcpData)\n", tunnel.ID, chanNum)
+			// fmt.Printf("TUNNEL[%s] ChanNum=%d: Sent init packet (empty tcpData)\n", tunnel.ID, chanNum)
 		}
 	}
 	tunnel.wsMu.Unlock()
@@ -1510,31 +1534,31 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 	// WebSocket -> TCP (via dataChan)
 	go func() {
 		defer func() {
-			fmt.Printf("TUNNEL[%s] ChanNum=%d: WS->TCP goroutine exiting\n", tunnel.ID, chanNum)
+			// fmt.Printf("TUNNEL[%s] ChanNum=%d: WS->TCP goroutine exiting\n", tunnel.ID, chanNum)
 			close(done)
 		}()
-		
+
 		var lastPacket []byte
 		packetCount := 0
 		for {
 			select {
 			case data, ok := <-dataChan:
 				if !ok {
-					fmt.Printf("TUNNEL[%s] ChanNum=%d: dataChan closed, WS->TCP ending\n", tunnel.ID, chanNum)
+					// fmt.Printf("TUNNEL[%s] ChanNum=%d: dataChan closed, WS->TCP ending\n", tunnel.ID, chanNum)
 					return // Channel closed
 				}
-				
+
 				// Deduplicate consecutive packets (specifically for SSH version string issues)
 				if bytes.Equal(data, lastPacket) {
 					// Check if it's an SSH version string
 					if len(data) > 4 && string(data[:4]) == "SSH-" {
-						fmt.Printf("TUNNEL[%s] ChanNum=%d: Dropping duplicate SSH version string packet\n", tunnel.ID, chanNum)
+						// fmt.Printf("TUNNEL[%s] ChanNum=%d: Dropping duplicate SSH version string packet\n", tunnel.ID, chanNum)
 						continue
 					}
 				}
 				lastPacket = make([]byte, len(data))
 				copy(lastPacket, data)
-				
+
 				packetCount++
 
 				if _, err := conn.Write(data); err != nil {
@@ -1542,7 +1566,7 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 					return
 				}
 			case <-ctx.Done():
-				fmt.Printf("TUNNEL[%s] ChanNum=%d: Context done, WS->TCP ending\n", tunnel.ID, chanNum)
+				// fmt.Printf("TUNNEL[%s] ChanNum=%d: Context done, WS->TCP ending\n", tunnel.ID, chanNum)
 				return
 			}
 		}
@@ -1587,15 +1611,15 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 					continue
 				}
 
-			err := sendWrappedMessage(tunnel.wsConn, tdBytes, tunnel.config.Key, websocket.BinaryMessage, tunnel.config.Enc)
-			tunnel.wsMu.Unlock()
-			if err != nil {
-				fmt.Printf("TUNNEL[%s] ChanNum=%d: WS write error: %v\n", tunnel.ID, chanNum, err)
-				return
-			}
-			
-			// Update stats
-			tunnel.AddBytesSent(n)
+				err := sendWrappedMessage(tunnel.wsConn, tdBytes, tunnel.config.Key, websocket.BinaryMessage, tunnel.config.Enc)
+				tunnel.wsMu.Unlock()
+				if err != nil {
+					fmt.Printf("TUNNEL[%s] ChanNum=%d: WS write error: %v\n", tunnel.ID, chanNum, err)
+					return
+				}
+
+				// Update stats
+				tunnel.AddBytesSent(n)
 
 			}
 			if err != nil {

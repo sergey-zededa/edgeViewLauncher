@@ -36,7 +36,8 @@ type fakeZededaClient struct {
 	// Cloud API for apps/services
 	deviceApps    []zededa.AppInstance
 	deviceErr     error
-	appDetails    map[string]*zededa.AppInstanceDetails
+	appDetails    map[string]*zededa.AppInstanceStatus
+	appConfigs    map[string]*zededa.AppInstanceConfig
 	appDetailsErr error
 }
 
@@ -83,7 +84,17 @@ func (f *fakeZededaClient) GetAppInstanceDetails(id string) (*zededa.AppInstance
 	if f.appDetails == nil {
 		return nil, nil
 	}
-	return f.appDetails[id], nil
+	return (*zededa.AppInstanceDetails)(f.appDetails[id]), nil
+}
+
+func (f *fakeZededaClient) GetAppInstanceConfig(id string) (*zededa.AppInstanceConfig, error) {
+	if f.appDetailsErr != nil {
+		return nil, f.appDetailsErr
+	}
+	if f.appConfigs == nil {
+		return nil, nil
+	}
+	return f.appConfigs[id], nil
 }
 
 func (f *fakeZededaClient) GetDevice(nodeID string) (map[string]interface{}, error) {
@@ -118,6 +129,7 @@ func newTestApp(client zededaAPI, sessMgr sessionAPI) *App {
 		enrichmentCache:    make(map[string]AppEnrichment),
 		nodeMetaCache:      make(map[string]NodeMeta),
 		connectionProgress: make(map[string]string),
+		enrichingJobs:      make(map[string]chan struct{}),
 	}
 }
 
@@ -359,14 +371,23 @@ func TestStartTunnel_CreatesSessionWhenMissing(t *testing.T) {
 // data when present.
 func TestGetDeviceServices_UsesCloudAPIAndEdgeViewCache(t *testing.T) {
 	apps := []zededa.AppInstance{{ID: "app1", Name: "svc", RunState: "RUNNING"}}
-	details := &zededa.AppInstanceDetails{
-		NetworkAdapters: []map[string]interface{}{{"ipaddr": "10.0.0.5"}},
-		VMInfo:          zededa.VMInfo{VNC: true, VNCDisplay: 1},
+	status := &zededa.AppInstanceStatus{
+		ID:            "app1",
+		Name:          "svc",
+		RunState:      "RUNNING",
+		NetStatusList: []zededa.NetStatus{{Up: true, IPs: []string{"10.0.0.5"}}},
+	}
+	config := &zededa.AppInstanceConfig{
+		ID:            "app1",
+		Name:          "svc",
+		VMInfo:        zededa.VMInfo{VNC: true, VNCDisplay: 1},
+		DockerCompose: "version: '3.9'\nservices:\n  app:\n    image: alpine",
 	}
 
 	fakeClient := &fakeZededaClient{
 		deviceApps: apps,
-		appDetails: map[string]*zededa.AppInstanceDetails{"app1": details},
+		appDetails: map[string]*zededa.AppInstanceStatus{"app1": status},
+		appConfigs: map[string]*zededa.AppInstanceConfig{"app1": config},
 	}
 
 	a := newTestApp(fakeClient, &fakeSessionManager{})
@@ -386,6 +407,7 @@ func TestGetDeviceServices_UsesCloudAPIAndEdgeViewCache(t *testing.T) {
 			IPs           []string `json:"ips"`
 			VNCPort       int      `json:"vncPort"`
 			EdgeViewState string   `json:"edgeViewState"`
+			DockerCompose string   `json:"dockerCompose"`
 		} `json:"services"`
 	}
 	if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
@@ -406,6 +428,9 @@ func TestGetDeviceServices_UsesCloudAPIAndEdgeViewCache(t *testing.T) {
 	// enrichment cache; here we only assert it is non-zero.
 	if svc.VNCPort == 0 {
 		t.Fatalf("expected non-zero VNCPort, got 0")
+	}
+	if svc.DockerCompose == "" {
+		t.Fatalf("expected non-empty DockerCompose")
 	}
 }
 

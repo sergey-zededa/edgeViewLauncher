@@ -32,6 +32,7 @@ type zededaAPI interface {
 	SetConsoleEnabled(nodeID string, enabled bool) error
 	GetDeviceAppInstances(deviceID string) ([]zededa.AppInstance, error)
 	GetAppInstanceDetails(appInstanceID string) (*zededa.AppInstanceDetails, error)
+	GetAppInstanceConfig(appInstanceID string) (*zededa.AppInstanceConfig, error)
 	GetDevice(nodeID string) (map[string]interface{}, error)
 	VerifyToken(token string) (*zededa.TokenInfo, error)
 }
@@ -75,6 +76,10 @@ type App struct {
 
 	// Cache for token info (user email, expiry)
 	tokenInfoCache *zededa.TokenInfo
+
+	// Track currently enriching nodes to avoid redundant work and allow waiting
+	enrichingJobs map[string]chan struct{}
+	enrichingMu_  sync.Mutex
 }
 
 // NewApp creates a new App application struct
@@ -114,6 +119,7 @@ func NewApp() *App {
 		enrichmentCache:    make(map[string]AppEnrichment),
 		nodeMetaCache:      make(map[string]NodeMeta),
 		connectionProgress: make(map[string]string),
+		enrichingJobs:      make(map[string]chan struct{}),
 	}
 }
 
@@ -305,25 +311,25 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (int, string, 
 	} else {
 		// No cached session - check if API says one is already active
 		// This avoids re-enabling EdgeView if the user just closed the window but session is still valid
-		fmt.Println("No local cached session, checking Cloud API status...")
-		
+		// fmt.Println("No local cached session, checking Cloud API status...")
+
 		// We need to get the actual EdgeView Status which contains the JWT and URL.
 		evStatus, err := a.zededaClient.GetEdgeViewStatus(nodeID)
 		if err == nil && evStatus != nil && evStatus.Token != "" && evStatus.DispURL != "" {
-			fmt.Println("Found active EdgeView session from API, reusing token...")
-			
+			// fmt.Println("Found active EdgeView session from API, reusing token...")
+
 			// We need to extract the 'Key' from the JWT payload because it's required for envelope signing.
 			// The API response doesn't give us the raw signing key (that's only in InitSession response usually),
 			// BUT the JWT 'key' claim is the nonce used for session isolation, which matches what we need.
 			// Let's reuse ParseEdgeViewToken which decodes the JWT and populates SessionConfig.
-			
+
 			sc, parseErr := a.zededaClient.ParseEdgeViewToken(evStatus.Token)
 			if parseErr == nil {
 				sessionConfig = sc
 				// Ensure URL is correct (API might return raw dispUrl without wss://)
 				if !strings.HasPrefix(sessionConfig.URL, "wss://") && !strings.HasPrefix(sessionConfig.URL, "ws://") {
 					// Use the logic from ParseEdgeViewToken or just prefer what we have if ParseEdgeViewToken handled it.
-					// Actually ParseEdgeViewToken uses claims.Dep. 
+					// Actually ParseEdgeViewToken uses claims.Dep.
 					// If claims.Dep is missing, we fall back to evStatus.DispURL
 					if sessionConfig.URL == "" {
 						sessionConfig.URL = evStatus.DispURL
@@ -333,7 +339,7 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (int, string, 
 						}
 					}
 				}
-				fmt.Printf("Reused active session. URL: %s\n", sessionConfig.URL)
+				// fmt.Printf("Reused active session. URL: %s\n", sessionConfig.URL)
 			} else {
 				fmt.Printf("Failed to parse active token: %v\n", parseErr)
 			}
@@ -349,17 +355,17 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (int, string, 
 				a.SetConnectionProgress(nodeID, "Error: Failed to init session")
 				return 0, "", fmt.Errorf("failed to init session: %w", err)
 			}
-			fmt.Println("EdgeView enabled, script received.")
+			// fmt.Println("EdgeView enabled, script received.")
 
 			// Parse the script to get Session Config
-			fmt.Println("Parsing script...")
+			// fmt.Println("Parsing script...")
 			sessionConfig, err = a.zededaClient.ParseEdgeViewScript(script)
 			if err != nil {
 				fmt.Printf("ParseEdgeViewScript failed: %v\n", err)
 				a.SetConnectionProgress(nodeID, "Error: Failed to parse script")
 				return 0, "", fmt.Errorf("failed to parse script: %w", err)
 			}
-			fmt.Printf("Script parsed. URL: %s\n", sessionConfig.URL)
+			// fmt.Printf("Script parsed. URL: %s\n", sessionConfig.URL)
 		}
 
 		fmt.Println("DEBUG: Requesting EdgeView session...")
@@ -371,17 +377,17 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (int, string, 
 
 	// Start new proxy if needed
 	if needNewProxy {
-		fmt.Println("Starting proxy...")
+		// fmt.Println("Starting proxy...")
 		a.SetConnectionProgress(nodeID, "Starting local secure proxy...")
 		var err error
 		// Default to SSH (tcp/localhost:22)
-		port, tunnelID, err = a.sessionManager.StartProxy(a.ctx, sessionConfig, nodeID, "localhost:22", "ssh")
+		port, tunnelID, err = a.sessionManager.StartProxy(a.ctx, sessionConfig, nodeID, "127.0.0.1:22", "ssh")
 		if err != nil {
 			fmt.Printf("StartProxy failed: %v\n", err)
 			a.SetConnectionProgress(nodeID, "Error: Failed to start proxy")
 			return 0, "", fmt.Errorf("failed to start proxy: %w", err)
 		}
-		fmt.Printf("Proxy started on port %d (Tunnel ID: %s)\n", port, tunnelID)
+		// fmt.Printf("Proxy started on port %d (Tunnel ID: %s)\n", port, tunnelID)
 
 		// Cache the session config (always cache token/URL, cache port only for native terminal)
 		portToCache := 0
@@ -391,9 +397,9 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (int, string, 
 		expiresAt := time.Now().Add(4*time.Hour + 50*time.Minute)
 		a.sessionManager.StoreCachedSession(nodeID, sessionConfig, portToCache, expiresAt)
 		if useInAppTerminal {
-			fmt.Println("Session config cached (proxy will close with window)")
+			// fmt.Println("Session config cached (proxy will close with window)")
 		} else {
-			fmt.Printf("Session and proxy cached until %s\n", expiresAt.Format(time.RFC3339))
+			// fmt.Printf("Session and proxy cached until %s\n", expiresAt.Format(time.RFC3339))
 		}
 	}
 
@@ -401,10 +407,10 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (int, string, 
 	if !useInAppTerminal {
 		// DEPRECATED: Backend terminal launching is replaced by frontend/Electron `openExternalTerminal`.
 		// We log this but do not attempt to launch from Go to avoid platform inconsistencies and double-launches.
-		fmt.Println("Native terminal launch requested (handled by frontend).")
+		// fmt.Println("Native terminal launch requested (handled by frontend).")
 		a.SetConnectionProgress(nodeID, "Ready for native terminal")
 	} else {
-		fmt.Println("In-app terminal requested, skipping native launch.")
+		// fmt.Println("In-app terminal requested, skipping native launch.")
 	}
 
 	a.SetConnectionProgress(nodeID, "Connected")
@@ -414,20 +420,20 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (int, string, 
 // StartTunnel starts a TCP tunnel to a specific IP and port on the device
 // protocol is optional: "vnc", "ssh", "tcp". If empty, it's inferred from port.
 func (a *App) StartTunnel(nodeID, targetIP string, targetPort int, protocol string) (int, string, error) {
-	callID := time.Now().UnixNano()
-	fmt.Printf("StartTunnel[%d] called for %s -> %s:%d (protocol: %s)\n", callID, nodeID, targetIP, targetPort, protocol)
+	// callID := time.Now().UnixNano()
+	// fmt.Printf("StartTunnel[%d] called for %s -> %s:%d (protocol: %s)\n", callID, nodeID, targetIP, targetPort, protocol)
 
 	// Get cached session
 	cached, ok := a.sessionManager.GetCachedSession(nodeID)
 	if !ok {
-		fmt.Println("DEBUG: No cached session found, checking Cloud API status...")
+		// fmt.Println("DEBUG: No cached session found, checking Cloud API status...")
 
 		var sessionConfig *zededa.SessionConfig
 
 		// Check if API says one is already active (reuse logic from ConnectToNode)
 		evStatus, err := a.zededaClient.GetEdgeViewStatus(nodeID)
 		if err == nil && evStatus != nil && evStatus.Token != "" && evStatus.DispURL != "" {
-			fmt.Println("Found active EdgeView session from API, reusing token...")
+			// fmt.Println("Found active EdgeView session from API, reusing token...")
 			sc, parseErr := a.zededaClient.ParseEdgeViewToken(evStatus.Token)
 			if parseErr == nil {
 				sessionConfig = sc
@@ -445,23 +451,23 @@ func (a *App) StartTunnel(nodeID, targetIP string, targetPort int, protocol stri
 				// But we need to use the existing cache's expiry if available, or set a new one?
 				// Since we are reusing an active session, let's refresh the expiry in our cache too.
 				newExpires := time.Now().Add(4*time.Hour + 50*time.Minute)
-				
+
 				// Preserve port if reusing for same purpose (but here we are starting a new tunnel so port is dynamic)
 				// Actually, StartTunnel doesn't care about cached port unless it's reusing the whole session for the SAME tunnel.
 				// Here we just want to update the config.
-				
+
 				a.sessionManager.StoreCachedSession(nodeID, sessionConfig, 0, newExpires)
 				// Re-fetch to ensure 'cached' variable points to the updated data
 				cached, _ = a.sessionManager.GetCachedSession(nodeID)
-				
-				fmt.Printf("Reused active session. URL: %s\n", sessionConfig.URL)
+
+				// fmt.Printf("Reused active session. URL: %s\n", sessionConfig.URL)
 			} else {
 				fmt.Printf("Failed to parse active token: %v\n", parseErr)
 			}
 		}
 
 		if sessionConfig == nil {
-			fmt.Println("DEBUG: No active session found or invalid, creating new one for tunnel...")
+			// fmt.Println("DEBUG: No active session found or invalid, creating new one for tunnel...")
 			// Try to create a new session
 			script, err := a.zededaClient.InitSession(nodeID)
 			if err != nil {
@@ -513,13 +519,13 @@ func (a *App) StartTunnel(nodeID, targetIP string, targetPort int, protocol stri
 		// Handle "no device online" specifically (or timeouts which might be same cause)
 		if strings.Contains(err.Error(), "no device online") || strings.Contains(err.Error(), "timeout waiting for tcpSetupOK") {
 			fmt.Printf("DEBUG: Device offline or timeout (attempt %d/%d)...\n", attempt, maxRetries)
-			
+
 			// If this was the last attempt, try one final hail-mary: refresh the session
 			// This handles cases where the session token is stale on the dispatcher side
 			if attempt == maxRetries {
 				fmt.Println("DEBUG: Last attempt failed with 'no device online'. Forcefully refreshing session...")
 				a.sessionManager.InvalidateSession(nodeID)
-				
+
 				// Init new session
 				script, initErr := a.zededaClient.InitSession(nodeID)
 				if initErr != nil {
@@ -527,18 +533,18 @@ func (a *App) StartTunnel(nodeID, targetIP string, targetPort int, protocol stri
 					// Return original error
 					break
 				}
-				
+
 				// Parse and store
 				newConfig, parseErr := a.zededaClient.ParseEdgeViewScript(script)
 				if parseErr != nil {
 					fmt.Printf("DEBUG: Failed to parse fresh script: %v\n", parseErr)
 					break
 				}
-				
+
 				expiresAt := time.Now().Add(4*time.Hour + 50*time.Minute)
 				a.sessionManager.StoreCachedSession(nodeID, newConfig, 0, expiresAt)
 				cached = &session.CachedSession{Config: newConfig, ExpiresAt: expiresAt} // Update local var
-				
+
 				// One more try with fresh session
 				fmt.Println("DEBUG: Retrying with fresh session...")
 				port, tunnelID, err = a.sessionManager.StartProxy(a.ctx, cached.Config, nodeID, target, protocol)
@@ -929,8 +935,6 @@ func (a *App) ResetEdgeView(nodeID string) error {
 	return nil
 }
 
-// GetDeviceServices queries the device for running applications using the Cloud API
-// and enriches it with real-time EdgeView data if a session is active
 func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 	// Use Cloud API to fetch app instances
 	apps, err := a.zededaClient.GetDeviceAppInstances(nodeID)
@@ -945,9 +949,10 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 		ID            string                 `json:"id"`
 		IPs           []string               `json:"ips,omitempty"`
 		VNCPort       int                    `json:"vncPort,omitempty"`
-		EdgeViewState string                 `json:"edgeViewState,omitempty"` // This will be populated by background task
+		EdgeViewState string                 `json:"edgeViewState,omitempty"`
 		Containers    []zededa.ContainerInfo `json:"containers,omitempty"`
 		AppType       string                 `json:"appType,omitempty"`
+		DockerCompose string                 `json:"dockerCompose,omitempty"`
 	}
 
 	type ServicesResponse struct {
@@ -955,33 +960,49 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 		Error    string    `json:"error,omitempty"`
 	}
 
-	// 1. Fetch details for all apps and find Docker Runtime IP
-	appDetails := make(map[string]*zededa.AppInstanceDetails)
+	// 1. Fetch details for all apps
+	appDetails := make(map[string]*zededa.AppInstanceStatus)
+	appConfigs := make(map[string]*zededa.AppInstanceConfig)
 	var dockerRuntimeIPs []string
 
 	for _, app := range apps {
-		fmt.Printf("DEBUG: Fetching Cloud API details for app %s...\n", app.Name)
-		if details, err := a.zededaClient.GetAppInstanceDetails(app.ID); err == nil {
-			appDetails[app.ID] = details
+		// fmt.Printf("DEBUG: Fetching Cloud API status for app %s...\n", app.Name)
+		status, err := a.zededaClient.GetAppInstanceDetails(app.ID)
+		if err != nil {
+			// fmt.Printf("DEBUG: Failed to get status for app %s: %v\n", app.Name, err)
+			continue
+		}
+		appDetails[app.ID] = (*zededa.AppInstanceStatus)(status)
 
-			// Check if this is the Docker Runtime instance
-			if details.DeploymentType == "DEPLOYMENT_TYPE_DOCKER_RUNTIME" {
-				// Extract IPs
-				for _, adapter := range details.NetworkAdapters {
-					if ipAddr, ok := adapter["ipaddr"].(string); ok && ipAddr != "" {
-						dockerRuntimeIPs = append(dockerRuntimeIPs, ipAddr)
+		// fmt.Printf("DEBUG: Fetching Cloud API config for app %s...\n", app.Name)
+		config, err := a.zededaClient.GetAppInstanceConfig(app.ID)
+		if err != nil {
+			// fmt.Printf("DEBUG: Failed to get config for app %s: %v\n", app.Name, err)
+		} else {
+			appConfigs[app.ID] = config
+		}
+
+		// Log status for investigation
+		// statusJSON, _ := json.MarshalIndent(status, "", "  ")
+		// fmt.Printf("DEBUG: API Status for app %s:\n%s\n", app.Name, string(statusJSON))
+
+		// Collect Docker Runtime IPs for fallback (if still needed)
+		if status.DeploymentType == "DEPLOYMENT_TYPE_DOCKER_RUNTIME" {
+			if config != nil {
+				for _, net := range config.Interfaces {
+					if addr, ok := net["ipaddr"].(string); ok && addr != "" {
+						dockerRuntimeIPs = append(dockerRuntimeIPs, addr)
 					}
 				}
-				if len(dockerRuntimeIPs) > 0 {
-					fmt.Printf("DEBUG: Found Docker Runtime IPs from app %s: %v\n", app.Name, dockerRuntimeIPs)
-				}
 			}
-		} else {
-			fmt.Printf("DEBUG: Cloud API failed for app %s: %v\n", app.Name, err)
+			for _, ns := range status.NetStatusList {
+				dockerRuntimeIPs = append(dockerRuntimeIPs, ns.IPs...)
+			}
 		}
 	}
+	dockerRuntimeIPs = uniqueStrings(dockerRuntimeIPs)
 
-	// 2. Build services list with IP inheritance
+	// 2. Build services list
 	var services []Service
 	for _, app := range apps {
 		svc := Service{
@@ -990,64 +1011,68 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 			ID:     app.ID,
 		}
 
-		// Primary enrichment: Cloud API
-		if details, ok := appDetails[app.ID]; ok {
-			// Extract IPs
+		status, hasStatus := appDetails[app.ID]
+		config, hasConfig := appConfigs[app.ID]
+
+		if hasStatus {
 			var ips []string
-			
-			// 1. Try to get IPs from Container Status (RuntimeIP)
-			// This is the most accurate source for Docker Compose apps
-			for _, container := range details.Containers {
+
+			// a) Check NetStatusList (Newer API)
+			for _, ns := range status.NetStatusList {
+				for _, ip := range ns.IPs {
+					if ip != "" && ip != "<nil>" {
+						ips = append(ips, ip)
+					}
+				}
+			}
+
+			// b) Check Interfaces from Config (Older API/interfaces)
+			if hasConfig {
+				for _, adapter := range config.Interfaces {
+					if v, ok := adapter["ipaddr"].(string); ok && v != "" {
+						ips = append(ips, v)
+					} else if v, ok := adapter["ipAddr"].(string); ok && v != "" {
+						ips = append(ips, v)
+					}
+				}
+			}
+
+			// c) Check Container Runtime IPs
+			for _, container := range status.Containers {
 				for _, pm := range container.PortMaps {
 					if pm.RuntimeIP != "" && pm.RuntimeIP != "0.0.0.0" {
-						// Add unique
-						found := false
-						for _, ip := range ips {
-							if ip == pm.RuntimeIP {
-								found = true
-								break
-							}
-						}
-						if !found {
-							ips = append(ips, pm.RuntimeIP)
-						}
+						ips = append(ips, pm.RuntimeIP)
 					}
 				}
 			}
 
-			// 2. If no Runtime IPs, fall back to Network Adapters
+			// Fallback to Docker Runtime IPs if still empty
 			if len(ips) == 0 {
-				for _, adapter := range details.NetworkAdapters {
-					if ipAddr, ok := adapter["ipaddr"].(string); ok && ipAddr != "" {
-						ips = append(ips, ipAddr)
-					}
-				}
+				ips = dockerRuntimeIPs
 			}
 
-			// For Docker Compose, we always want the Runtime IPs as they are the most reliable reachable endpoints
-			if details.AppType == "APP_TYPE_DOCKER_COMPOSE" && len(dockerRuntimeIPs) > 0 {
-				// Prioritize Docker Runtime IPs by prepending them
-				ips = append(dockerRuntimeIPs, ips...)
-				fmt.Printf("DEBUG: Added Docker Runtime IPs for app %s: %v\n", app.Name, dockerRuntimeIPs)
+			svc.IPs = uniqueStrings(ips)
+			svc.Containers = status.Containers
+			svc.AppType = status.AppType
+			if hasConfig {
+				svc.DockerCompose = config.DockerCompose
 			}
 
-			if len(ips) > 0 {
-				svc.IPs = ips
-				fmt.Printf("DEBUG: Final IPs for app %s: %v\n", app.Name, ips)
-			}
-
-			// Extract VNC info from Cloud API
-			if details.VMInfo.VNC {
-				svc.VNCPort = 5900 + details.VMInfo.VNCDisplay
+			// Extract VNC info (from Config)
+			if hasConfig && config.VMInfo.VNC {
+				svc.VNCPort = 5900 + config.VMInfo.VNCDisplay
 				fmt.Printf("DEBUG: Found VNC port %d for app %s (from Cloud API)\n", svc.VNCPort, app.Name)
 			} else {
-				// Fallback: Check if any container exposes VNC port (59xx)
-				for _, container := range details.Containers {
-					for _, pm := range container.PortMaps {
-						// Check public port
-						if pm.PublicPort >= 5900 && pm.PublicPort <= 5999 {
-							svc.VNCPort = pm.PublicPort
-							fmt.Printf("DEBUG: Found inferred VNC port %d for app %s (from container map)\n", svc.VNCPort, app.Name)
+				// Fallback: Check containers
+				for _, c := range status.Containers {
+					for _, pm := range c.PortMaps {
+						if (pm.PublicPort >= 5900 && pm.PublicPort <= 5999) || (pm.PrivatePort >= 5900 && pm.PrivatePort <= 5999) {
+							if pm.PublicPort >= 5900 && pm.PublicPort <= 5999 {
+								svc.VNCPort = pm.PublicPort
+							} else {
+								svc.VNCPort = pm.PrivatePort
+							}
+							fmt.Printf("DEBUG: Found inferred VNC port %d for app %s\n", svc.VNCPort, app.Name)
 							break
 						}
 					}
@@ -1056,24 +1081,16 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 					}
 				}
 			}
-
-			// Populate container info and AppType
-			svc.Containers = details.Containers
-			svc.AppType = details.AppType
 		}
 
-		// Secondary enrichment: Check cache (from background EdgeView)
+		// Initial Cache check
 		a.enrichmentMu.RLock()
 		if cached, ok := a.enrichmentCache[app.ID]; ok {
-			// Use cached IPs if Cloud API failed
-			if len(svc.IPs) == 0 && len(cached.IPs) > 0 {
-				fmt.Printf("DEBUG: Using cached EdgeView IPs for app %s\n", app.Name)
-				svc.IPs = cached.IPs
-			}
-			// Always use cached VNC/State (Cloud API doesn't have these, or has static config)
-			// Only overwrite if cache has valid data (avoid zeroing out Cloud API data)
 			if cached.VNCPort > 0 {
 				svc.VNCPort = cached.VNCPort
+			}
+			if len(svc.IPs) == 0 {
+				svc.IPs = cached.IPs
 			}
 			svc.EdgeViewState = cached.State
 		}
@@ -1082,103 +1099,86 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 		services = append(services, svc)
 	}
 
-	// Start EdgeView enrichment in background (optional VNC port, state)
-	// This runs async and doesn't block the response
-	go func() {
-		fmt.Println("DEBUG: Starting background EdgeView enrichment...")
+	/*
+		// 3. Start/Subscribe to Background Enrichment
+		a.enrichingMu_.Lock()
+		jobChan, inProgress := a.enrichingJobs[nodeID]
+		if !inProgress {
+			jobChan = make(chan struct{})
+			a.enrichingJobs[nodeID] = jobChan
+			a.enrichingMu_.Unlock()
+			go func(nodeID string, ch chan struct{}) {
+				defer func() {
+					a.enrichingMu_.Lock()
+					delete(a.enrichingJobs, nodeID)
+					a.enrichingMu_.Unlock()
+					close(ch)
+				}()
 
-			// Try to get or create session
-			cached, ok := a.sessionManager.GetCachedSession(nodeID)
-			if !ok || time.Now().After(cached.ExpiresAt) { // Check if session is expired
-				script, err := a.zededaClient.InitSession(nodeID)
-				if err != nil {
-					fmt.Printf("DEBUG: Background enrichment: failed to init session: %v\n", err)
-					return
-				}
-
-				sessionConfig, err := a.zededaClient.ParseEdgeViewScript(script)
-				if err != nil {
-					fmt.Printf("DEBUG: Background enrichment: failed to parse script: %v\n", err)
-					return
-				}
-
-				expiresAt := time.Now().Add(4*time.Hour + 50*time.Minute)
-				a.sessionManager.StoreCachedSession(nodeID, sessionConfig, 0, expiresAt)
-				cached, _ = a.sessionManager.GetCachedSession(nodeID) // Re-fetch cached session
-
-				// Wait for device to connect
-				fmt.Println("DEBUG: Background enrichment: Waiting 5 seconds for device to establish EdgeView connection...")
-				time.Sleep(5 * time.Second)
-			}
-
-			// Try EdgeView app command (with retries)
-			maxRetries := 3 // Reduced retries since this is optional
-			var enrichments map[string]AppEnrichment
-			for i := 0; i < maxRetries; i++ {
-				fmt.Printf("DEBUG: Background EdgeView enrichment attempt %d/%d\n", i+1, maxRetries)
-				appOutput, err := a.GetAppInfo(nodeID)
-				if err != nil {
-					fmt.Printf("DEBUG: Background enrichment: GetAppInfo failed: %v\n", err)
-					time.Sleep(2 * time.Second)
-					continue
-				}
-
-				if strings.Contains(appOutput, "can't have more than 2 peers") {
-					fmt.Println("DEBUG: Background enrichment: All EdgeView sessions occupied")
-					break // Don't retry for this error
-				} else if strings.Contains(appOutput, "no device online") {
-					fmt.Println("DEBUG: Background enrichment: Device not yet online, waiting...")
-					time.Sleep(2 * time.Second)
-					continue
-				} else if strings.TrimSpace(appOutput) == "+++Done+++" {
-					// Device returned only +++Done+++ with no data - retry
-					fmt.Printf("DEBUG: Background enrichment: Device returned only +++Done+++ (attempt %d/%d), retrying...\n", i+1, maxRetries)
-					time.Sleep(2 * time.Second)
-					continue
-				}
-
-				// Success - parse enrichment data
-				enrichments = ParseAppInfo(appOutput)
-				fmt.Printf("DEBUG: Background enrichment successful, got data for %d apps\n", len(enrichments))
-
-				// Update cache
-				a.enrichmentMu.Lock()
-				for id, enrich := range enrichments {
-					a.enrichmentCache[id] = enrich
-				}
-				a.enrichmentMu.Unlock()
-
-				// TODO: In Phase 2, notify frontend via WebSocket/SSE/polling
-				// For now, enrichment is stored but not pushed to UI
-				break
-			}
-
-			// Update cached services with EdgeView data
-			if enrichments != nil {
-				for i := range services {
-					if enrichment, ok := enrichments[services[i].ID]; ok {
-						services[i].VNCPort = enrichment.VNCPort
-						services[i].EdgeViewState = enrichment.State
-						// Note: IPs are prioritized from Cloud API, so we don't overwrite them here
+				// Background Enrichment Logic (Init session, Execute 'app' command, Update Cache)
+				session, ok := a.sessionManager.GetCachedSession(nodeID)
+				if !ok || time.Now().After(session.ExpiresAt) {
+					script, err := a.zededaClient.InitSession(nodeID)
+					if err == nil {
+						sc, err := a.zededaClient.ParseEdgeViewScript(script)
+						if err == nil {
+							a.sessionManager.StoreCachedSession(nodeID, sc, 0, time.Now().Add(5*time.Hour))
+							time.Sleep(3 * time.Second)
+						}
 					}
 				}
+
+				maxRetries := 5
+				for i := 0; i < maxRetries; i++ {
+					output, err := a.GetAppInfo(nodeID)
+					if err == nil && !strings.Contains(output, "can't have more than 2 peers") {
+						enrichments := ParseAppInfo(output)
+						if len(enrichments) > 0 {
+							a.enrichmentMu.Lock()
+							for id, e := range enrichments {
+								a.enrichmentCache[id] = e
+							}
+							a.enrichmentMu.Unlock()
+							break
+						}
+					}
+					time.Sleep(2 * time.Second)
+				}
+			}(nodeID, jobChan)
+		} else {
+			a.enrichingMu_.Unlock()
+		}
+
+		// Wait up to 3s for data
+		waitTime := 1000 * time.Millisecond
+		if _, warm := a.sessionManager.GetCachedSession(nodeID); warm {
+			waitTime = 3000 * time.Millisecond
+		}
+		select {
+		case <-jobChan:
+		case <-time.After(waitTime):
+		}
+	*/
+
+	// Final Enrichment Merge
+	a.enrichmentMu.RLock()
+	for i := range services {
+		if cached, ok := a.enrichmentCache[services[i].ID]; ok {
+			if cached.VNCPort > 0 {
+				services[i].VNCPort = cached.VNCPort
 			}
-
-			fmt.Println("DEBUG: Background EdgeView enrichment completed")
-		}()
-
-	// Return immediately with Cloud API data
-	response := ServicesResponse{
-		Services: services,
-		// EdgeView error is handled asynchronously, not returned in initial response
+			if len(services[i].IPs) == 0 {
+				services[i].IPs = cached.IPs
+			}
+			services[i].EdgeViewState = cached.State
+		}
 	}
+	a.enrichmentMu.RUnlock()
 
-	jsonBytes, err := json.Marshal(response)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal services: %w", err)
-	}
-
-	fmt.Printf("DEBUG: Returning %d services with Cloud API data (%d bytes)\n", len(services), len(jsonBytes))
+	jsonBytes, _ := json.Marshal(ServicesResponse{Services: services})
+	// for _, s := range services {
+	// 	fmt.Printf("DEBUG: Final Service Result: %s (ID: %s), VNC: %d, IPs: %v\n", s.Name, s.ID, s.VNCPort, s.IPs)
+	// }
 	return string(jsonBytes), nil
 }
 
@@ -1195,13 +1195,13 @@ func (a *App) StartCollectInfo(nodeID string) (string, error) {
 	// Check if we have a cached session
 	_, ok := a.sessionManager.GetCachedSession(nodeID)
 	if !ok {
-		fmt.Println("DEBUG: No cached session found for CollectInfo, checking Cloud API status...")
+		// fmt.Println("DEBUG: No cached session found for CollectInfo, checking Cloud API status...")
 
 		// Check Cloud API status to revive session
 		evStatus, err := a.zededaClient.GetEdgeViewStatus(nodeID)
 		if err == nil && evStatus != nil && evStatus.Token != "" && evStatus.DispURL != "" {
-			fmt.Println("Found active EdgeView session from API, reusing token...")
-			
+			// fmt.Println("Found active EdgeView session from API, reusing token...")
+
 			sc, parseErr := a.zededaClient.ParseEdgeViewToken(evStatus.Token)
 			if parseErr == nil {
 				// Ensure URL is correct
@@ -1213,7 +1213,7 @@ func (a *App) StartCollectInfo(nodeID string) (string, error) {
 						}
 					}
 				}
-				
+
 				// Revive session in cache
 				expiresAt := time.Now().Add(4*time.Hour + 50*time.Minute)
 				a.sessionManager.StoreCachedSession(nodeID, sc, 0, expiresAt)
@@ -1238,18 +1238,24 @@ func (a *App) GetCollectInfoJob(jobID string) *session.CollectInfoJob {
 func (a *App) VerifyToken(token, baseURL string) (*zededa.TokenInfo, error) {
 	token = strings.TrimSpace(token)
 	if baseURL != "" {
-		baseURL = strings.TrimSpace(baseURL)
-	}
-
-	// If a specific baseURL is provided (e.g. from settings form), use a temporary client
-	if baseURL != "" {
-		// Create a temp client to verify against the specified URL
-		// IMPORTANT: Must pass the token to the client so that subsequent calls
-		// like GetRoleName can use it for authentication.
-		tempClient := zededa.NewClient(baseURL, token)
+		tempClient := zededa.NewClient(strings.TrimSpace(baseURL), token)
 		return tempClient.VerifyToken(token)
 	}
-
-	// Otherwise use the configured client
 	return a.zededaClient.VerifyToken(token)
+}
+
+// uniqueStrings returns a slice with duplicates removed
+func uniqueStrings(input []string) []string {
+	keys := make(map[string]bool)
+	list := []string{}
+	for _, entry := range input {
+		if entry == "" || entry == "<nil>" {
+			continue
+		}
+		if _, value := keys[entry]; !value {
+			keys[entry] = true
+			list = append(list, entry)
+		}
+	}
+	return list
 }

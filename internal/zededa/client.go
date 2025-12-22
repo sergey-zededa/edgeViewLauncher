@@ -110,6 +110,9 @@ func (c *Client) SearchNodes(query string) ([]Node, error) {
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 	req.Header.Set("Content-Type", "application/json")
 
+	// fmt.Printf("DEBUG: API Request: [%s] %s\n", req.Method, req.URL.String())
+	// fmt.Printf("DEBUG: API Auth: %s\n", req.Header.Get("Authorization"))
+
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -171,6 +174,9 @@ func (c *Client) GetDeviceAppInstances(deviceId string) ([]AppInstance, error) {
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 	req.Header.Set("Content-Type", "application/json")
 
+	// fmt.Printf("DEBUG: API Request: [%s] %s\n", req.Method, req.URL.String())
+	// fmt.Printf("DEBUG: API Auth: %s\n", req.Header.Get("Authorization"))
+
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -203,6 +209,12 @@ type VMInfo struct {
 	VNCDisplay int  `json:"vncDisplay"`
 }
 
+type NetStatus struct {
+	Up     bool     `json:"up"`
+	IfName string   `json:"ifName"`
+	IPs    []string `json:"ipAddrs"`
+}
+
 type PortMap struct {
 	IP          string `json:"ip"`
 	PrivatePort int    `json:"privatePort"`
@@ -219,49 +231,98 @@ type ContainerInfo struct {
 	PortMaps []PortMap `json:"portMaps"`
 }
 
-type AppInstanceDetails struct {
-	ID              string                   `json:"id"`
-	Name            string                   `json:"name"`
-	NetworkAdapters []map[string]interface{} `json:"interfaces"`
-	AppType         string                   `json:"appType"`
-	DeploymentType  string                   `json:"deploymentType"`
-	VMInfo          VMInfo                   `json:"vminfo"`
-	Containers      []ContainerInfo          `json:"containerStatusList"`
-	DockerCompose   string                   `json:"dockerComposeYamlText"`
+// AppInstanceConfig matches the configuration schema for an edge app instance
+type AppInstanceConfig struct {
+	ID            string                   `json:"id"`
+	Name          string                   `json:"name"`
+	Activate      bool                     `json:"activate"`
+	VMInfo        VMInfo                   `json:"vminfo,omitempty"`
+	Interfaces    []map[string]interface{} `json:"interfaces,omitempty"`
+	DockerCompose string                   `json:"dockerComposeYamlText,omitempty"`
 }
 
-// GetAppInstanceDetails fetches detailed app instance information including network adapters
+// AppInstanceStatus matches the AppInstStatusMsg schema for an edge app instance
+type AppInstanceStatus struct {
+	ID             string          `json:"id"`
+	Name           string          `json:"name"`
+	AdminState     string          `json:"adminState"`
+	RunState       string          `json:"runState"`
+	NetStatusList  []NetStatus     `json:"netStatusList,omitempty"`
+	AppType        string          `json:"appType"`
+	DeploymentType string          `json:"deploymentType"`
+	Containers     []ContainerInfo `json:"containerStatusList,omitempty"`
+}
+
+// AppInstanceDetails is kept for compatibility and represents the status message
+// It now matches AppInstanceStatus exactly.
+type AppInstanceDetails AppInstanceStatus
+
+// GetAppInstanceDetails fetches detailed app instance status information
 func (c *Client) GetAppInstanceDetails(appInstanceID string) (*AppInstanceDetails, error) {
 	if c.Token == "" {
 		return nil, fmt.Errorf("API token not configured")
 	}
 
 	url := fmt.Sprintf("%s/api/v1/apps/instances/id/%s/status", c.BaseURL, appInstanceID)
-
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create request: %v", err)
 	}
+
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.HTTPClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("API failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var details AppInstanceDetails
 	if err := json.NewDecoder(resp.Body).Decode(&details); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to decode response: %v", err)
 	}
 
 	return &details, nil
+}
+
+// GetAppInstanceConfig fetches the configuration for an edge app instance
+func (c *Client) GetAppInstanceConfig(appInstanceID string) (*AppInstanceConfig, error) {
+	if c.Token == "" {
+		return nil, fmt.Errorf("API token not configured")
+	}
+
+	url := fmt.Sprintf("%s/api/v1/apps/instances/id/%s", c.BaseURL, appInstanceID)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %v", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var config AppInstanceConfig
+	if err := json.NewDecoder(resp.Body).Decode(&config); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %v", err)
+	}
+
+	return &config, nil
 }
 
 // GetEnterprise fetches the enterprise information
@@ -532,13 +593,13 @@ func (c *Client) ParseEdgeViewScript(script string) (*SessionConfig, error) {
 
 func (c *Client) InitSession(targetID string) (string, error) {
 	// 1. Enable EdgeView
-	fmt.Printf("Enabling EdgeView for %s...\n", targetID)
+	// fmt.Printf("Enabling EdgeView for %s...\n", targetID)
 	if err := c.StartEdgeView(targetID); err != nil {
 		return "", err
 	}
 
 	// 2. Poll for edgeviewconfig in device details
-	fmt.Printf("Waiting for EdgeView token...\n")
+	// fmt.Printf("Waiting for EdgeView token...\n")
 	timeout := time.After(30 * time.Second)
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -587,6 +648,9 @@ func (c *Client) GetDevice(nodeID string) (map[string]interface{}, error) {
 	}
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 	req.Header.Set("Content-Type", "application/json")
+
+	// fmt.Printf("DEBUG: API Request: [%s] %s\n", req.Method, req.URL.String())
+	// fmt.Printf("DEBUG: API Auth (partial): %s...\n", c.Token[:min(len(c.Token), 10)])
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -1057,17 +1121,17 @@ func (c *Client) DisableSSH(nodeID string) error {
 
 // TokenInfo contains information about a session token
 type TokenInfo struct {
-	Valid      bool      `json:"valid"`
-	ExpiresAt  time.Time `json:"expiresAt"`
-	Subject    string    `json:"subject"` // Usually the user email or ID
-	UserID     string    `json:"userId,omitempty"`
-	Username   string    `json:"username,omitempty"`
-	Email      string    `json:"email,omitempty"`
-	Role       string    `json:"role,omitempty"`
-	CreatedAt  time.Time `json:"createdAt,omitempty"`
-	LastLogin  time.Time `json:"lastLogin,omitempty"`
-	Error      string    `json:"error,omitempty"`
-	RawData    map[string]interface{} `json:"rawData,omitempty"` // Store full response for debugging
+	Valid     bool                   `json:"valid"`
+	ExpiresAt time.Time              `json:"expiresAt"`
+	Subject   string                 `json:"subject"` // Usually the user email or ID
+	UserID    string                 `json:"userId,omitempty"`
+	Username  string                 `json:"username,omitempty"`
+	Email     string                 `json:"email,omitempty"`
+	Role      string                 `json:"role,omitempty"`
+	CreatedAt time.Time              `json:"createdAt,omitempty"`
+	LastLogin time.Time              `json:"lastLogin,omitempty"`
+	Error     string                 `json:"error,omitempty"`
+	RawData   map[string]interface{} `json:"rawData,omitempty"` // Store full response for debugging
 }
 
 // GetRoleName fetches the role name from the API given a roleId
@@ -1165,6 +1229,9 @@ func (c *Client) VerifyToken(token string) (*TokenInfo, error) {
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
+	// fmt.Printf("DEBUG: API Request: [%s] %s\n", req.Method, req.URL.String())
+	// fmt.Printf("DEBUG: API Auth (partial): %s...\n", token[:min(len(token), 10)])
+
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		// fmt.Printf("DEBUG: VerifyToken HTTP error: %v\n", err)
@@ -1182,7 +1249,6 @@ func (c *Client) VerifyToken(token string) (*TokenInfo, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
-
 
 	// Extract known fields with type assertions
 	var expiresAt, createdAt, lastLogin time.Time
@@ -1227,7 +1293,7 @@ func (c *Client) VerifyToken(token string) (*TokenInfo, error) {
 
 	email, _ := result["email"].(string)
 	username, _ := result["username"].(string)
-	
+
 	// Try to get role name from allowedEnterprises array
 	role := ""
 	if allowedEnterprises, ok := result["allowedEnterprises"].([]interface{}); ok && len(allowedEnterprises) > 0 {
