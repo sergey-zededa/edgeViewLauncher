@@ -1816,8 +1816,13 @@ Do you want to try connecting anyway?`)) {
                         className="switch-cluster-btn"
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleClusterSelect(cluster.name);
-                          activateCluster();
+                          const clusterName = cluster.name;
+                          // Ensure we select it first so we edit the right one
+                          handleClusterSelect(clusterName);
+                          // We need to wait for state update or pass name directly to saveSettings
+                          // Since activateCluster relies on viewingClusterName state which might not be updated yet
+                          // Let's modify activateCluster to accept a name or just call saveSettings directly
+                          saveSettings(clusterName);
                         }}
                         title="Switch to this Cluster"
                       >
@@ -2504,7 +2509,7 @@ Do you want to try connecting anyway?`)) {
                                       <span title="IP Addresses">{app.ips.join(', ')}</span>
                                     )}
                                     {app.appType === 'APP_TYPE_DOCKER_COMPOSE' && (
-                                      <span style={{ marginLeft: '8px', display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.85em', color: '#58a6ff', verticalAlign: 'middle', marginTop: '1px' }}>
+                                      <span style={{ marginLeft: '8px', display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.85em', color: '#58a6ff', verticalAlign: 'middle', marginTop: '-1px' }}>
                                         <Layers size={12} /> Compose
                                       </span>
                                     )}
