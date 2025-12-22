@@ -1504,6 +1504,26 @@ Do you want to try connecting anyway?`)) {
     setUpdateState(prev => ({ ...prev, status: 'dismissed' }));
   };
 
+  const switchToCluster = async (clusterName) => {
+    try {
+      // Just update the active cluster pointer without saving current form edits
+      const newConfig = { ...config, activeCluster: clusterName };
+      await SecureStorageSaveSettings(newConfig);
+      setConfig(newConfig);
+
+      // Reload user info for the new active cluster
+      // We need to ensure the backend has received the new config
+      // SecureStorageSaveSettings handles this via IPC->Backend sync
+      await loadUserInfo();
+      
+      // Clear any auth errors since we switched
+      setAuthError(false);
+    } catch (err) {
+      console.error("Failed to switch cluster:", err);
+      setSettingsError("Failed to switch cluster: " + (err.message || String(err)));
+    }
+  };
+
   const saveSettings = async (targetActiveCluster = null) => {
     setSettingsError(null); // Clear previous errors
     setSaveStatus('Saving...');
@@ -1830,8 +1850,8 @@ Do you want to try connecting anyway?`)) {
                         className="switch-cluster-btn"
                       onClick={(e) => {
                         e.stopPropagation();
-                        // Explicitly switch to this cluster
-                        saveSettings(cluster.name);
+                        // Explicitly switch to this cluster without saving current form
+                        switchToCluster(cluster.name);
                       }}
                         title="Switch to this Cluster"
                       >
