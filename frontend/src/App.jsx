@@ -2557,7 +2557,7 @@ Do you want to try connecting anyway?`)) {
                                       <span title="IP Addresses">{app.ips.join(', ')}</span>
                                     )}
                                     {app.appType === 'APP_TYPE_DOCKER_COMPOSE' && (
-                                      <span style={{ marginLeft: '8px', display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.85em', color: '#58a6ff', verticalAlign: 'middle', marginTop: '-1px' }}>
+                                      <span style={{ marginLeft: '8px', display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.85em', color: '#58a6ff', verticalAlign: 'middle', marginTop: '0px' }}>
                                         <Layers size={12} /> Compose
                                       </span>
                                     )}
