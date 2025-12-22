@@ -120,16 +120,22 @@ For full API documentation of the ZEDEDA Cloud API, refer to the Swagger definit
 
 When preparing a new release, follow these steps strictly to ensure auto-update compatibility:
 
-1.  **Bump Versions**:
+1.  **Ensure Root Directory**:
+    *   **CRITICAL**: Make sure you are in the **project root** directory (e.g., `edgeViewLauncher/`), NOT in `frontend/` or `cmd/`.
+    *   Verify by running `ls -l` and checking for `package.json`, `go.mod`, and the `frontend/` directory.
+
+2.  **Bump Versions**:
     *   Update version in `package.json` (root)
     *   Update version in `frontend/package.json`
     *   `npm version patch --no-git-tag-version` (in both directories)
 
-2.  **Commit Changes**:
-    *   Commit the version bump changes.
+3.  **Commit Changes**:
+    *   **CRITICAL**: Run `git add .` from the **project root** to stage changes from both backend (`.go`) and frontend (`frontend/`).
+    *   Verify status with `git status` before committing.
+    *   Commit the version bump and any code changes.
     *   Push to `main`.
 
-3.  **Trigger Release Build**:
+4.  **Trigger Release Build**:
     *   Use GitHub CLI or UI to create a release.
     *   **CRITICAL**: The tag name must match the `v*` pattern (e.g., `v0.1.10`).
     *   **CRITICAL**: The release MUST be created from the **latest commit** on `main` that contains the version bump.
