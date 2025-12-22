@@ -2546,15 +2546,15 @@ Do you want to try connecting anyway?`)) {
                         servicesList.map((app, idx) => (
                           <div key={idx} className="service-item" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                              <div className="service-info">
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                                  <span className="service-name">
+                              <div className="service-info" style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', height: '100%' }}>
+                                  <span className="service-name" style={{ lineHeight: '1.2', display: 'flex', alignItems: 'center' }}>
                                     {app.name}
-                                    {app.pid && <span style={{ marginLeft: '8px', color: '#666', fontSize: '0.9em' }}>(PID: {app.pid})</span>}
+                                    {app.pid && <span style={{ marginLeft: '8px', color: '#666', fontSize: '0.9em', fontWeight: 'normal' }}>(PID: {app.pid})</span>}
                                   </span>
-                                  <div className="service-meta">
+                                  <div className="service-meta" style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
                                     {app.ips && app.ips.length > 0 && (
-                                      <span title="IP Addresses">{app.ips.join(', ')}</span>
+                                      <span title="IP Addresses" style={{ lineHeight: '1.2', display: 'flex', alignItems: 'center' }}>{app.ips.join(', ')}</span>
                                     )}
                                     {app.appType === 'APP_TYPE_DOCKER_COMPOSE' && (
                                       <span style={{ marginLeft: '8px', display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.85em', color: '#58a6ff', verticalAlign: 'middle', marginTop: '0px' }}>
