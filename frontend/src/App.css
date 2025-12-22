@@ -1062,9 +1062,31 @@ body {
     opacity: 1;
 }
 
-.delete-cluster-btn:hover {
-    color: #da3633;
-    background: rgba(218, 54, 51, 0.1);
+.cluster-item .switch-cluster-btn {
+    position: absolute;
+    top: 8px;
+    right: 28px;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    opacity: 0;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+}
+
+.cluster-item:hover .switch-cluster-btn {
+    opacity: 1;
+}
+
+.switch-cluster-btn:hover {
+    color: var(--accent-color);
+    background: rgba(56, 139, 253, 0.1);
+}
+
+.settings-separator {
+    border-top: 1px solid var(--border-color);
+    margin: 20px 0;
 }
 
 .token-input {
@@ -1293,6 +1315,7 @@ body {
 /* Version Info Section */
 .version-info-section {
     margin-top: 16px;
+    margin-bottom: 20px;
     padding: 12px;
     background: var(--bg-secondary);
     border-radius: 6px;

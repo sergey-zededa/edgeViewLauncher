@@ -197,6 +197,7 @@ function App() {
   const [viewingClusterName, setViewingClusterName] = useState('');
   const [viewingUserInfo, setViewingUserInfo] = useState(null);
   const [loadingTokenInfo, setLoadingTokenInfo] = useState(false);
+  const [showTokenStatus, setShowTokenStatus] = useState(false);
   const [saveStatus, setSaveStatus] = useState('');
   const [tokenStatus, setTokenStatus] = useState(null);
   const [settingsError, setSettingsError] = useState(null); // Track settings save errors
@@ -1810,6 +1811,19 @@ Do you want to try connecting anyway?`)) {
                   >
                     <div className="cluster-name">{cluster.name}</div>
                     {cluster.name === config.activeCluster && <div className="active-badge">Active</div>}
+                    {cluster.name !== config.activeCluster && (
+                      <button
+                        className="switch-cluster-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleClusterSelect(cluster.name);
+                          activateCluster();
+                        }}
+                        title="Switch to this Cluster"
+                      >
+                        <Play size={12} />
+                      </button>
+                    )}
                     {config.clusters.length > 1 && (
                       <button
                         className="delete-cluster-btn"
@@ -1868,16 +1882,22 @@ Do you want to try connecting anyway?`)) {
                     placeholder="Paste token from ZEDEDA Cloud..."
                   />
                   {tokenStatus && (
-                    <div className={`token-status ${tokenStatus.valid ? 'valid' : 'expired'}`}>
+                    <div 
+                      className={`token-status ${tokenStatus.valid ? 'valid' : 'expired'}`}
+                      onClick={() => setShowTokenStatus(!showTokenStatus)}
+                      style={{ cursor: 'pointer' }}
+                      title="Click to toggle details"
+                    >
                       {tokenStatus.valid ? <Check size={12} /> : <AlertCircle size={12} />}
                       {tokenStatus.message}
+                      {tokenStatus.valid && <ChevronDown size={10} style={{ marginLeft: '4px', transform: showTokenStatus ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />}
                     </div>
                   )}
                 </div>
 
                 {/* Token Info - show for viewing cluster */}
-                {viewingUserInfo && (
-                  <div className="token-info-section">
+                {viewingUserInfo && showTokenStatus && (
+                  <div className="token-info-section" style={{ animation: 'slideIn 0.2s ease-out' }}>
                     <label>Token Status</label>
                     <div className="token-info-content" style={{ opacity: loadingTokenInfo ? 0.5 : 1, transition: 'opacity 0.2s' }}>
                       {viewingUserInfo.tokenOwner && (
@@ -1963,6 +1983,19 @@ Do you want to try connecting anyway?`)) {
                   </div>
                 )}
 
+                <div className="settings-actions">
+                  {saveStatus && (
+                    <span className={`status-text ${saveStatus.includes('Success') ? 'success' : 'muted'}`}>
+                      {saveStatus}
+                    </span>
+                  )}
+                  <button className="save-btn" onClick={() => saveSettings(null)}>
+                    <Save size={16} /> Save Changes
+                  </button>
+                </div>
+
+                <div className="settings-separator"></div>
+
                 {/* Version Info and Update Check */}
                 <div className="version-info-section">
                   <label>Application Version</label>
@@ -2005,17 +2038,6 @@ Do you want to try connecting anyway?`)) {
                       {updateState.status === 'downloading' ? 'Checking...' : 'Check for Updates'}
                     </button>
                   </div>
-                </div>
-
-                <div className="settings-actions">
-                  {saveStatus && (
-                    <span className={`status-text ${saveStatus.includes('Success') ? 'success' : 'muted'}`}>
-                      {saveStatus}
-                    </span>
-                  )}
-                  <button className="save-btn" onClick={() => saveSettings(null)}>
-                    <Save size={16} /> Save Changes
-                  </button>
                 </div>
               </div>
             </div>
@@ -2482,7 +2504,7 @@ Do you want to try connecting anyway?`)) {
                                       <span title="IP Addresses">{app.ips.join(', ')}</span>
                                     )}
                                     {app.appType === 'APP_TYPE_DOCKER_COMPOSE' && (
-                                      <span style={{ marginLeft: '8px', display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.85em', color: '#58a6ff' }}>
+                                      <span style={{ marginLeft: '8px', display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.85em', color: '#58a6ff', verticalAlign: 'middle', marginTop: '1px' }}>
                                         <Layers size={12} /> Compose
                                       </span>
                                     )}
