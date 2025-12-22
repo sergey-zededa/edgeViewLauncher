@@ -30,3 +30,7 @@ build-info.json
 
 # Notes
 Launcher_Notes.txt
+
+# Swagger definitions
+zedge_app_service.swagger.json
+zedge_node_service.swagger.json
