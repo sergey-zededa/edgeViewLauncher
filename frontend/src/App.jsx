@@ -3055,7 +3055,7 @@ Do you want to try connecting anyway?`)) {
             <Monitor size={14} />
             <span>{config.apiToken || (config.clusters && config.clusters.some(c => c.name === config.activeCluster && c.apiToken)) ? "Ready" : "Setup Required"}</span>
           </div>
-          <div className="status-item">
+          <div className="status-item center">
             <Tooltip text="Shows all tunnels currently open across all connected devices" position="top">
               <button
                 className="link-button"

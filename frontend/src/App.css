@@ -324,12 +324,19 @@ body {
     border-top: 1px solid var(--border-color);
     font-size: 11px;
     color: var(--text-secondary);
+    position: relative;
 }
 
 .status-item {
     display: flex;
     align-items: center;
     gap: 6px;
+}
+
+.status-item.center {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
 }
 
 /* Settings Panel */
