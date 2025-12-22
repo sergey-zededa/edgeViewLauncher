@@ -68,7 +68,7 @@ const PortSelect = ({ ports, selectedValue, onChange, placeholder }) => {
         }}
       >
         <span style={{ color: selectedValue ? '#fff' : '#888', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {selectedPort 
+          {selectedPort
             ? `${selectedPort.publicPort} (Ext) → ${selectedPort.privatePort} (${selectedPort.containerName})`
             : placeholder}
         </span>
@@ -328,6 +328,65 @@ function App() {
     };
   }, [selectedNode]);
 
+  // Polling for device services (every 15-60 seconds while a node is selected)
+  // This ensures VNC details and real-time status are updated as background enrichment finishes.
+  useEffect(() => {
+    if (!selectedNode || showSettings) {
+      return;
+    }
+
+    let intervalId = null;
+    let currentInterval = 15000;
+
+    const pollServices = async () => {
+      try {
+        const result = await GetDeviceServices(selectedNode.id, selectedNode.name);
+        if (!result) return;
+
+        try {
+          const parsed = JSON.parse(result);
+          const servicesList = parsed.services || [];
+
+          setServices(prev => {
+            if (!prev) return parsed;
+            const currentStr = JSON.stringify(prev);
+            const newStr = JSON.stringify(parsed);
+            if (currentStr !== newStr) return parsed;
+            return prev;
+          });
+
+          // SMART POLLING: Check if we have "complete" data for all running services
+          const isComplete = servicesList.length > 0 && servicesList.every(s => {
+            if (s.status?.toUpperCase() !== 'RUNNING') return true;
+            const hasIPs = s.ips && s.ips.length > 0;
+            const isVM = s.appType === 'APP_TYPE_VM';
+            const hasVNC = s.vncPort > 0;
+            return hasIPs && (!isVM || hasVNC);
+          });
+
+          if (isComplete && currentInterval !== 60000) {
+            console.log('Enrichment complete, slowing down poll to 60s');
+            currentInterval = 60000;
+            if (intervalId) clearInterval(intervalId);
+            intervalId = setInterval(pollServices, currentInterval);
+          }
+        } catch (e) {
+          console.error('Failed to parse polled services:', e);
+        }
+      } catch (err) {
+        console.error('Service polling failed:', err);
+      }
+    };
+
+    // Start polling immediately
+    pollServices();
+    intervalId = setInterval(pollServices, currentInterval);
+
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [selectedNode, showSettings]);
+
   // Background device list refresh (every 30 seconds)
   useEffect(() => {
     // Only refresh when viewing the device list (not in settings, not viewing a device)
@@ -360,14 +419,14 @@ function App() {
       setTokenStatus(null);
       return;
     }
-    
+
     setLoadingTokenInfo(true);
-    
+
     // Use VerifyToken directly to check the specific cluster credentials
     try {
       // Don't set loading state here to avoid flickering, just update when done
       const info = await VerifyToken(cluster.apiToken, cluster.baseUrl);
-      
+
       if (info.valid) {
         setViewingUserInfo({
           tokenOwner: info.subject,
@@ -626,10 +685,10 @@ function App() {
       setTcpTunnelConfig(null);
       setTcpPortInput('');
       setTcpIpInput('');
-      
+
       // Refresh session status to reflect potential encryption updates
       await loadSSHStatus(selectedNode.id, false);
-      
+
       const newConfig = await GetSettings();
       // handleTunnelError(err); // Removed invalid call
     } catch (err) {
@@ -699,7 +758,7 @@ function App() {
       setSshTunnelConfig(null);
       setSshPassword(''); // Clear password
       setSshPort('22'); // Reset port
-      
+
       // Refresh session status to reflect potential encryption updates
       await loadSSHStatus(selectedNode.id, false);
     } catch (err) {
@@ -718,7 +777,7 @@ function App() {
       const tunnel = activeTunnels.find(t => t.id === tunnelId);
       await CloseTunnel(tunnelId);
       setActiveTunnels(prev => prev.filter(t => t.id !== tunnelId));
-      
+
       if (tunnel) {
         addLog(`Tunnel closed: ${tunnel.type} localhost:${tunnel.localPort} -> ${tunnel.targetIP}:${tunnel.targetPort}`, 'closed');
       } else {
@@ -782,7 +841,7 @@ function App() {
     const initializeSettings = async () => {
       try {
         const status = await SecureStorageStatus();
-        
+
         setMigrationState(prev => ({
           ...prev,
           needed: status.needsMigration,
@@ -793,9 +852,9 @@ function App() {
         if (status.needsMigration && status.encryptionAvailable) {
           console.log('[SecureStorage] Migration needed, starting auto-migration...');
           setMigrationState(prev => ({ ...prev, inProgress: true }));
-          
+
           const result = await SecureStorageMigrate();
-          
+
           if (result.success) {
             console.log('[SecureStorage] Migration successful:', result.message);
             setMigrationState({
@@ -817,7 +876,7 @@ function App() {
 
         // Load settings using secure storage
         const cfg = await SecureStorageGetSettings();
-        
+
         if (cfg) {
           setConfig({
             baseUrl: cfg.baseUrl || '',
@@ -1027,7 +1086,7 @@ function App() {
       intervalId = setInterval(pollProgress, 1000);
 
       const result = await ConnectToNode(nodeId, useInApp);
-      
+
       const { port, tunnelId } = result;
 
       if (!port) {
@@ -1051,7 +1110,7 @@ function App() {
         addLog(`Launching native terminal: ${sshCommand}`, 'info');
         await window.electronAPI.openExternalTerminal(sshCommand);
       }
-      
+
       // Refresh session status to reflect potential encryption updates
       await loadSSHStatus(nodeId, false);
 
@@ -1096,12 +1155,12 @@ function App() {
       await SetupSSH(selectedNode.id);
       setLastSSHUpdate(Date.now()); // Record update time
       addLog("SSH key pushed to cloud successfully", 'success');
-      
+
       // Warn about propagation delay
       addLog("Device is syncing configuration... This typically takes 60-90 seconds.", 'warning');
-      setGlobalStatus({ 
-        type: 'info', 
-        message: 'SSH enabled. Waiting for device to apply changes...' 
+      setGlobalStatus({
+        type: 'info',
+        message: 'SSH enabled. Waiting for device to apply changes...'
       });
       setTimeout(() => setGlobalStatus(null), 10000);
 
@@ -1185,18 +1244,18 @@ function App() {
       setGlobalStatus({ type: 'error', message: "No node selected for reset." });
       return;
     }
-    
+
     // Use global status instead of blocking UI with loadingSSH
     setGlobalStatus({ type: 'loading', message: "Resetting EdgeView session..." });
     addLog("Initiating EdgeView session reset...");
-    
+
     try {
       await ResetEdgeView(selectedNode.id);
       addLog("Reset command sent successfully", 'success');
-      
-      setGlobalStatus({ 
-        type: 'info', 
-        message: 'EdgeView session restarted. Tunnel will reconnect in ~10 seconds...' 
+
+      setGlobalStatus({
+        type: 'info',
+        message: 'EdgeView session restarted. Tunnel will reconnect in ~10 seconds...'
       });
 
       // Wait 10s then refresh, keeping the info message
@@ -1211,11 +1270,11 @@ function App() {
               addLog(`Failed to refresh status: ${err} `, 'error');
             }
           }).finally(() => {
-             // Clear global status after refresh attempt
-             setGlobalStatus(null);
+            // Clear global status after refresh attempt
+            setGlobalStatus(null);
           });
         } else {
-            setGlobalStatus(null);
+          setGlobalStatus(null);
         }
       }, 10000);
     } catch (err) {
@@ -1238,18 +1297,18 @@ function App() {
 
   const handleCollectInfo = async () => {
     if (!selectedNode) return;
-    
+
     // Clear any previous job tracking
     collectInfoJobRef.current = null;
-    
+
     setGlobalStatus({ type: 'loading', message: `Initiating system info collection for ${selectedNode.name}...` });
-    
+
     try {
       addLog(`Starting collect info request for ${selectedNode.name}...`);
       const response = await StartCollectInfo(selectedNode.id);
       const jobId = response.jobId;
       collectInfoJobRef.current = jobId;
-      
+
       setGlobalStatus({ type: 'loading', message: 'Waiting for device response...' });
 
       // Poll progress
@@ -1262,23 +1321,23 @@ function App() {
 
         try {
           const status = await GetCollectInfoStatus(jobId);
-          
+
           if (status.status === 'downloading') {
             const progressMB = Math.round(status.progress / 1024 / 1024);
             const totalMB = Math.round(status.totalSize / 1024 / 1024);
             const percent = status.totalSize > 0 ? Math.round((status.progress / status.totalSize) * 100) : 0;
-            
+
             // Format message with progress
-            setGlobalStatus({ 
-              type: 'loading', 
-              message: `Collecting info: ${progressMB} MB / ${totalMB} MB (${percent}%)` 
+            setGlobalStatus({
+              type: 'loading',
+              message: `Collecting info: ${progressMB} MB / ${totalMB} MB (${percent}%)`
             });
           } else if (status.status === 'completed') {
             clearInterval(pollInterval);
             addLog('Collect info request completed successfully', 'success');
-            
+
             setGlobalStatus({ type: 'success', message: 'Collection complete. Saving file...' });
-            
+
             // Auto-trigger save
             try {
               const saveResult = await SaveCollectInfo(jobId, status.filename);
@@ -1298,7 +1357,7 @@ function App() {
               setGlobalStatus({ type: 'error', message: `Failed to save file: ${saveErr.message}` });
               addLog(`Failed to save file: ${saveErr.message}`, 'error');
             }
-            
+
             // Cleanup job ref
             if (collectInfoJobRef.current === jobId) {
               collectInfoJobRef.current = null;
@@ -1388,11 +1447,11 @@ function App() {
     setConfig({ ...config, clusters: newClusters, activeCluster: newActive });
     // If we deleted the viewing cluster, switch view to the new active one (or first available)
     if (name === viewingClusterName) {
-       setViewingClusterName(newActive);
-       const nextCluster = newClusters.find(c => c.name === newActive);
-       if (nextCluster) {
-         setEditingCluster({ ...nextCluster });
-       }
+      setViewingClusterName(newActive);
+      const nextCluster = newClusters.find(c => c.name === newActive);
+      if (nextCluster) {
+        setEditingCluster({ ...nextCluster });
+      }
     }
   };
 
@@ -1462,7 +1521,7 @@ function App() {
           }
 
           clustersToSave[editingIndex] = sanitizedCluster;
-          
+
           // If we are editing the active cluster (or renamed it), update activeToSave
           // Only update activeToSave if we didn't explicitly override it
           if (!targetActiveCluster && viewingClusterName === config.activeCluster) {
@@ -1470,12 +1529,12 @@ function App() {
           }
           // If we explicitly switched to this cluster, ensure activeToSave uses the potentially renamed value
           if (targetActiveCluster === viewingClusterName) {
-             activeToSave = sanitizedCluster.name;
+            activeToSave = sanitizedCluster.name;
           }
 
           // Update viewingClusterName to the new name so subsequent saves work
           setViewingClusterName(sanitizedCluster.name);
-          
+
           // Update viewing info with new credentials
           fetchViewingUserInfo(sanitizedCluster);
         }
@@ -1519,18 +1578,18 @@ function App() {
         setNodes([]);
         setProjects([]);
         setEnterprise(null);
-        
+
         // Refresh global active user info if we changed the active cluster
         if (newConfig.activeCluster === activeToSave) {
-           loadUserInfo().catch(console.error);
+          loadUserInfo().catch(console.error);
         }
 
         if (active && active.apiToken) {
-            setSaveStatus('Settings saved successfully!');
-            setTimeout(() => {
-              setSaveStatus('');
-              // Don't close settings immediately to allow user to verify
-            }, 1500);
+          setSaveStatus('Settings saved successfully!');
+          setTimeout(() => {
+            setSaveStatus('');
+            // Don't close settings immediately to allow user to verify
+          }, 1500);
         } else {
           setSaveStatus('Settings saved successfully!');
           setTimeout(() => {
@@ -1666,7 +1725,7 @@ function App() {
           <div className="banner-content">
             <Check size={18} />
             <span>Credentials successfully migrated to secure storage</span>
-            <button 
+            <button
               className="banner-dismiss"
               onClick={() => setMigrationState(prev => ({ ...prev, completed: false }))}
             >
@@ -1680,7 +1739,7 @@ function App() {
           <div className="banner-content">
             <AlertTriangle size={18} />
             <span>Migration failed: {migrationState.error}</span>
-            <button 
+            <button
               className="banner-dismiss"
               onClick={() => setMigrationState(prev => ({ ...prev, error: null }))}
             >
@@ -1770,8 +1829,8 @@ function App() {
                     <div className="info-text" style={{ fontSize: '12px', color: '#888', marginBottom: '10px' }}>
                       This cluster is not active.
                     </div>
-                    <button 
-                      className="btn secondary" 
+                    <button
+                      className="btn secondary"
                       onClick={activateCluster}
                       style={{ width: '100%', justifyContent: 'center', padding: '8px' }}
                     >
@@ -1834,17 +1893,17 @@ function App() {
                       {false && viewingUserInfo.tokenExpiry && (() => {
                         const expiryDate = new Date(viewingUserInfo.tokenExpiry);
                         const now = new Date();
-                        
+
                         // Check for invalid/zero date (Year 1)
                         // Go zero time is 0001-01-01, JS parses this as year 1 or 1901 depending on browser
                         // We check if year is less than 2000 to be safe
                         if (expiryDate.getFullYear() < 2000) {
-                           return (
+                          return (
                             <div className="token-info-row">
                               <span className="token-info-label">Expires:</span>
                               <span className="token-info-value">Unknown</span>
                             </div>
-                           );
+                          );
                         }
 
                         const hoursLeft = (expiryDate - now) / (1000 * 60 * 60);
@@ -1928,7 +1987,7 @@ function App() {
                         <span>Update ready to install</span>
                       </div>
                     )}
-                    <button 
+                    <button
                       className="check-updates-btn"
                       onClick={async () => {
                         try {
@@ -2004,8 +2063,8 @@ function App() {
                           <Copy size={12} />
                         </button>
                         <div className="tunnel-stats">
-                          <div 
-                            className={`activity-dot ${Date.now() - (tunnel.lastActivity || 0) < 5000 ? 'active' : ''}`} 
+                          <div
+                            className={`activity-dot ${Date.now() - (tunnel.lastActivity || 0) < 5000 ? 'active' : ''}`}
                             title={Date.now() - (tunnel.lastActivity || 0) < 5000 ? "Active (Data transferring)" : "Idle"}
                           ></div>
                           <span className="stats-text" title="Data Transferred">
@@ -2105,8 +2164,8 @@ function App() {
                           <Copy size={12} />
                         </button>
                         <div className="tunnel-stats">
-                          <div 
-                            className={`activity-dot ${Date.now() - (tunnel.lastActivity || 0) < 5000 ? 'active' : ''}`} 
+                          <div
+                            className={`activity-dot ${Date.now() - (tunnel.lastActivity || 0) < 5000 ? 'active' : ''}`}
                             title={Date.now() - (tunnel.lastActivity || 0) < 5000 ? "Active (Data transferring)" : "Idle"}
                           ></div>
                           <span className="stats-text" title="Data Transferred">
@@ -2210,164 +2269,164 @@ function App() {
                   </div>
                 </div>
 
-                  <div className="ssh-details-wrapper" style={{ position: 'relative', minHeight: '80px' }}>
+                <div className="ssh-details-wrapper" style={{ position: 'relative', minHeight: '80px' }}>
                   {sshStatus ? (
-                  <div className="ssh-details" style={{ opacity: loadingSSH ? 0.3 : 1, transition: 'opacity 0.2s' }}>
-                    <div className="status-grid">
-                      {(sshStatus.instID !== undefined || sshStatus.maxInst !== undefined) && (
+                    <div className="ssh-details" style={{ opacity: loadingSSH ? 0.3 : 1, transition: 'opacity 0.2s' }}>
+                      <div className="status-grid">
+                        {(sshStatus.instID !== undefined || sshStatus.maxInst !== undefined) && (
+                          <div className="status-item">
+                            <div className="status-label">INSTANCE</div>
+                            <div className="status-value">
+                              {sshStatus.instID !== undefined && sshStatus.maxInst !== undefined
+                                ? `${sshStatus.instID}/${sshStatus.maxInst}`
+                                : '-'}
+                            </div>
+                          </div>
+                        )}
+                        {sshStatus.maxSessions > 0 && (
+                          <div className="status-item">
+                            <div className="status-label">MAX SESSIONS</div>
+                            <div className="status-value">{sshStatus.maxSessions}</div>
+                          </div>
+                        )}
                         <div className="status-item">
-                          <div className="status-label">INSTANCE</div>
-                          <div className="status-value">
-                            {sshStatus.instID !== undefined && sshStatus.maxInst !== undefined
-                              ? `${sshStatus.instID}/${sshStatus.maxInst}`
-                              : '-'}
+                          <div className="status-label">ENCRYPTION</div>
+                          <div className={`status-value ${(sessionStatus?.isEncrypted || sshStatus?.isEncrypted) ? 'success' : 'mismatch'}`}>
+                            {(sessionStatus?.isEncrypted || sshStatus?.isEncrypted) ? (
+                              <><Lock size={14} /> Encrypted</>
+                            ) : (
+                              <><Unlock size={14} /> Unencrypted</>
+                            )}
                           </div>
                         </div>
-                      )}
-                      {sshStatus.maxSessions > 0 && (
                         <div className="status-item">
-                          <div className="status-label">MAX SESSIONS</div>
-                          <div className="status-value">{sshStatus.maxSessions}</div>
+                          <div className="status-label">SESSION</div>
+                          <div className={`status-value ${isSessionConnected ? 'success' : 'error'}`}>
+                            {isSessionConnected ? (
+                              <><Check size={14} /> Activated</>
+                            ) : (
+                              <><X size={14} /> Inactive</>
+                            )}
+                          </div>
                         </div>
-                      )}
-                      <div className="status-item">
-                        <div className="status-label">ENCRYPTION</div>
-                        <div className={`status-value ${(sessionStatus?.isEncrypted || sshStatus?.isEncrypted) ? 'success' : 'mismatch'}`}>
-                          {(sessionStatus?.isEncrypted || sshStatus?.isEncrypted) ? (
-                            <><Lock size={14} /> Encrypted</>
-                          ) : (
-                            <><Unlock size={14} /> Unencrypted</>
-                          )}
+                        <div className="status-item">
+                          <div className="status-label">EXPIRES</div>
+                          <div className={`status-value ${expiryInfo.colorClass}`}>
+                            {expiryInfo.timestamp ? (
+                              <span title={new Date(expiryInfo.timestamp).toLocaleString(undefined, getTimeFormatOptions())}>
+                                {expiryInfo.label}
+                              </span>
+                            ) : '-'}
+                            <button
+                              className="inline-icon-btn"
+                              title="Restart EdgeView session"
+                              onClick={handleResetEdgeView}
+                            >
+                              <RefreshCw size={14} />
+                            </button>
+                          </div>
                         </div>
                       </div>
-                      <div className="status-item">
-                        <div className="status-label">SESSION</div>
-                        <div className={`status-value ${isSessionConnected ? 'success' : 'error'}`}>
-                          {isSessionConnected ? (
-                            <><Check size={14} /> Activated</>
-                          ) : (
-                            <><X size={14} /> Inactive</>
-                          )}
+                      {/* Configuration Controls */}
+                      <div className="config-container" style={{ marginTop: '15px', borderTop: '1px solid #333', paddingTop: '15px' }}>
+                        <div style={{ fontSize: '12px', color: '#888', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          Device Configuration
                         </div>
-                      </div>
-                      <div className="status-item">
-                        <div className="status-label">EXPIRES</div>
-                        <div className={`status-value ${expiryInfo.colorClass}`}>
-                          {expiryInfo.timestamp ? (
-                            <span title={new Date(expiryInfo.timestamp).toLocaleString(undefined, getTimeFormatOptions())}>
-                              {expiryInfo.label}
-                            </span>
-                          ) : '-'}
-                          <button
-                            className="inline-icon-btn"
-                            title="Restart EdgeView session"
-                            onClick={handleResetEdgeView}
+
+                        <div className="config-row" style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', justifyContent: 'space-between' }}>
+
+                          {/* SSH Control */}
+                          <div
+                            className={`config-chip ${sshStatus.status === 'enabled' ? 'enabled' : sshStatus.status === 'mismatch' ? 'warning' : 'disabled'}`}
+                            onClick={sshStatus.status === 'enabled' ? handleDisableSSH : handleSetupSSH}
+                            title={sshStatus.status === 'enabled' ? "SSH Enabled - Click to Disable" : sshStatus.status === 'mismatch' ? "Key Mismatch - Click to Fix" : "SSH Disabled - Click to Enable"}
+                            style={{
+                              display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
+                              fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
+                              backgroundColor: sshStatus.status === 'enabled' ? 'rgba(35, 134, 54, 0.2)' : sshStatus.status === 'mismatch' ? 'rgba(210, 153, 34, 0.2)' : 'rgba(255, 255, 255, 0.1)',
+                              color: sshStatus.status === 'enabled' ? '#238636' : sshStatus.status === 'mismatch' ? '#d29922' : '#c9d1d9',
+                              border: 'none'
+                            }}
                           >
-                            <RefreshCw size={14} />
-                          </button>
+                            {sshStatus.status === 'enabled' ? <Unlock size={13} style={{ marginRight: '6px' }} /> :
+                              sshStatus.status === 'mismatch' ? <AlertTriangle size={13} style={{ marginRight: '6px' }} /> :
+                                <Lock size={13} style={{ marginRight: '6px' }} />}
+                            {sshStatus.status === 'enabled' ? 'SSH Enabled' : sshStatus.status === 'mismatch' ? 'SSH Key Mismatch' : 'Enable SSH'}
+                          </div>
+
+                          {/* VGA Control */}
+                          <div
+                            className={`config-chip ${sshStatus.vgaEnabled ? 'enabled' : 'disabled'}`}
+                            onClick={() => handleToggleVGA(!sshStatus.vgaEnabled)}
+                            title={sshStatus.vgaEnabled ? "VGA Enabled - Click to Disable" : "VGA Disabled - Click to Enable"}
+                            style={{
+                              display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
+                              fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
+                              backgroundColor: sshStatus.vgaEnabled ? 'rgba(35, 134, 54, 0.2)' : 'rgba(255, 255, 255, 0.1)',
+                              color: sshStatus.vgaEnabled ? '#238636' : '#c9d1d9',
+                              border: 'none'
+                            }}
+                          >
+                            <Monitor size={13} style={{ marginRight: '6px' }} />
+                            {sshStatus.vgaEnabled ? 'VGA Enabled' : 'Enable VGA'}
+                          </div>
+
+                          {/* USB Control */}
+                          <div
+                            className={`config-chip ${sshStatus.usbEnabled ? 'enabled' : 'disabled'}`}
+                            onClick={() => handleToggleUSB(!sshStatus.usbEnabled)}
+                            title={sshStatus.usbEnabled ? "USB Enabled - Click to Disable" : "USB Disabled - Click to Enable"}
+                            style={{
+                              display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
+                              fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
+                              backgroundColor: sshStatus.usbEnabled ? 'rgba(35, 134, 54, 0.2)' : 'rgba(255, 255, 255, 0.1)',
+                              color: sshStatus.usbEnabled ? '#238636' : '#c9d1d9',
+                              border: 'none'
+                            }}
+                          >
+                            <Activity size={13} style={{ marginRight: '6px' }} />
+                            {sshStatus.usbEnabled ? 'USB Enabled' : 'Enable USB'}
+                          </div>
+
+                          {/* Console Control */}
+                          <div
+                            className={`config-chip ${sshStatus.consoleEnabled ? 'enabled' : 'disabled'}`}
+                            onClick={() => handleToggleConsole(!sshStatus.consoleEnabled)}
+                            title={sshStatus.consoleEnabled ? "Console Enabled - Click to Disable" : "Console Disabled - Click to Enable"}
+                            style={{
+                              display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
+                              fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
+                              backgroundColor: sshStatus.consoleEnabled ? 'rgba(35, 134, 54, 0.2)' : 'rgba(255, 255, 255, 0.1)',
+                              color: sshStatus.consoleEnabled ? '#238636' : '#c9d1d9',
+                              border: 'none'
+                            }}
+                          >
+                            <Terminal size={13} style={{ marginRight: '6px' }} />
+                            {sshStatus.consoleEnabled ? 'Console Enabled' : 'Enable Console'}
+                          </div>
+
+                          {/* Collect Info */}
+                          <div
+                            className={`config-chip ${isSessionConnected ? '' : 'disabled'}`}
+                            onClick={isSessionConnected ? handleCollectInfo : undefined}
+                            title={isSessionConnected ? "Collect system information (tech-support bundle)" : "Session must be active to collect info"}
+                            style={{
+                              display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
+                              fontSize: '12px', fontWeight: '500', cursor: isSessionConnected ? 'pointer' : 'default', transition: 'all 0.2s',
+                              backgroundColor: isSessionConnected ? 'rgba(56, 139, 253, 0.15)' : 'rgba(255, 255, 255, 0.1)',
+                              color: isSessionConnected ? '#58a6ff' : '#c9d1d9',
+                              border: isSessionConnected ? '1px solid rgba(56, 139, 253, 0.3)' : 'none'
+                            }}
+                          >
+                            <Download size={13} style={{ marginRight: '6px' }} />
+                            Collect Info
+                          </div>
+
                         </div>
                       </div>
                     </div>
-                    {/* Configuration Controls */}
-                    <div className="config-container" style={{ marginTop: '15px', borderTop: '1px solid #333', paddingTop: '15px' }}>
-                      <div style={{ fontSize: '12px', color: '#888', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                        Device Configuration
-                      </div>
-
-                      <div className="config-row" style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', justifyContent: 'space-between' }}>
-
-                        {/* SSH Control */}
-                        <div
-                          className={`config-chip ${sshStatus.status === 'enabled' ? 'enabled' : sshStatus.status === 'mismatch' ? 'warning' : 'disabled'}`}
-                          onClick={sshStatus.status === 'enabled' ? handleDisableSSH : handleSetupSSH}
-                          title={sshStatus.status === 'enabled' ? "SSH Enabled - Click to Disable" : sshStatus.status === 'mismatch' ? "Key Mismatch - Click to Fix" : "SSH Disabled - Click to Enable"}
-                          style={{
-                            display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
-                            fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
-                            backgroundColor: sshStatus.status === 'enabled' ? 'rgba(35, 134, 54, 0.2)' : sshStatus.status === 'mismatch' ? 'rgba(210, 153, 34, 0.2)' : 'rgba(255, 255, 255, 0.1)',
-                            color: sshStatus.status === 'enabled' ? '#238636' : sshStatus.status === 'mismatch' ? '#d29922' : '#c9d1d9',
-                            border: 'none'
-                          }}
-                        >
-                          {sshStatus.status === 'enabled' ? <Unlock size={13} style={{ marginRight: '6px' }} /> :
-                            sshStatus.status === 'mismatch' ? <AlertTriangle size={13} style={{ marginRight: '6px' }} /> :
-                              <Lock size={13} style={{ marginRight: '6px' }} />}
-                          {sshStatus.status === 'enabled' ? 'SSH Enabled' : sshStatus.status === 'mismatch' ? 'SSH Key Mismatch' : 'Enable SSH'}
-                        </div>
-
-                        {/* VGA Control */}
-                        <div
-                          className={`config-chip ${sshStatus.vgaEnabled ? 'enabled' : 'disabled'}`}
-                          onClick={() => handleToggleVGA(!sshStatus.vgaEnabled)}
-                          title={sshStatus.vgaEnabled ? "VGA Enabled - Click to Disable" : "VGA Disabled - Click to Enable"}
-                          style={{
-                            display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
-                            fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
-                            backgroundColor: sshStatus.vgaEnabled ? 'rgba(35, 134, 54, 0.2)' : 'rgba(255, 255, 255, 0.1)',
-                            color: sshStatus.vgaEnabled ? '#238636' : '#c9d1d9',
-                            border: 'none'
-                          }}
-                        >
-                          <Monitor size={13} style={{ marginRight: '6px' }} />
-                          {sshStatus.vgaEnabled ? 'VGA Enabled' : 'Enable VGA'}
-                        </div>
-
-                        {/* USB Control */}
-                        <div
-                          className={`config-chip ${sshStatus.usbEnabled ? 'enabled' : 'disabled'}`}
-                          onClick={() => handleToggleUSB(!sshStatus.usbEnabled)}
-                          title={sshStatus.usbEnabled ? "USB Enabled - Click to Disable" : "USB Disabled - Click to Enable"}
-                          style={{
-                            display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
-                            fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
-                            backgroundColor: sshStatus.usbEnabled ? 'rgba(35, 134, 54, 0.2)' : 'rgba(255, 255, 255, 0.1)',
-                            color: sshStatus.usbEnabled ? '#238636' : '#c9d1d9',
-                            border: 'none'
-                          }}
-                        >
-                          <Activity size={13} style={{ marginRight: '6px' }} />
-                          {sshStatus.usbEnabled ? 'USB Enabled' : 'Enable USB'}
-                        </div>
-
-                        {/* Console Control */}
-                        <div
-                          className={`config-chip ${sshStatus.consoleEnabled ? 'enabled' : 'disabled'}`}
-                          onClick={() => handleToggleConsole(!sshStatus.consoleEnabled)}
-                          title={sshStatus.consoleEnabled ? "Console Enabled - Click to Disable" : "Console Disabled - Click to Enable"}
-                          style={{
-                            display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
-                            fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
-                            backgroundColor: sshStatus.consoleEnabled ? 'rgba(35, 134, 54, 0.2)' : 'rgba(255, 255, 255, 0.1)',
-                            color: sshStatus.consoleEnabled ? '#238636' : '#c9d1d9',
-                            border: 'none'
-                          }}
-                        >
-                          <Terminal size={13} style={{ marginRight: '6px' }} />
-                          {sshStatus.consoleEnabled ? 'Console Enabled' : 'Enable Console'}
-                        </div>
-
-                        {/* Collect Info */}
-                        <div
-                          className={`config-chip ${isSessionConnected ? '' : 'disabled'}`}
-                          onClick={isSessionConnected ? handleCollectInfo : undefined}
-                          title={isSessionConnected ? "Collect system information (tech-support bundle)" : "Session must be active to collect info"}
-                          style={{
-                            display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
-                            fontSize: '12px', fontWeight: '500', cursor: isSessionConnected ? 'pointer' : 'default', transition: 'all 0.2s',
-                            backgroundColor: isSessionConnected ? 'rgba(56, 139, 253, 0.15)' : 'rgba(255, 255, 255, 0.1)',
-                            color: isSessionConnected ? '#58a6ff' : '#c9d1d9',
-                            border: isSessionConnected ? '1px solid rgba(56, 139, 253, 0.3)' : 'none'
-                          }}
-                        >
-                          <Download size={13} style={{ marginRight: '6px' }} />
-                          Collect Info
-                        </div>
-
-                      </div>
-                    </div>
-                  </div>
                   ) : !loadingSSH && (
-                  <div className="error-text">Failed to check status</div>
+                    <div className="error-text">Failed to check status</div>
                   )}
                 </div>
               </div>
@@ -2694,7 +2753,7 @@ function App() {
                   border: '1px solid #333'
                 }}>
                   <h3 style={{ marginTop: 0, marginBottom: '20px' }}>Start TCP Tunnel</h3>
-                  
+
                   <div className="form-group" style={{ marginBottom: '16px' }}>
                     <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', color: '#888' }}>Target IP</label>
                     <input
@@ -2715,15 +2774,15 @@ function App() {
                         placeholder="e.g. 8080"
                         style={{ width: '100px', padding: '8px', backgroundColor: '#2a2a2a', border: '1px solid #444', borderRadius: '4px', color: '#fff' }}
                       />
-                      
+
                       {tcpTunnelConfig.containers && tcpTunnelConfig.containers.length > 0 && (() => {
                         // Flatten all exposed ports
-                        const exposedPorts = tcpTunnelConfig.containers.flatMap(c => 
+                        const exposedPorts = tcpTunnelConfig.containers.flatMap(c =>
                           (c.portMaps || [])
                             .filter(pm => pm.publicPort > 0)
                             .map(pm => ({ ...pm, containerName: c.containerName }))
                         );
-                        
+
                         if (exposedPorts.length > 0) {
                           return (
                             <PortSelect
