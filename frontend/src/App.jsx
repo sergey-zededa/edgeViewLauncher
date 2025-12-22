@@ -1472,18 +1472,37 @@ Do you want to try connecting anyway?`)) {
     const target = clusterName || viewingClusterName;
     
     try {
-      // Just update the active cluster pointer without saving current form edits
+      // 1. Clear selection/device state IMMEDIATELY to stop polling and stale UI
+      setSelectedNode(null);
+      setNodes([]);
+      setServices(null);
+      setSshStatus(null);
+      setSessionStatus(null);
+      setProjects({}); // Clear old projects map
+
+      // 2. Update active cluster in config/storage
       const newConfig = { ...config, activeCluster: target };
       await SecureStorageSaveSettings(newConfig);
       setConfig(newConfig);
 
-      // Reload user info for the new active cluster
+      // 3. Reload user info for the new active cluster
       // We need to ensure the backend has received the new config
       // SecureStorageSaveSettings handles this via IPC->Backend sync
       await loadUserInfo();
       
       // Clear any auth errors since we switched
       setAuthError(false);
+
+      // 4. Refresh the device list for the new cluster
+      try {
+        setLoading(true);
+        const results = await SearchNodes('');
+        setNodes(results || []);
+      } catch (err) {
+        console.error('Failed to refresh nodes after switch:', err);
+      } finally {
+        setLoading(false);
+      }
     } catch (err) {
       console.error("Failed to switch cluster:", err);
       setSettingsError("Failed to switch cluster: " + (err.message || String(err)));
