@@ -1055,7 +1055,9 @@ function App() {
   const startSession = async (nodeId, useInApp) => {
     // Check if SSH was recently updated (within last 60 seconds)
     if (Date.now() - lastSSHUpdate < 60000) {
-      if (!window.confirm("The SSH key was updated less than a minute ago. The device might not be ready yet.\\n\\nDo you want to try connecting anyway?")) {
+      if (!window.confirm(`The SSH key was updated less than a minute ago. The device might not be ready yet.
+
+Do you want to try connecting anyway?`)) {
         return;
       }
     }
