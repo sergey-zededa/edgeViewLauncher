@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { SearchNodes, ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo } from './electronAPI';
 import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
@@ -6,6 +7,9 @@ import Tooltip from './components/Tooltip';
 import About from './components/About';
 import UpdateBanner from './components/UpdateBanner';
 import GlobalStatusBanner from './components/GlobalStatusBanner';
+import Modal from './components/Modal';
+import Button from './components/Button';
+import Badge from './components/Badge';
 import './components/Tooltip.css';
 import './App.css';
 
@@ -32,19 +36,37 @@ function VersionDisplay() {
 }
 
 // Custom Select Component for Port Selection
+// Custom Select Component for Port Selection
 const PortSelect = ({ ports, selectedValue, onChange, placeholder }) => {
   const [isOpen, setIsOpen] = useState(false);
+  const [coords, setCoords] = useState({ top: 0, left: 0, width: 0 });
   const dropdownRef = useRef(null);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
+      // Logic handled via backdrop in portal, but kept for trigger safety
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-        setIsOpen(false);
+        // Only close if not clicking inside the portal (handled separately)
       }
     };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    /* Window resize handler to close dropdown if open */
+    const handleResize = () => setIsOpen(false);
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  const toggleDropdown = () => {
+    if (!isOpen && dropdownRef.current) {
+      const rect = dropdownRef.current.getBoundingClientRect();
+      setCoords({
+        top: rect.bottom + window.scrollY,
+        left: rect.left + window.scrollX,
+        width: rect.width
+      });
+    }
+    setIsOpen(!isOpen);
+  };
 
   const selectedPort = ports.find(p => p.publicPort.toString() === selectedValue.toString());
 
@@ -52,7 +74,7 @@ const PortSelect = ({ ports, selectedValue, onChange, placeholder }) => {
     <div className="custom-select-container" ref={dropdownRef} style={{ position: 'relative', flex: 1 }}>
       <div
         className="custom-select-trigger"
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={toggleDropdown}
         style={{
           padding: '8px 12px',
           backgroundColor: '#1a1a1a',
@@ -74,55 +96,63 @@ const PortSelect = ({ ports, selectedValue, onChange, placeholder }) => {
         </span>
         <ChevronDown size={14} style={{ color: '#888', transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
       </div>
-      {isOpen && (
-        <div className="custom-select-options" style={{
-          position: 'absolute',
-          top: '100%',
-          left: 0,
-          right: 0,
-          marginTop: '4px',
-          backgroundColor: '#1e1e1e',
-          border: '1px solid #333',
-          borderRadius: '4px',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
-          zIndex: 1000,
-          maxHeight: '200px',
-          overflowY: 'auto'
-        }}>
-          {ports.length === 0 ? (
-            <div style={{ padding: '8px 12px', color: '#666', fontSize: '12px' }}>No exposed ports</div>
-          ) : (
-            ports.map((pm, idx) => (
-              <div
-                key={idx}
-                className="custom-option"
-                onClick={() => {
-                  onChange(pm.publicPort);
-                  setIsOpen(false);
-                }}
-                style={{
-                  padding: '8px 12px',
-                  cursor: 'pointer',
-                  fontSize: '13px',
-                  color: '#ccc',
-                  borderBottom: idx < ports.length - 1 ? '1px solid #2a2a2a' : 'none',
-                  transition: 'background 0.1s'
-                }}
-                onMouseEnter={(e) => e.target.style.backgroundColor = '#2a2a2a'}
-                onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    <span style={{ color: '#fff', fontWeight: '500' }}>{pm.publicPort}</span>
-                    <span style={{ color: '#666' }}>→</span>
-                    <span style={{ color: '#999' }}>{pm.privatePort}</span>
+
+      {isOpen && createPortal(
+        <>
+          <div
+            style={{ position: 'fixed', inset: 0, zIndex: 9998, cursor: 'default' }}
+            onClick={() => setIsOpen(false)}
+          />
+          <div className="custom-select-options" style={{
+            position: 'fixed',
+            top: coords.top + 4,
+            left: coords.left,
+            width: coords.width,
+            backgroundColor: '#1e1e1e',
+            border: '1px solid #333',
+            borderRadius: '4px',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+            zIndex: 9999,
+            maxHeight: '300px', // Increased height since it breaks out of modal
+            overflowY: 'auto'
+          }}>
+            {ports.length === 0 ? (
+              <div style={{ padding: '8px 12px', color: '#666', fontSize: '12px' }}>No exposed ports</div>
+            ) : (
+              ports.map((pm, idx) => (
+                <div
+                  key={idx}
+                  className="custom-option"
+                  onClick={() => {
+                    onChange(pm.publicPort);
+                    setIsOpen(false);
+                  }}
+                  style={{
+                    padding: '8px 12px',
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                    color: '#ccc',
+                    borderBottom: idx < ports.length - 1 ? '1px solid #2a2a2a' : 'none',
+                    transition: 'background 0.1s'
+                  }}
+                  onMouseEnter={(e) => e.target.style.backgroundColor = '#2a2a2a'}
+                  onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <span style={{ color: '#fff', fontWeight: '500' }}>{pm.publicPort}</span>
+                      <span style={{ color: '#666' }}>→</span>
+                      <span style={{ color: '#999' }}>{pm.privatePort}</span>
+                    </div>
+                    {/* Consistent coloring: Container name in Blue to match main list logic */}
+                    <div style={{ fontSize: '11px', color: 'var(--color-accent)', marginLeft: '12px' }}>{pm.containerName}</div>
                   </div>
-                  <div style={{ fontSize: '11px', color: '#58a6ff', marginLeft: '12px' }}>{pm.containerName}</div>
                 </div>
-              </div>
-            ))
-          )}
-        </div>
+              ))
+            )}
+          </div>
+        </>,
+        document.body
       )}
     </div>
   );
@@ -1470,7 +1500,7 @@ Do you want to try connecting anyway?`)) {
   const activateCluster = async (clusterName = null) => {
     // If no name provided, default to currently viewing cluster (e.g. from "Switch to this Cluster" button)
     const target = clusterName || viewingClusterName;
-    
+
     try {
       // 1. Clear selection/device state IMMEDIATELY to stop polling and stale UI
       setSelectedNode(null);
@@ -1489,7 +1519,7 @@ Do you want to try connecting anyway?`)) {
       // We need to ensure the backend has received the new config
       // SecureStorageSaveSettings handles this via IPC->Backend sync
       await loadUserInfo();
-      
+
       // Clear any auth errors since we switched
       setAuthError(false);
 
@@ -1564,9 +1594,9 @@ Do you want to try connecting anyway?`)) {
 
           // Check for duplicate cluster (same URL and token)
           // Exclude current editing index from check
-          const duplicateIndex = clustersToSave.findIndex((c, idx) => 
-            idx !== editingIndex && 
-            c.baseUrl === sanitizedCluster.baseUrl && 
+          const duplicateIndex = clustersToSave.findIndex((c, idx) =>
+            idx !== editingIndex &&
+            c.baseUrl === sanitizedCluster.baseUrl &&
             c.apiToken === sanitizedCluster.apiToken
           );
 
@@ -1867,11 +1897,11 @@ Do you want to try connecting anyway?`)) {
                     {cluster.name !== config.activeCluster && (
                       <button
                         className="switch-cluster-btn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        // Explicitly switch to this cluster without saving current form
-                        activateCluster(cluster.name);
-                      }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          // Explicitly switch to this cluster without saving current form
+                          activateCluster(cluster.name);
+                        }}
                         title="Switch to this Cluster"
                       >
                         <Play size={12} />
@@ -1935,7 +1965,7 @@ Do you want to try connecting anyway?`)) {
                     placeholder="Paste token from ZEDEDA Cloud..."
                   />
                   {tokenStatus && (
-                    <div 
+                    <div
                       className={`token-status ${tokenStatus.valid ? 'valid' : 'expired'}`}
                       onClick={() => setShowTokenStatus(!showTokenStatus)}
                       style={{ cursor: 'pointer' }}
@@ -2591,10 +2621,10 @@ Do you want to try connecting anyway?`)) {
                               </div>
                             </div>
                             {expandedServiceContainers[idx] && app.containers && (
-                              <div style={{ marginTop: '12px', borderTop: '1px solid #333', paddingTop: '12px', width: '100%', overflowX: 'auto' }}>
+                              <div style={{ marginTop: '12px', borderTop: '1px solid var(--border-subtle)', paddingTop: '12px', width: '100%', overflowX: 'auto' }}>
                                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
                                   <thead>
-                                    <tr style={{ color: '#888', textAlign: 'left', borderBottom: '1px solid #333' }}>
+                                    <tr style={{ color: 'var(--text-secondary)', textAlign: 'left', borderBottom: '1px solid var(--border-subtle)' }}>
                                       <th style={{ padding: '8px 12px', width: '40px', textAlign: 'left' }}>Status</th>
                                       <th style={{ padding: '8px 12px', width: '30%', textAlign: 'left' }}>Name</th>
                                       <th style={{ padding: '8px 12px', textAlign: 'left' }}>Port Mapping (Host → Container)</th>
@@ -2602,25 +2632,27 @@ Do you want to try connecting anyway?`)) {
                                   </thead>
                                   <tbody>
                                     {app.containers.map((c, cIdx) => (
-                                      <tr key={cIdx} style={{ borderBottom: '1px solid #2a2a2a' }}>
+                                      <tr key={cIdx} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                                         <td style={{ padding: '8px 12px', textAlign: 'left' }}>
                                           <div style={{
                                             width: '8px', height: '8px', borderRadius: '50%',
-                                            backgroundColor: c.containerState?.toLowerCase().includes('running') ? '#2ecc71' : '#e74c3c'
+                                            backgroundColor: c.containerState?.toLowerCase().includes('running') ? 'var(--color-success)' : 'var(--color-danger)'
                                           }} title={c.containerState} />
                                         </td>
-                                        <td style={{ padding: '8px 12px', textAlign: 'left', fontSize: '13px' }}>{c.containerName}</td>
-                                        <td style={{ padding: '8px 12px', fontFamily: 'monospace', textAlign: 'left', fontSize: '12px' }}>
+                                        <td style={{ padding: '8px 12px', textAlign: 'left' }}>
+                                          <span className="entity-name">{c.containerName}</span>
+                                        </td>
+                                        <td style={{ padding: '8px 12px', textAlign: 'left' }}>
                                           {c.portMaps && c.portMaps.filter(pm => pm.publicPort > 0).length > 0 ? (
                                             c.portMaps.filter(pm => pm.publicPort > 0).map((pm, pIdx) => (
                                               <div key={pIdx} style={{ marginBottom: '2px' }}>
-                                                <span style={{ color: '#a5d6ff' }}>{pm.runtimeIp || '0.0.0.0'}:{pm.publicPort}</span>
-                                                <span style={{ color: '#666', margin: '0 6px' }}>→</span>
-                                                <span style={{ color: '#8b949e' }}>localhost:{pm.privatePort}</span>
+                                                <span className="data-value-code">{pm.runtimeIp || '0.0.0.0'}:{pm.publicPort}</span>
+                                                <span className="entity-meta" style={{ margin: '0 6px' }}>→</span>
+                                                <span className="entity-meta">localhost:{pm.privatePort}</span>
                                               </div>
                                             ))
                                           ) : (
-                                            <span style={{ color: '#484f58', fontStyle: 'italic' }}>No public ports</span>
+                                            <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>No public ports</span>
                                           )}
                                         </td>
                                       </tr>
@@ -2807,240 +2839,183 @@ Do you want to try connecting anyway?`)) {
             {selectedNode && <ActivityLog logs={logs} />}
 
             {tcpTunnelConfig && (
-              <div
-                style={{
-                  position: 'fixed',
-                  inset: 0,
-                  backgroundColor: 'rgba(0, 0, 0, 0.5)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  zIndex: 2100,
-                }}
-                onClick={(e) => {
-                  if (e.target === e.currentTarget) setTcpTunnelConfig(null);
-                }}
-              >
-                <div style={{
-                  backgroundColor: '#1e1e1e',
-                  padding: '24px',
-                  borderRadius: '8px',
-                  width: '400px',
-                  boxShadow: '0 4px 20px rgba(0, 0, 0, 0.5)',
-                  border: '1px solid #333'
-                }}>
-                  <h3 style={{ marginTop: 0, marginBottom: '20px' }}>Start TCP Tunnel</h3>
-
-                  <div className="form-group" style={{ marginBottom: '16px' }}>
-                    <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', color: '#888' }}>Target IP</label>
-                    <input
-                      type="text"
-                      value={tcpIpInput}
-                      onChange={(e) => setTcpIpInput(e.target.value)}
-                      style={{ width: '100%', padding: '8px', backgroundColor: '#2a2a2a', border: '1px solid #444', borderRadius: '4px', color: '#fff' }}
-                    />
-                  </div>
-
-                  <div className="form-group" style={{ marginBottom: '20px' }}>
-                    <label style={{ display: 'block', marginBottom: '8px', fontSize: '13px', color: '#888' }}>Target Port</label>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <input
-                        type="number"
-                        value={tcpPortInput}
-                        onChange={(e) => setTcpPortInput(e.target.value)}
-                        placeholder="e.g. 8080"
-                        style={{ width: '100px', padding: '8px', backgroundColor: '#2a2a2a', border: '1px solid #444', borderRadius: '4px', color: '#fff' }}
-                      />
-
-                      {tcpTunnelConfig.containers && tcpTunnelConfig.containers.length > 0 && (() => {
-                        // Flatten all exposed ports
-                        const exposedPorts = tcpTunnelConfig.containers.flatMap(c =>
-                          (c.portMaps || [])
-                            .filter(pm => pm.publicPort > 0)
-                            .map(pm => ({ ...pm, containerName: c.containerName }))
-                        );
-
-                        if (exposedPorts.length > 0) {
-                          return (
-                            <PortSelect
-                              ports={exposedPorts}
-                              selectedValue={tcpPortInput}
-                              onChange={setTcpPortInput}
-                              placeholder="Select exposed port..."
-                            />
-                          );
-                        }
-                        return null;
-                      })()}
-                    </div>
-                  </div>
-
-                  {tcpError && (
-                    <div style={{ color: '#ff6b6b', fontSize: '13px', marginBottom: '16px' }}>
-                      {tcpError}
-                    </div>
-                  )}
-
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                    <button
-                      className="btn secondary"
+              <Modal
+                title="Start TCP Tunnel"
+                isOpen={!!tcpTunnelConfig}
+                onDismiss={() => setTcpTunnelConfig(null)}
+                size="small"
+                footer={
+                  <>
+                    <Button
+                      variant="secondary"
                       onClick={() => setTcpTunnelConfig(null)}
                     >
                       Cancel
-                    </button>
-                    <button
-                      className="btn primary"
+                    </Button>
+                    <Button
+                      variant="primary"
                       onClick={startCustomTunnel}
                       disabled={!tcpIpInput || !tcpPortInput || !!tunnelLoading}
+                      isLoading={tunnelLoading === 'tcp'}
                     >
-                      {tunnelLoading === 'tcp' ? 'Starting...' : 'Start Tunnel'}
-                    </button>
+                      Start Tunnel
+                    </Button>
+                  </>
+                }
+              >
+                <div className="form-group">
+                  <label>Target IP</label>
+                  <input
+                    type="text"
+                    value={tcpIpInput}
+                    onChange={(e) => setTcpIpInput(e.target.value)}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>Target Port</label>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <input
+                      type="number"
+                      value={tcpPortInput}
+                      onChange={(e) => setTcpPortInput(e.target.value)}
+                      placeholder="e.g. 8080"
+                      style={{ width: '100px' }}
+                    />
+
+                    {tcpTunnelConfig && tcpTunnelConfig.containers && tcpTunnelConfig.containers.length > 0 && (() => {
+                      // Flatten all exposed ports
+                      const exposedPorts = tcpTunnelConfig.containers.flatMap(c =>
+                        (c.portMaps || [])
+                          .filter(pm => pm.publicPort > 0)
+                          .map(pm => ({ ...pm, containerName: c.containerName }))
+                      );
+
+                      if (exposedPorts.length > 0) {
+                        return (
+                          <PortSelect
+                            ports={exposedPorts}
+                            selectedValue={tcpPortInput}
+                            onChange={setTcpPortInput}
+                            placeholder="Select exposed port..."
+                          />
+                        );
+                      }
+                      return null;
+                    })()}
                   </div>
                 </div>
-              </div>
+
+                {tcpError && (
+                  <div style={{ color: 'var(--color-danger)', fontSize: '13px', marginBottom: '16px' }}>
+                    {tcpError}
+                  </div>
+                )}
+              </Modal>
             )}
 
             {sshTunnelConfig && (
-              <div
-                style={{
-                  position: 'fixed',
-                  inset: 0,
-                  backgroundColor: 'rgba(0, 0, 0, 0.5)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  zIndex: 2100,
+              <Modal
+                title="Start SSH Session"
+                isOpen={!!sshTunnelConfig}
+                onDismiss={() => {
+                  setSshTunnelConfig(null);
+                  setSshError(null);
                 }}
+                size="small"
               >
-                <div
-                  style={{
-                    backgroundColor: '#1e1e1e',
-                    borderRadius: '8px',
-                    padding: '16px 20px',
-                    minWidth: '380px',
-                    maxWidth: '480px',
-                    boxShadow: '0 12px 30px rgba(0, 0, 0, 0.4)',
-                    border: '1px solid #333',
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                    <h4 style={{ margin: 0, fontSize: '14px' }}>Start SSH Session</h4>
-                    <button
-                      className="icon-btn"
-                      onClick={() => {
-                        setSshTunnelConfig(null);
-                        setSshError(null);
-                      }}
-                      title="Close"
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                  <div style={{ fontSize: '12px', marginBottom: '20px', color: '#888', textAlign: 'center' }}>
-                    {selectedNode?.name} • <span style={{ fontFamily: 'monospace' }}>{sshTunnelConfig.ip}</span>
-                  </div>
+                <div style={{ fontSize: '13px', marginBottom: '20px', color: 'var(--text-secondary)', textAlign: 'center' }}>
+                  {selectedNode?.name} • <span className="data-value-code">{sshTunnelConfig.ip}</span>
+                </div>
 
-                  {sshError && (
-                    <div className="error-banner-inline" style={{
-                      backgroundColor: 'rgba(231, 76, 60, 0.1)',
-                      border: '1px solid rgba(231, 76, 60, 0.3)',
-                      color: '#ff6b6b',
-                      padding: '8px 12px',
-                      borderRadius: '4px',
-                      fontSize: '12px',
-                      marginBottom: '16px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px'
-                    }}>
-                      <AlertCircle size={14} />
-                      <span>{sshError}</span>
-                    </div>
-                  )}
-
-                  <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
-                    <div className="form-group" style={{ flex: '3' }}>
-                      <label style={{ fontSize: '12px', display: 'block', marginBottom: '6px', color: '#ccc' }}>Username</label>
-                      <input
-                        type="text"
-                        value={sshUser}
-                        onChange={(e) => setSshUser(e.target.value)}
-                        placeholder="root"
-                        style={{ width: '100%', padding: '8px 10px', backgroundColor: '#1a1a1a', border: '1px solid #333', borderRadius: '4px', color: '#fff', outline: 'none', boxSizing: 'border-box' }}
-                      />
-                    </div>
-                    <div className="form-group" style={{ flex: '1' }}>
-                      <label style={{ fontSize: '12px', display: 'block', marginBottom: '6px', color: '#ccc' }}>Port</label>
-                      <input
-                        type="number"
-                        value={sshPort}
-                        onChange={(e) => setSshPort(e.target.value)}
-                        placeholder="22"
-                        min="1"
-                        max="65535"
-                        style={{ width: '100%', padding: '8px 10px', backgroundColor: '#1a1a1a', border: '1px solid #333', borderRadius: '4px', color: '#fff', outline: 'none', boxSizing: 'border-box' }}
-                      />
-                    </div>
+                {sshError && (
+                  <div className="error-banner-inline" style={{
+                    backgroundColor: 'rgba(231, 76, 60, 0.1)',
+                    border: '1px solid rgba(231, 76, 60, 0.3)',
+                    color: 'var(--color-danger)',
+                    padding: '8px 12px',
+                    borderRadius: '4px',
+                    fontSize: '12px',
+                    marginBottom: '16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px'
+                  }}>
+                    <AlertCircle size={14} />
+                    <span>{sshError}</span>
                   </div>
+                )}
 
-                  <div className="form-group" style={{ marginBottom: '24px' }}>
-                    <label style={{ fontSize: '12px', display: 'block', marginBottom: '6px', color: '#ccc' }}>Password (Optional)</label>
+                <div style={{ display: 'flex', gap: '12px', marginBottom: '4px' }}>
+                  <div className="form-group" style={{ flex: '3' }}>
+                    <label>Username</label>
                     <input
-                      type="password"
-                      value={sshPassword}
-                      onChange={(e) => setSshPassword(e.target.value)}
-                      placeholder="Leave empty if using key-based auth"
-                      style={{ width: '100%', padding: '8px', backgroundColor: '#1a1a1a', border: '1px solid #333', borderRadius: '4px', color: '#fff', outline: 'none', boxSizing: 'border-box' }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') startSshModalTunnel('builtin');
-                        if (e.key === 'Escape') setSshTunnelConfig(null);
-                      }}
+                      type="text"
+                      value={sshUser}
+                      onChange={(e) => setSshUser(e.target.value)}
+                      placeholder="root"
                     />
                   </div>
-
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
-                    <button
-                      className={`connect-btn primary ${tunnelLoading === 'ssh' ? 'loading' : ''}`}
-                      onClick={() => startSshModalTunnel('builtin')}
-                      disabled={tunnelLoading}
-                      style={{ width: '100%', justifyContent: 'center' }}
-                    >
-                      {tunnelLoading === 'ssh' ? (
-                        <>
-                          <Activity size={14} className="animate-spin" />
-                          <span style={{ marginLeft: '6px' }}>Connecting...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Terminal size={14} style={{ marginRight: '6px' }} />
-                          Open Built-in Terminal
-                        </>
-                      )}
-                    </button>
-
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <button
-                        className="connect-btn secondary"
-                        onClick={() => startSshModalTunnel('native')}
-                        disabled={tunnelLoading}
-                        style={{ flex: 1, justifyContent: 'center' }}
-                      >
-                        <ExternalLink size={14} style={{ marginRight: '6px' }} />
-                        Native Terminal
-                      </button>
-                      <button
-                        className="connect-btn secondary"
-                        onClick={() => startSshModalTunnel('tunnel-only')}
-                        disabled={tunnelLoading}
-                        style={{ flex: 1, justifyContent: 'center' }}
-                      >
-                        <Activity size={14} style={{ marginRight: '6px' }} />
-                        Tunnel Only
-                      </button>
-                    </div>
+                  <div className="form-group" style={{ flex: '1' }}>
+                    <label>Port</label>
+                    <input
+                      type="number"
+                      value={sshPort}
+                      onChange={(e) => setSshPort(e.target.value)}
+                      placeholder="22"
+                      min="1"
+                      max="65535"
+                    />
                   </div>
                 </div>
-              </div>
+
+                <div className="form-group">
+                  <label>Password (Optional)</label>
+                  <input
+                    type="password"
+                    value={sshPassword}
+                    onChange={(e) => setSshPassword(e.target.value)}
+                    placeholder="Leave empty if using key-based auth"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') startSshModalTunnel('builtin');
+                      if (e.key === 'Escape') setSshTunnelConfig(null);
+                    }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '20px' }}>
+                  <Button
+                    variant="primary"
+                    onClick={() => startSshModalTunnel('builtin')}
+                    isLoading={tunnelLoading === 'ssh'}
+                    icon={!tunnelLoading && <Terminal size={14} />}
+                    style={{ width: '100%', justifyContent: 'center' }}
+                  >
+                    Open Built-in Terminal
+                  </Button>
+
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <Button
+                      variant="secondary"
+                      onClick={() => startSshModalTunnel('native')}
+                      disabled={tunnelLoading}
+                      style={{ flex: 1, justifyContent: 'center' }}
+                      icon={<ExternalLink size={14} />}
+                    >
+                      Native Terminal
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      onClick={() => startSshModalTunnel('tunnel-only')}
+                      disabled={tunnelLoading}
+                      style={{ flex: 1, justifyContent: 'center' }}
+                      icon={<Activity size={14} />}
+                    >
+                      Tunnel Only
+                    </Button>
+                  </div>
+                </div>
+              </Modal>
             )}
 
             {!selectedNode && (

@@ -1,0 +1,83 @@
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 6px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: 1px solid transparent;
+    text-decoration: none;
+    line-height: 1.5;
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Variant: Primary */
+.btn.primary {
+    background-color: var(--color-accent);
+    color: var(--text-inverse);
+    border: 1px solid var(--color-accent);
+}
+
+.btn.primary:hover:not(:disabled) {
+    background-color: #79c0ff;
+    /* TODO: Add to vars if reused often */
+    border-color: #79c0ff;
+}
+
+/* Variant: Secondary */
+.btn.secondary {
+    background-color: var(--bg-surface);
+    color: var(--text-primary);
+    border-color: var(--border-subtle);
+}
+
+.btn.secondary:hover:not(:disabled) {
+    background-color: var(--bg-hover);
+    border-color: var(--text-secondary);
+}
+
+/* Variant: Ghost (Transparent) */
+.btn.ghost {
+    background-color: transparent;
+    color: var(--text-secondary);
+    padding: 6px 8px;
+}
+
+.btn.ghost:hover:not(:disabled) {
+    background-color: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+/* Variant: Danger */
+.btn.danger {
+    background-color: transparent;
+    color: var(--color-danger);
+    border: 1px solid var(--color-danger);
+}
+
+.btn.danger:hover:not(:disabled) {
+    background-color: rgba(218, 54, 51, 0.1);
+}
+
+.btn .spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
