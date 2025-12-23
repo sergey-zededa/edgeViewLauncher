@@ -80,7 +80,7 @@ jobs:
           path: |
             dist-electron/*.dmg
             dist-electron/*.zip
-            dist-electron/*.yml
+            dist-electron/latest-mac.yml
             dist-electron/*.blockmap
           retention-days: 5
 
@@ -143,7 +143,7 @@ jobs:
           name: windows-x64
           path: |
             dist-electron/*.exe
-            dist-electron/*.yml
+            dist-electron/latest.yml
             dist-electron/*.blockmap
           retention-days: 5
 
@@ -206,7 +206,7 @@ jobs:
             dist-electron/*.AppImage
             dist-electron/*.deb
             dist-electron/*.rpm
-            dist-electron/*.yml
+            dist-electron/latest-linux.yml
             dist-electron/*.blockmap
           retention-days: 5
 
