@@ -210,6 +210,8 @@ async function updateTrayMenu() {
         }
 
 
+        menuItems.push({ type: 'separator' });
+
         menuItems.push({
             label: 'Open EdgeView Launcher',
             click: () => {
