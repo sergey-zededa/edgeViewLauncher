@@ -209,18 +209,6 @@ async function updateTrayMenu() {
             });
         }
 
-        menuItems.push({ type: 'separator' });
-
-        menuItems.push({
-            label: 'Check for updates',
-            click: () => {
-                if (mainWindow && !mainWindow.isDestroyed()) {
-                    autoUpdater.checkForUpdates().catch(err => {
-                        console.error('[Tray] Check for updates failed:', err);
-                    });
-                }
-            }
-        });
 
         menuItems.push({
             label: 'Open EdgeView Launcher',
