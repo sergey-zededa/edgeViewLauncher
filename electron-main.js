@@ -73,9 +73,15 @@ autoUpdater.on('update-downloaded', (info) => {
 });
 
 function createTray() {
-    const iconPath = path.join(__dirname, 'assets', 'icon.png');
-
+    // Prefer tray.png, fallback to icon.png
+    let iconPath = path.join(__dirname, 'assets', 'tray.png');
     let trayIcon = nativeImage.createFromPath(iconPath);
+
+    if (trayIcon.isEmpty()) {
+        console.log('[Tray] tray.png not found/empty, falling back to icon.png');
+        iconPath = path.join(__dirname, 'assets', 'icon.png');
+        trayIcon = nativeImage.createFromPath(iconPath);
+    }
 
     if (trayIcon.isEmpty()) {
         // Fallback to icns if png fails
@@ -87,6 +93,17 @@ function createTray() {
 
     tray = new Tray(trayIcon);
     tray.setToolTip('EdgeView Launcher');
+
+    // Set initial menu to verify tray creation
+    try {
+        const initialMenu = Menu.buildFromTemplate([
+            { label: 'EdgeView Launcher', enabled: false },
+            { label: 'Initializing...', enabled: false }
+        ]);
+        tray.setContextMenu(initialMenu);
+    } catch (e) {
+        console.error('[Tray] Failed to set initial menu:', e);
+    }
 
     // Initial menu (will be updated with dynamic content)
     updateTrayMenu();
@@ -108,6 +125,7 @@ function createTray() {
 }
 
 async function updateTrayMenu() {
+    console.log('[Tray] Updating menu...');
     try {
         const menuItems = [];
 
