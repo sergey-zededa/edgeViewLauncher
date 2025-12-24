@@ -222,6 +222,10 @@ function App() {
   const [vncMenuAppId, setVncMenuAppId] = useState(null);
   const dropdownRef = useRef(null);
 
+  // SSH quick-connect popover state
+  const [sshPopover, setSshPopover] = useState(null); // { ip, appName, username }
+  const sshPopoverRef = useRef(null);
+
   // Settings editing state
   const [editingCluster, setEditingCluster] = useState({ name: '', baseUrl: '', apiToken: '' });
   const [viewingClusterName, setViewingClusterName] = useState('');
@@ -509,6 +513,24 @@ function App() {
     return `${minutes}m`;
   };
 
+  // SSH username persistence helpers (per-app)
+  const getSavedSshUsername = (appName) => {
+    try {
+      const saved = localStorage.getItem(`ssh-username-${appName}`);
+      return saved || 'root';
+    } catch {
+      return 'root';
+    }
+  };
+
+  const saveSshUsername = (appName, username) => {
+    try {
+      localStorage.setItem(`ssh-username-${appName}`, username);
+    } catch (err) {
+      console.warn('Failed to save SSH username:', err);
+    }
+  };
+
   // Helper to format bytes
   const formatBytes = (bytes, decimals = 1) => {
     if (bytes === 0) return '0 B';
@@ -734,6 +756,112 @@ function App() {
     }
   };
 
+  // Quick tunnel start - bypasses modal, used for clickable port shortcuts
+  const startQuickTunnel = async (ip, port) => {
+    if (!selectedNode) return;
+
+    const tunnelKey = `tcp-${ip}-${port}`;
+    try {
+      setTunnelLoading(tunnelKey);
+      setGlobalStatus({ type: 'loading', message: `Starting TCP tunnel to ${ip}:${port}...` });
+      addLog(`Starting TCP tunnel to ${ip}:${port}...`, 'info');
+
+      const result = await StartTunnel(selectedNode.id, ip, port);
+      const localPort = result.port || result;
+      const tunnelId = result.tunnelId;
+
+      addLog(`TCP tunnel active: localhost:${localPort} -> ${ip}:${port}`, 'success');
+      addTunnel('TCP', ip, port, localPort, tunnelId);
+      setHighlightTunnels(true);
+      setTimeout(() => setHighlightTunnels(false), 2000);
+
+      setGlobalStatus({ type: 'success', message: `Tunnel ready: localhost:${localPort}`, duration: 3000 });
+    } catch (err) {
+      console.error(err);
+      handleTunnelError(err);
+      addLog(`Failed to start TCP tunnel: ${err.message || err}`, 'error');
+    } finally {
+      setTunnelLoading(null);
+      setGlobalStatus(null);
+    }
+  };
+
+  // Quick VNC start - bypasses menu, used for clickable VNC port shortcuts
+  const startQuickVnc = async (ip, port, appName) => {
+    if (!selectedNode) return;
+
+    try {
+      setTunnelLoading('vnc');
+      setGlobalStatus({ type: 'loading', message: `Starting VNC connection to ${ip}:${port}...` });
+      addLog(`Starting VNC tunnel to ${ip}:${port}...`, 'info');
+
+      const result = await StartTunnel(selectedNode.id, ip, port, 'vnc');
+      const localPort = result.port || result;
+      const tunnelId = result.tunnelId;
+
+      addLog(`VNC tunnel active: localhost:${localPort} -> ${ip}:${port}`, 'success');
+      addTunnel('VNC', ip, port, localPort, tunnelId);
+
+      // Open VNC viewer window
+      await window.electronAPI.openVncWindow({
+        port: localPort,
+        nodeName: selectedNode.name,
+        appName: appName || 'VNC',
+        tunnelId
+      });
+
+      setGlobalStatus({ type: 'success', message: `VNC connected on localhost:${localPort}`, duration: 3000 });
+    } catch (err) {
+      console.error(err);
+      handleTunnelError(err);
+      addLog(`Failed to start VNC: ${err.message || err}`, 'error');
+    } finally {
+      setTunnelLoading(null);
+      setGlobalStatus(null);
+    }
+  };
+
+  // Quick SSH start - bypasses modal, opens built-in terminal with specified/saved username
+  const startQuickSsh = async (ip, appName, username = 'root') => {
+    if (!selectedNode) return;
+
+    // Save username for this app
+    if (appName) {
+      saveSshUsername(appName, username);
+    }
+
+    try {
+      setTunnelLoading('ssh');
+      setGlobalStatus({ type: 'loading', message: `Starting SSH connection to ${username}@${ip}...` });
+      addLog(`Starting SSH tunnel to ${username}@${ip}:22...`, 'info');
+
+      const result = await StartTunnel(selectedNode.id, ip, 22);
+      const localPort = result.port || result;
+      const tunnelId = result.tunnelId;
+
+      addLog(`SSH tunnel active: localhost:${localPort} -> ${ip}:22`, 'success');
+      addTunnel('SSH', ip, 22, localPort, tunnelId, username);
+
+      // Open built-in terminal
+      await window.electronAPI.openTerminalWindow({
+        port: localPort,
+        nodeName: selectedNode.name,
+        targetInfo: `${username}@${ip}:22`,
+        tunnelId,
+        username
+      });
+
+      setGlobalStatus({ type: 'success', message: `SSH connected on localhost:${localPort}`, duration: 3000 });
+    } catch (err) {
+      console.error(err);
+      handleTunnelError(err);
+      addLog(`Failed to start SSH: ${err.message || err}`, 'error');
+    } finally {
+      setTunnelLoading(null);
+      setGlobalStatus(null);
+    }
+  };
+
   const startSshModalTunnel = async (mode = 'builtin') => {
     if (!sshTunnelConfig || !selectedNode) return;
     setSshError(null);
@@ -750,6 +878,9 @@ function App() {
     }
 
     try {
+      if (sshTunnelConfig.appName) {
+        saveSshUsername(sshTunnelConfig.appName, sshUser);
+      }
       setTunnelLoading('ssh');
       const sshTarget = ip;
       setGlobalStatus({ type: 'loading', message: `Starting SSH tunnel to ${sshTarget}:${targetPort}...` });
@@ -829,6 +960,10 @@ function App() {
         setShowTerminalMenu(false);
         setShowVncMenu(false);
         setVncMenuAppId(null);
+      }
+      // Close SSH popover when clicking outside
+      if (sshPopoverRef.current && !sshPopoverRef.current.contains(event.target)) {
+        setSshPopover(null);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -2584,7 +2719,104 @@ Do you want to try connecting anyway?`)) {
                                   </span>
                                   <div className="service-meta" style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
                                     {app.ips && app.ips.length > 0 && (
-                                      <span title="IP Addresses" style={{ lineHeight: '1.2', display: 'flex', alignItems: 'center' }}>{app.ips.join(', ')}</span>
+                                      <span style={{ lineHeight: '1.2', display: 'flex', alignItems: 'center', gap: '4px', position: 'relative' }}>
+                                        {app.ips.map((ip, ipIdx) => {
+                                          const savedUser = getSavedSshUsername(app.name);
+                                          const popoverKey = `${app.name}-${ip}`;
+                                          const isPopoverOpen = sshPopover?.key === popoverKey;
+                                          return (
+                                            <span key={ipIdx} style={{ position: 'relative' }}>
+                                              {ipIdx > 0 && ', '}
+                                              <button
+                                                className="quick-tunnel-btn"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  setSshPopover({
+                                                    key: popoverKey,
+                                                    ip,
+                                                    appName: app.name,
+                                                    username: savedUser
+                                                  });
+                                                }}
+                                                disabled={!!tunnelLoading || !isSessionConnected}
+                                                title={`SSH as ${savedUser}@${ip} — click to connect`}
+                                              >
+                                                {ip}
+                                              </button>
+                                              {isPopoverOpen && (
+                                                <div
+                                                  ref={sshPopoverRef}
+                                                  className="ssh-popover"
+                                                  onClick={(e) => e.stopPropagation()}
+                                                  style={{
+                                                    position: 'absolute',
+                                                    top: '100%',
+                                                    left: '0',
+                                                    marginTop: '4px',
+                                                    backgroundColor: '#1e1e1e',
+                                                    border: '1px solid #333',
+                                                    borderRadius: '6px',
+                                                    padding: '8px',
+                                                    boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+                                                    zIndex: 1000,
+                                                    minWidth: '180px'
+                                                  }}
+                                                >
+                                                  <div style={{ marginBottom: '8px', fontSize: '12px', color: '#888' }}>
+                                                    SSH to {ip}
+                                                  </div>
+                                                  <input
+                                                    type="text"
+                                                    value={sshPopover.username}
+                                                    onChange={(e) => setSshPopover({ ...sshPopover, username: e.target.value })}
+                                                    placeholder="Username"
+                                                    onKeyDown={(e) => {
+                                                      if (e.key === 'Enter') {
+                                                        setSshPopover(null);
+                                                        startQuickSsh(ip, app.name, sshPopover.username || 'root');
+                                                      } else if (e.key === 'Escape') {
+                                                        setSshPopover(null);
+                                                      }
+                                                    }}
+                                                    autoFocus
+                                                    style={{
+                                                      width: '100%',
+                                                      boxSizing: 'border-box',
+                                                      padding: '6px 8px',
+                                                      backgroundColor: '#2a2a2a',
+                                                      border: '1px solid #444',
+                                                      borderRadius: '4px',
+                                                      color: '#fff',
+                                                      fontSize: '13px',
+                                                      marginBottom: '8px'
+                                                    }}
+                                                  />
+                                                  <button
+                                                    onClick={() => {
+                                                      setSshPopover(null);
+                                                      startQuickSsh(ip, app.name, sshPopover.username || 'root');
+                                                    }}
+                                                    style={{
+                                                      width: '100%',
+                                                      boxSizing: 'border-box',
+                                                      padding: '6px 12px',
+                                                      backgroundColor: '#238636',
+                                                      border: 'none',
+                                                      borderRadius: '4px',
+                                                      color: '#fff',
+                                                      fontSize: '12px',
+                                                      cursor: 'pointer',
+                                                      fontWeight: '500'
+                                                    }}
+                                                  >
+                                                    Connect
+                                                  </button>
+                                                </div>
+                                              )}
+                                            </span>
+                                          );
+                                        })}
+                                      </span>
                                     )}
                                     {app.appType === 'APP_TYPE_DOCKER_COMPOSE' && (
                                       <span style={{ marginLeft: '8px', display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.85em', color: '#58a6ff', verticalAlign: 'middle', marginTop: '0px' }}>
@@ -2592,8 +2824,21 @@ Do you want to try connecting anyway?`)) {
                                       </span>
                                     )}
                                     {app.vncPort && (
-                                      <span style={{ marginLeft: app.ips && app.ips.length > 0 ? '8px' : '0' }}>
-                                        • VNC: Port {app.vncPort}
+                                      <span style={{ marginLeft: app.ips && app.ips.length > 0 ? '8px' : '0', display: 'flex', alignItems: 'center' }}>
+                                        • VNC:
+                                        <button
+                                          className="quick-tunnel-btn"
+                                          style={{ marginLeft: '4px' }}
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            // Docker Compose apps require localhost for eve-os guacd
+                                            startQuickVnc('localhost', app.vncPort, app.name);
+                                          }}
+                                          disabled={!!tunnelLoading || !isSessionConnected}
+                                          title={`Click to start VNC on port ${app.vncPort}`}
+                                        >
+                                          Port {app.vncPort}
+                                        </button>
                                       </span>
                                     )}
                                   </div>
@@ -2645,8 +2890,21 @@ Do you want to try connecting anyway?`)) {
                                         <td style={{ padding: '8px 12px', textAlign: 'left' }}>
                                           {c.portMaps && c.portMaps.filter(pm => pm.publicPort > 0).length > 0 ? (
                                             c.portMaps.filter(pm => pm.publicPort > 0).map((pm, pIdx) => (
-                                              <div key={pIdx} style={{ marginBottom: '2px' }}>
-                                                <span className="data-value-code">{pm.runtimeIp || '0.0.0.0'}:{pm.publicPort}</span>
+                                              <div key={pIdx} style={{ marginBottom: '2px', display: 'flex', alignItems: 'center' }}>
+                                                <button
+                                                  className="quick-tunnel-btn"
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    const targetIp = pm.runtimeIp || app.ips?.[0] || selectedNode?.managementIps?.[0];
+                                                    if (targetIp) {
+                                                      startQuickTunnel(targetIp, pm.publicPort);
+                                                    }
+                                                  }}
+                                                  disabled={!!tunnelLoading || !isSessionConnected}
+                                                  title={`Click to start TCP tunnel to port ${pm.publicPort}`}
+                                                >
+                                                  {pm.runtimeIp || '0.0.0.0'}:{pm.publicPort}
+                                                </button>
                                                 <span className="entity-meta" style={{ margin: '0 6px' }}>→</span>
                                                 <span className="entity-meta">localhost:{pm.privatePort}</span>
                                               </div>
@@ -2791,7 +3049,9 @@ Do you want to try connecting anyway?`)) {
                                     }
                                     if (tunnelLoading) return;
                                     const ip = app.ips && app.ips.length > 0 ? app.ips[0] : '10.2.255.254';
-                                    setSshTunnelConfig({ ip });
+                                    const savedUser = getSavedSshUsername(app.name);
+                                    setSshUser(savedUser);
+                                    setSshTunnelConfig({ ip, appName: app.name });
                                   }}
                                 >
                                   {tunnelLoading === 'ssh' ? <Activity size={20} className="option-icon animate-spin" /> : <Terminal size={20} className="option-icon" />}
