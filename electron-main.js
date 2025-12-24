@@ -767,6 +767,12 @@ ipcMain.handle('open-terminal-window', async (event, options) => {
     termWindow.on('closed', () => {
         // Window closed, cleanup tunnel
         console.log(`Terminal window closed for ${nodeName}`);
+
+        // Focus main window to prevent blank screen
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.focus();
+        }
+
         if (tunnelId) {
             // Close the tunnel via API
             const port = BACKEND_PORT || 8080;
