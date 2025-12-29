@@ -108,9 +108,9 @@ function createTray() {
     // Initial menu (will be updated with dynamic content)
     updateTrayMenu();
 
-    // Refresh menu periodically (every 5 seconds)
+    // Refresh menu periodically (every 30 seconds)
     if (trayRefreshInterval) clearInterval(trayRefreshInterval);
-    trayRefreshInterval = setInterval(updateTrayMenu, 5000);
+    trayRefreshInterval = setInterval(updateTrayMenu, 30000);
 
     tray.on('double-click', () => {
         if (mainWindow) {
@@ -125,7 +125,6 @@ function createTray() {
 }
 
 async function updateTrayMenu() {
-    console.log('[Tray] Updating menu...');
     try {
         const menuItems = [];
 
@@ -261,7 +260,7 @@ async function updateTrayMenu() {
     } catch (err) {
         console.error('CRITICAL: Failed to update tray menu:', err);
         if (tray && !tray.isDestroyed()) {
-             const fallbackMenu = Menu.buildFromTemplate([
+            const fallbackMenu = Menu.buildFromTemplate([
                 { label: 'EdgeView Launcher', enabled: false },
                 { label: 'Error loading menu', enabled: false },
                 { type: 'separator' },
@@ -610,13 +609,13 @@ app.on('window-all-closed', () => {
 ipcMain.handle('check-for-updates', async () => {
     // Check if app is signed (required for macOS auto-update)
     if (process.platform === 'darwin' && !isAppSigned) {
-        return { 
-            success: false, 
+        return {
+            success: false,
             error: 'Auto-update requires code-signed builds. Please download updates manually from GitHub.',
-            requiresCodeSigning: true 
+            requiresCodeSigning: true
         };
     }
-    
+
     try {
         const result = await autoUpdater.checkForUpdates();
         return { success: true, updateInfo: result.updateInfo };
@@ -768,6 +767,12 @@ ipcMain.handle('open-terminal-window', async (event, options) => {
     termWindow.on('closed', () => {
         // Window closed, cleanup tunnel
         console.log(`Terminal window closed for ${nodeName}`);
+
+        // Focus main window to prevent blank screen
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.focus();
+        }
+
         if (tunnelId) {
             // Close the tunnel via API
             const port = BACKEND_PORT || 8080;
@@ -901,7 +906,7 @@ ipcMain.handle('secure-storage-save-settings', async (event, config) => {
     }
     try {
         secureStorage.saveConfigWithTokens(config);
-        
+
         // Push updated settings to Go backend
         if (BACKEND_PORT) {
             try {
@@ -916,7 +921,7 @@ ipcMain.handle('secure-storage-save-settings', async (event, config) => {
                 // The user might need to restart if this fails.
             }
         }
-        
+
         return { success: true };
     } catch (error) {
         console.error('[IPC] Error saving config with tokens:', error);
@@ -1024,7 +1029,7 @@ ipcMain.handle('save-collected-file', async (event, { jobId, filename }) => {
 
         const url = `http://localhost:${BACKEND_PORT}/api/collect-info/download?jobId=${jobId}`;
         const response = await fetch(url);
-        
+
         if (!response.ok) {
             throw new Error(`Server returned ${response.status} ${response.statusText}`);
         }

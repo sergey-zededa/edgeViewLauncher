@@ -1,55 +1,70 @@
 :root {
-  /* Core Colors */
-  --bg-color: rgba(27, 38, 54, 0.95);
-  --text-color: #ffffff;
-  --text-primary: #ffffff;
-  --text-secondary: rgba(255, 255, 255, 0.5);
-  --text-muted: rgba(255, 255, 255, 0.35);
-  --text-placeholder: rgba(255, 255, 255, 0.3);
+  /* =========================================
+     Design System Tokens
+     ========================================= */
 
   /* Backgrounds */
-  --secondary-bg: rgba(255, 255, 255, 0.05);
-  --hover-bg: rgba(255, 255, 255, 0.1);
-  --tooltip-bg: #1a1b1e;
+  --bg-app: #0d1117;
+  /* Main application background */
+  --bg-panel: #161b22;
+  /* Sidebars, headers, cards */
+  --bg-surface: #21262d;
+  /* Inputs, terminals, code blocks */
+  --bg-hover: #30363d;
+  /* Hover states */
+  --overlay-dim: rgba(0, 0, 0, 0.6);
+  /* Modal backdrops */
+
+  /* Typography Colors */
+  --text-primary: #e6edf3;
+  /* High contrast text */
+  --text-secondary: #8b949e;
+  /* Metadata, labels */
+  --text-muted: #484f58;
+  /* Disabled, placeholders */
+  --text-inverse: #ffffff;
+  /* Text on colored backgrounds */
+  --text-accent: #58a6ff;
+  /* Links, IPs, Ports */
+
+  /* Semantic Colors */
+  --color-accent: #58a6ff;
+  /* Primary actions */
+  --color-success: #238636;
+  /* Online, valid, success */
+  --color-warning: #d29922;
+  /* Suspect, warning */
+  --color-danger: #da3633;
+  /* Offline, error, delete */
+  --color-info: #388bfd;
+  /* Info messages */
 
   /* Borders */
-  --border-color: rgba(255, 255, 255, 0.1);
-  --tooltip-border: #333;
+  --border-subtle: #30363d;
+  --border-focus: #58a6ff;
 
-  /* Accents */
-  --accent-color: #00A3E0;
-  --highlight-color: rgba(0, 163, 224, 0.2);
+  /* Font Families */
+  --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
   /* Scrollbars */
   --scrollbar-thumb: rgba(255, 255, 255, 0.2);
   --scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
 
-  --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-}
+  /* =========================================
+     Legacy Mappings (Shim for App.css)
+     ========================================= */
+  --bg-primary: var(--bg-app);
+  --bg-secondary: var(--bg-panel);
+  --bg-tertiary: var(--bg-surface);
+  --border-color: var(--border-subtle);
+  --accent-color: var(--color-accent);
+  --highlight-color: rgba(88, 166, 255, 0.15);
+  /* Derived from accent */
 
-@media (prefers-color-scheme: light) {
-  :root {
-    /* Core Colors */
-    --bg-color: rgba(240, 242, 245, 0.95);
-    --text-color: #1a1b1e;
-    --text-primary: #1a1b1e;
-    --text-secondary: rgba(0, 0, 0, 0.6);
-    --text-muted: rgba(0, 0, 0, 0.45);
-    --text-placeholder: rgba(0, 0, 0, 0.3);
-
-    /* Backgrounds */
-    --secondary-bg: rgba(0, 0, 0, 0.05);
-    --hover-bg: rgba(0, 0, 0, 0.08);
-    --tooltip-bg: #ffffff;
-
-    /* Borders */
-    --border-color: rgba(0, 0, 0, 0.1);
-    --tooltip-border: #e0e0e0;
-
-    /* Scrollbars */
-    --scrollbar-thumb: rgba(0, 0, 0, 0.2);
-    --scrollbar-thumb-hover: rgba(0, 0, 0, 0.3);
-  }
+  /* Legacy text colors that matched old names but need new values */
+  --text-color: var(--text-primary);
+  --text-placeholder: var(--text-muted);
 }
 
 body {
@@ -58,9 +73,10 @@ body {
   font-family: var(--font-family);
   background-color: transparent;
   /* Allow window transparency */
-  color: var(--text-color);
+  color: var(--text-primary);
   overflow: hidden;
   user-select: none;
+  -webkit-font-smoothing: antialiased;
 }
 
 #root {
@@ -68,18 +84,19 @@ body {
   width: 100vw;
   display: flex;
   flex-direction: column;
-  background: var(--bg-color);
+  background: var(--bg-app);
   border-radius: 12px;
   /* Rounded corners for the window */
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border-subtle);
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(20px);
-  /* Glassmorphism */
+  overflow: hidden;
+  /* Ensure rounded corners clip content */
 }
 
-/* Scrollbar */
+/* Scrollbar Global Styles */
 ::-webkit-scrollbar {
   width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
@@ -91,6 +108,75 @@ body {
   border-radius: 4px;
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: var(--scrollbar-thumb-hover);
+
+/* =========================================
+   Global Utility Classes
+   ========================================= */
+
+/* Data/Entity Lists (e.g., Services, Containers) */
+.entity-name {
+  color: var(--text-accent);
+  font-weight: 500;
+}
+
+.entity-meta {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.data-value-code {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+/* Form Groups (Common in Modals) */
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.form-group label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.form-group input {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 8px 10px;
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.form-group input:focus {
+  border-color: var(--border-focus);
+}
+
+/* Quick Tunnel Buttons (Clickable Port Shortcuts) */
+.quick-tunnel-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-decoration: underline dotted transparent;
+  transition: all 0.2s;
+}
+
+.quick-tunnel-btn:hover:not(:disabled) {
+  text-decoration-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.quick-tunnel-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }

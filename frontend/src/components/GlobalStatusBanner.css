@@ -18,6 +18,7 @@
         transform: translateY(-100%);
         opacity: 0;
     }
+
     to {
         transform: translateY(0);
         opacity: 1;
@@ -26,23 +27,23 @@
 
 /* Status Types */
 .global-status-banner.info {
-    background: linear-gradient(135deg, #4a90e2 0%, #357abd 100%);
+    background: linear-gradient(135deg, var(--color-info) 0%, #0366d6 100%);
 }
 
 .global-status-banner.success {
-    background: linear-gradient(135deg, #2ea043 0%, #238636 100%);
+    background: linear-gradient(135deg, var(--color-success) 0%, #1a7f37 100%);
 }
 
 .global-status-banner.warning {
-    background: linear-gradient(135deg, #d29922 0%, #b08800 100%);
+    background: linear-gradient(135deg, var(--color-warning) 0%, #9e6a03 100%);
 }
 
 .global-status-banner.error {
-    background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+    background: linear-gradient(135deg, var(--color-danger) 0%, #a40e26 100%);
 }
 
 .global-status-banner.loading {
-    background: linear-gradient(135deg, #6e7681 0%, #484f58 100%);
+    background: linear-gradient(135deg, var(--text-secondary) 0%, var(--bg-hover) 100%);
 }
 
 .status-content {
@@ -81,5 +82,7 @@
 }
 
 @keyframes spin {
-    to { transform: rotate(360deg); }
+    to {
+        transform: rotate(360deg);
+    }
 }
