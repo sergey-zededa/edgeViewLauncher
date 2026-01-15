@@ -681,10 +681,15 @@ func (m *Manager) ExecuteCommand(nodeID string, command string) (string, error) 
 
 		// 4. Connect to WebSocket
 		tlsConfig := &tls.Config{InsecureSkipVerify: false}
-		netDialer := &net.Dialer{}
+		netDialer := &net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}
 		dialer := &websocket.Dialer{
-			TLSClientConfig:  tlsConfig,
-			NetDialContext:   netDialer.DialContext,
+			TLSClientConfig: tlsConfig,
+			NetDialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return netDialer.DialContext(ctx, "tcp4", addr)
+			},
 			HandshakeTimeout: 15 * time.Second, // Faster timeout for command connections
 		}
 
@@ -1146,10 +1151,15 @@ func (m *Manager) connectToEdgeView(config *zededa.SessionConfig) (*websocket.Co
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: false,
 	}
-	netDialer := &net.Dialer{}
+	netDialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
 	dialer := &websocket.Dialer{
-		TLSClientConfig:  tlsConfig,
-		NetDialContext:   netDialer.DialContext,
+		TLSClientConfig: tlsConfig,
+		NetDialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return netDialer.DialContext(ctx, "tcp4", addr)
+		},
 		HandshakeTimeout: 45 * time.Second,
 	}
 

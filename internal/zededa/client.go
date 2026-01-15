@@ -2,11 +2,13 @@ package zededa
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"regexp"
 	"strings"
@@ -72,6 +74,15 @@ type Client struct {
 func NewClient(baseURL, token string) *Client {
 	// Clone default transport to keep proxy settings etc.
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	
+	// Force IPv4 for dual-stack environments where IPv6 might be flaky
+	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext(ctx, "tcp4", addr)
+	}
+
 	// Disable HTTP/2
 	transport.ForceAttemptHTTP2 = false
 	transport.TLSNextProto = make(map[string]func(string, *tls.Conn) http.RoundTripper)
