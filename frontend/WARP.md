@@ -48,6 +48,10 @@ EdgeView Launcher is an Electron desktop application with a Go backend that prov
 
 ## Development Commands
 
+**IMPORTANT**: Check your current directory (`pwd`) before running commands.
+- If you are in `edgeViewLauncher/frontend/`, run `npm run build`.
+- **DO NOT** run `cd frontend && ...` if you are already in the frontend directory.
+
 ```bash
 # From frontend/ directory:
 npm run dev          # Start Vite dev server (localhost:5173)

@@ -41,11 +41,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     openExternalTerminal: (command) => ipcRenderer.invoke('open-external-terminal', command),
     getSystemTimeFormat: () => ipcRenderer.invoke('get-system-time-format'),
     verifyToken: (token, baseUrl) => ipcRenderer.invoke('api-call', '/api/verify-token', 'POST', { token, baseUrl }),
-    
+
     // Collect Info
     startCollectInfo: (nodeId) => ipcRenderer.invoke('api-call', '/api/collect-info/start', 'POST', { nodeId }),
     getCollectInfoStatus: (jobId) => ipcRenderer.invoke('api-call', `/api/collect-info/status?jobId=${jobId}`, 'GET'),
     saveCollectInfo: (jobId, filename) => ipcRenderer.invoke('save-collected-file', { jobId, filename }),
+
+    // Container Shell Access
+    startContainerShell: (nodeId, appName, containerName, shell, appType, appIP, username, password, appId) => ipcRenderer.invoke('start-container-shell', { nodeId, appName, containerName, shell, appType, appIP, username, password, appId }),
 
     // Secure Storage methods
     secureStorageStatus: () => ipcRenderer.invoke('secure-storage-status'),

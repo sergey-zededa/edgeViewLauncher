@@ -64,6 +64,6 @@ Spotlight-style palette (`Cmd+Shift+P`) for quick actions: "SSH to X", "Close tu
 | Open in Browser | ⬜ Not started |
 | Tunnel Duration | ⬜ Not started |
 | Theme Toggle | ⬜ Not started |
-| Custom SSH Prompt | ⬜ Not started |
+| Custom SSH Prompt | ⚠️ Partial (User/Persistence implemented) |
 | Bulk Tunnel Mgmt | ⬜ Not started |
 | Command Palette | ⬜ Not started |

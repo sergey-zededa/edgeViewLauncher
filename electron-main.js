@@ -789,6 +789,104 @@ ipcMain.handle('open-terminal-window', async (event, options) => {
     return true;
 });
 
+// Start Container Shell
+// This IPC handler sets up an SSH tunnel and opens a terminal with the container exec command
+ipcMain.handle('start-container-shell', async (event, options) => {
+    const { nodeId, appName, containerName, shell, appType, appIP, username, password, appId } = options;
+
+    if (!BACKEND_PORT) {
+        throw new Error('Backend not ready');
+    }
+
+    try {
+        // Call the backend API to start the SSH tunnel and get the exec command
+        const response = await callJSON(`http://localhost:${BACKEND_PORT}/api/container-shell`, 'POST', {
+            nodeId,
+            appName,
+            containerName,
+            shell: shell || '/bin/sh',
+            appType,
+            appIP,
+            username: username || 'root',
+            password: password || '',
+            appId: appId || ''
+        });
+
+        if (!response.success) {
+            throw new Error(response.error || 'Failed to start container shell');
+        }
+
+        const { port, tunnelId, execCommand } = response.data;
+
+        // Open terminal window with the exec command pre-configured
+        const termWindow = new BrowserWindow({
+            width: 1024,
+            height: 768,
+            webPreferences: {
+                preload: path.join(__dirname, 'electron-preload.js'),
+                contextIsolation: true,
+                nodeIntegration: false
+            },
+            title: `Shell - ${containerName} (${appName})`,
+            backgroundColor: '#1e1e1e',
+            frame: false,
+            ...(process.platform === 'darwin' ? {
+                titleBarStyle: 'hiddenInset'
+            } : {})
+        });
+
+        // Build URL with connection parameters
+        const params = new URLSearchParams({
+            mode: 'terminal',
+            port: port.toString(),
+            nodeName: appName || 'Container',
+            targetInfo: `${containerName}`,
+            tunnelId: tunnelId || '',
+            username: username || 'root',
+            password: password || '',
+            initialCommand: execCommand
+        });
+
+        if (process.env.NODE_ENV === 'development') {
+            termWindow.loadURL(`http://localhost:5173?${params}`);
+        } else {
+            const indexPath = path.join(__dirname, 'frontend', 'dist', 'index.html');
+            termWindow.loadFile(indexPath, { search: params.toString() }).catch(err => {
+                console.error('Failed to load container shell window:', err);
+            });
+        }
+
+        termWindow.once('ready-to-show', () => {
+            termWindow.show();
+        });
+
+        termWindow.on('closed', () => {
+            console.log(`Container shell window closed for ${containerName}`);
+
+            // Focus main window
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.focus();
+            }
+
+            // Close the tunnel
+            if (tunnelId) {
+                fetch(`http://localhost:${BACKEND_PORT}/api/tunnel/${tunnelId}`, {
+                    method: 'DELETE'
+                }).then(() => {
+                    console.log(`Tunnel ${tunnelId} closed`);
+                }).catch(err => {
+                    console.error(`Failed to close tunnel ${tunnelId}:`, err);
+                });
+            }
+        });
+
+        return { success: true, port, tunnelId, execCommand };
+    } catch (error) {
+        console.error('Failed to start container shell:', error);
+        return { success: false, error: error.message };
+    }
+});
+
 // Open External Terminal (Native)
 ipcMain.handle('open-external-terminal', async (event, command) => {
     const { exec } = require('child_process');

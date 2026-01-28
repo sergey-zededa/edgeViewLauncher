@@ -71,6 +71,17 @@ type APIResponse struct {
 	Error   string      `json:"error,omitempty"`
 }
 
+// ContainerShellRequest is the request body for /api/container-shell
+type ContainerShellRequest struct {
+	NodeID        string `json:"nodeId"`
+	AppName       string `json:"appName"`
+	ContainerName string `json:"containerName"`
+	Shell         string `json:"shell,omitempty"` // Optional: default /bin/sh
+	AppType       string `json:"appType,omitempty"`
+	AppIP         string `json:"appIP,omitempty"`
+	AppID         string `json:"appId,omitempty"` // Added for full container name resolution
+}
+
 func (s *HTTPServer) handleSearchNodes(w http.ResponseWriter, r *http.Request) {
 	var req SearchNodesRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -339,6 +350,58 @@ func (s *HTTPServer) handleGetAppInfo(w http.ResponseWriter, r *http.Request) {
 	s.sendSuccess(w, map[string]string{"output": appInfo})
 }
 
+// handleContainerShell sets up an SSH tunnel and returns the exec command for container shell access
+func (s *HTTPServer) handleContainerShell(w http.ResponseWriter, r *http.Request) {
+	var req ContainerShellRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, err)
+		return
+	}
+
+	if req.NodeID == "" || req.ContainerName == "" {
+		s.sendError(w, fmt.Errorf("nodeId and containerName are required"))
+		return
+	}
+
+	fmt.Printf("DEBUG-SHELL: Received ContainerShellRequest: NodeID=%s, AppName=%s, Container=%s, AppType=%s, AppIP=%s\n",
+		req.NodeID, req.AppName, req.ContainerName, req.AppType, req.AppIP)
+
+	// Determine target IP and port based on AppType
+	targetIP := "127.0.0.1"
+	targetPort := 22
+	isDockerCompose := req.AppType == "APP_TYPE_DOCKER_COMPOSE"
+
+	if isDockerCompose {
+		if req.AppIP != "" {
+			targetIP = req.AppIP
+		}
+		// Docker Compose apps usually run in a VM where we can SSH into port 22
+		// of the VM itself (via AppIP), not localhost of EVE-OS.
+	}
+
+	// Start SSH tunnel
+	// We reuse the existing StartTunnel logic
+	port, tunnelID, err := s.app.StartTunnel(req.NodeID, targetIP, targetPort, "ssh")
+	if err != nil {
+		s.sendError(w, err)
+		return
+	}
+
+	// Generate the container exec command
+	var execCommand string
+	if isDockerCompose {
+		execCommand = session.GetDockerExecCommand(req.ContainerName, req.Shell, req.AppID)
+	} else {
+		execCommand = session.GetContainerExecCommand(req.ContainerName, req.Shell)
+	}
+
+	s.sendSuccess(w, map[string]interface{}{
+		"port":        port,
+		"tunnelId":    tunnelID,
+		"execCommand": execCommand,
+	})
+}
+
 // Helper methods
 func (s *HTTPServer) sendSuccess(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
@@ -446,6 +509,7 @@ func (s *HTTPServer) Start() {
 	router.HandleFunc("/api/collect-info/start", s.handleStartCollectInfo).Methods("POST")
 	router.HandleFunc("/api/collect-info/status", s.handleGetCollectInfoStatus).Methods("GET")
 	router.HandleFunc("/api/collect-info/download", s.handleDownloadCollectInfo).Methods("GET")
+	router.HandleFunc("/api/container-shell", s.handleContainerShell).Methods("POST")
 
 	// Health check
 	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -535,17 +599,17 @@ func (s *HTTPServer) handleCloseTunnel(w http.ResponseWriter, r *http.Request) {
 // NOTE: Field names are capitalized to match the existing
 // frontend expectations (t.ID, t.NodeID, t.TargetIP, etc.).
 type TunnelInfo struct {
-	ID        string    `json:"ID"`
-	NodeID    string    `json:"NodeID"`
-	NodeName  string    `json:"NodeName,omitempty"`
-	ProjectID string    `json:"ProjectID,omitempty"`
-	Type      string    `json:"Type"`
-	TargetIP  string    `json:"TargetIP"`
-	LocalPort int       `json:"LocalPort"`
-	CreatedAt time.Time `json:"CreatedAt"`
-	Status      string    `json:"Status,omitempty"`
-	Error       string    `json:"Error,omitempty"`
-	IsEncrypted bool      `json:"IsEncrypted"`
+	ID            string    `json:"ID"`
+	NodeID        string    `json:"NodeID"`
+	NodeName      string    `json:"NodeName,omitempty"`
+	ProjectID     string    `json:"ProjectID,omitempty"`
+	Type          string    `json:"Type"`
+	TargetIP      string    `json:"TargetIP"`
+	LocalPort     int       `json:"LocalPort"`
+	CreatedAt     time.Time `json:"CreatedAt"`
+	Status        string    `json:"Status,omitempty"`
+	Error         string    `json:"Error,omitempty"`
+	IsEncrypted   bool      `json:"IsEncrypted"`
 	BytesSent     int64     `json:"BytesSent"`
 	BytesReceived int64     `json:"BytesReceived"`
 	LastActivity  time.Time `json:"LastActivity"`
@@ -564,17 +628,17 @@ func (s *HTTPServer) handleListTunnels(w http.ResponseWriter, r *http.Request) {
 		name, projectID := s.app.GetNodeMeta(t.NodeID)
 		sent, received, lastActivity := t.GetStats()
 		infos = append(infos, TunnelInfo{
-			ID:          t.ID,
-			NodeID:      t.NodeID,
-			NodeName:    name,
-			ProjectID:   projectID,
-			Type:        t.Type,
-			TargetIP:    t.TargetIP,
-			LocalPort:   t.LocalPort,
-			CreatedAt:   t.CreatedAt,
-			Status:      t.Status,
-			Error:       t.Error,
-			IsEncrypted: t.IsEncrypted(), // Helper method we'll add to Tunnel
+			ID:            t.ID,
+			NodeID:        t.NodeID,
+			NodeName:      name,
+			ProjectID:     projectID,
+			Type:          t.Type,
+			TargetIP:      t.TargetIP,
+			LocalPort:     t.LocalPort,
+			CreatedAt:     t.CreatedAt,
+			Status:        t.Status,
+			Error:         t.Error,
+			IsEncrypted:   t.IsEncrypted(), // Helper method we'll add to Tunnel
 			BytesSent:     sent,
 			BytesReceived: received,
 			LastActivity:  lastActivity,
@@ -632,17 +696,20 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 	// Get password from query param
 	password := r.URL.Query().Get("password")
 
+	// Get initial command to execute after shell start
+	initialCommand := r.URL.Query().Get("command")
+
 	// Channels for coordinating IO
 	type resizeMsg struct {
 		Cols int
 		Rows int
 	}
-	
+
 	// Buffered channels to prevent blocking the reader
 	inputChan := make(chan []byte, 100)
 	resizeChan := make(chan resizeMsg, 10)
-	authResponseChan := make(chan string, 1)
-	
+	authResponseChan := make(chan string, 1) // Buffer 1 is fine if we block on send
+
 	// Atomic flag to track if we are in auth phase or shell phase
 	// 0 = Auth Phase, 1 = Shell Phase
 	// We use a channel for synchronization instead of atomics for simpler logic
@@ -652,7 +719,7 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 	// This ensures we can receive password input while ssh.Dial is blocking
 	go func() {
 		defer close(inputChan)
-		
+
 		type WSMessage struct {
 			Type string `json:"type"` // "input" or "resize"
 			Data string `json:"data,omitempty"`
@@ -675,12 +742,13 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 					inputChan <- msg
 				default:
 					// Still in auth phase?
-					// If we are waiting for auth, this might be the password
-					// Try to send to auth channel non-blocking
+					// Block until auth consumer takes it or shell becomes active
+					// Note: This blocks other messages (resize) but that is acceptable during auth.
 					select {
 					case authResponseChan <- string(msg):
-					default:
-						// No one listening for auth, drop or buffer?
+					case <-isShellActive:
+						// If shell became active while we were waiting, send to inputChan
+						inputChan <- msg
 					}
 				}
 				continue
@@ -697,16 +765,11 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 					inputChan <- data
 				default:
 					// Auth input
-					// Check if we can send to auth channel
+					// Block until auth consumer takes it or shell becomes active
 					select {
 					case authResponseChan <- wsMsg.Data:
-					default:
-						// If auth is not waiting, buffer it for shell later? 
-						// Or just drop if it's spurious input.
-						// For robustness, let's try to send to inputChan anyway, 
-						// the shell reader will pick it up after auth.
-						// BUT we must be careful not to confuse the auth handler.
-						// Current strategy: Only send to authChan if auth is pending.
+					case <-isShellActive:
+						inputChan <- data
 					}
 				}
 			}
@@ -731,6 +794,9 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 		authMethods = []ssh.AuthMethod{
 			ssh.PublicKeys(signer),
 			ssh.KeyboardInteractive(func(user, instruction string, questions []string, echos []bool) (answers []string, err error) {
+				// Log the request for debugging
+				log.Printf("SSH Auth: KeyboardInteractive called. Instruction: %q, Questions: %v", instruction, questions)
+
 				// If no questions, just return
 				if len(questions) == 0 {
 					return nil, nil
@@ -744,11 +810,8 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 					if instruction != "" {
 						prompt = fmt.Sprintf("\r\n%s\r\n%s", instruction, question)
 					}
-					
+
 					// Send prompt to frontend
-					// We use a simple text message that xterm.js will render
-					// Ideally frontend should handle password hiding, but xterm.js doesn't natively support "password mode" easily via raw text
-					// For now, it will echo. We can send specific escape codes to hide cursor/text if needed, but simple is better first.
 					wsConn.WriteMessage(websocket.TextMessage, []byte(prompt))
 
 					// Wait for response - buffer input until newline
@@ -775,10 +838,12 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 								}
 							}
 						case <-time.After(60 * time.Second):
+							log.Printf("SSH Auth: Timeout waiting for user input")
 							return nil, fmt.Errorf("authentication timed out")
 						}
 					}
 					answers[i] = string(answerBuf)
+					log.Printf("SSH Auth: Received answer length %d", len(answers[i]))
 				}
 				return answers, nil
 			}),
@@ -819,10 +884,10 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 		restBuf := make([]byte, 1024)
 		rawConn.SetReadDeadline(time.Now().Add(2 * time.Second))
 		n2, _ := rawConn.Read(restBuf) // Ignore error, just get what we can
-		
+
 		fullMsg := string(peekBuf) + string(restBuf[:n2])
 		cleanMsg := strings.TrimSpace(fullMsg)
-		
+
 		log.Printf("SSH: Protocol mismatch. Received: %q", cleanMsg)
 		wsConn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\n\x1b[1;31mConnection rejected by device:\x1b[0m %s\r\n", cleanMsg)))
 		return
@@ -853,10 +918,10 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 	}
 	client := ssh.NewClient(c, chans, reqs)
 	defer client.Close()
-	
+
 	// Signal that shell phase is active
 	close(isShellActive)
-	
+
 	log.Printf("SSH: Connected %s@localhost:%d", user, port)
 
 	session, err := client.NewSession()
@@ -897,6 +962,13 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 	if err := session.Shell(); err != nil {
 		wsConn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\nFailed to start shell: %v\r\n", err)))
 		return
+	}
+
+	// Execute initial command if provided
+	if initialCommand != "" {
+		log.Printf("SSH: Executing initial command: %s", initialCommand)
+		// We send it to stdin followed by newline
+		stdin.Write([]byte(initialCommand + "\n"))
 	}
 
 	// Handle Resizes

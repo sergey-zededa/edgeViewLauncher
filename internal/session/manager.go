@@ -636,6 +636,46 @@ func (m *Manager) LaunchTerminal(port int, keyPath string) error {
 	return nil
 }
 
+// GetContainerExecCommand generates the command to exec into a container shell.
+// EVE-OS uses containerd, so we use `ctr t exec` to attach to running containers.
+// The containerID should be the full container ID or name as known to containerd.
+// Returns a command that can be run inside an SSH session to the EVE-OS host.
+func GetContainerExecCommand(containerID string, shell string) string {
+	if shell == "" {
+		// Default to /bin/sh as it's more universally available in containers
+		shell = "/bin/sh"
+	}
+
+	// Generate a unique exec-id based on timestamp to avoid conflicts
+	execID := fmt.Sprintf("shell-%d", time.Now().UnixNano())
+
+	// ctr command to exec into a container:
+	// ctr -n <namespace> t exec -t --exec-id <id> <containerID> <shell>
+	// For Docker Compose apps on EVE, containers typically run in the "eve" namespace
+	// We try /bin/bash first, fall back to /bin/sh
+	return fmt.Sprintf("ctr -n eve t exec -t --exec-id %s %s %s", execID, containerID, shell)
+}
+
+// GetDockerExecCommand generates the command to exec into a Docker container.
+// This is used for APP_TYPE_DOCKER_COMPOSE applications where we tunnel to the
+// app runtime and use the native docker CLI.
+func GetDockerExecCommand(containerName string, shell string, appID string) string {
+	if shell == "" {
+		shell = "/bin/sh"
+	}
+
+	// For ZEDEDA Docker Compose apps, containers are often prefixed with the App Instance ID.
+	// If appID is provided and the container name doesn't already start with it, prefix it.
+	finalContainerName := containerName
+	if appID != "" && !strings.HasPrefix(containerName, appID) {
+		// Try hyphenated prefix first (standard ZEDEDA pattern)
+		finalContainerName = fmt.Sprintf("%s-%s", appID, containerName)
+	}
+
+	// Standard docker exec command
+	return fmt.Sprintf("docker exec -it %s %s", finalContainerName, shell)
+}
+
 // ExecuteCommand executes an EdgeView command and returns the output
 func (m *Manager) ExecuteCommand(nodeID string, command string) (string, error) {
 	// Get cached session

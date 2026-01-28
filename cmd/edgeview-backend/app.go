@@ -33,6 +33,7 @@ type zededaAPI interface {
 	GetDeviceAppInstances(deviceID string) ([]zededa.AppInstance, error)
 	GetAppInstanceDetails(appInstanceID string) (*zededa.AppInstanceDetails, error)
 	GetAppInstanceConfig(appInstanceID string) (*zededa.AppInstanceConfig, error)
+	GetNetworkInstanceDetails(niID string) (*zededa.NetworkInstanceStatus, error)
 	GetDevice(nodeID string) (map[string]interface{}, error)
 	VerifyToken(token string) (*zededa.TokenInfo, error)
 }
@@ -953,6 +954,7 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 		Containers    []zededa.ContainerInfo `json:"containers,omitempty"`
 		AppType       string                 `json:"appType,omitempty"`
 		DockerCompose string                 `json:"dockerCompose,omitempty"`
+		InternalIPs   []string               `json:"internalIps,omitempty"`
 	}
 
 	type ServicesResponse struct {
@@ -1057,6 +1059,26 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 			if hasConfig {
 				svc.DockerCompose = config.DockerCompose
 			}
+
+			// Identify internal IPs by checking Network Instance kind
+			var internalIPs []string
+			for _, ns := range status.NetStatusList {
+				if ns.NetworkID != "" {
+					ni, err := a.zededaClient.GetNetworkInstanceDetails(ns.NetworkID)
+					if err == nil && ni != nil {
+						// Debug log to identify the correct Kind
+						fmt.Printf("DEBUG-NET: App %s, NetID %s, Kind=%s, Type=%s, Name=%s\n", app.Name, ns.NetworkID, ni.Kind, ni.Type, ni.Name)
+
+						// Kind "NETWORK_INSTANCE_KIND_LOCAL" indicates an airgapped/local network
+						if ni.Kind == "NETWORK_INSTANCE_KIND_LOCAL" {
+							internalIPs = append(internalIPs, ns.IPs...)
+						}
+					} else if err != nil {
+						fmt.Printf("DEBUG-NET: Failed to get NI details for %s: %v\n", ns.NetworkID, err)
+					}
+				}
+			}
+			svc.InternalIPs = uniqueStrings(internalIPs)
 
 			// Extract VNC info (from Config)
 			if hasConfig && config.VMInfo.VNC {

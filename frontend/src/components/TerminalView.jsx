@@ -95,9 +95,10 @@ const TerminalView = ({ port }) => {
                 const params = new URLSearchParams(window.location.search);
                 const username = params.get('username') || '';
                 const password = params.get('password') || '';
+                const initialCommand = params.get('initialCommand') || '';
 
                 // Pass initial keys to backend to avoid race condition
-                const wsUrl = `ws://localhost:${backendPort}/api/ssh/term?port=${port}&user=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&cols=${initialCols}&rows=${initialRows}`;
+                const wsUrl = `ws://localhost:${backendPort}/api/ssh/term?port=${port}&user=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&cols=${initialCols}&rows=${initialRows}&command=${encodeURIComponent(initialCommand)}`;
                 const ws = new WebSocket(wsUrl);
                 ws.binaryType = 'arraybuffer'; // Ensure we receive raw bytes
                 wsRef.current = ws;
@@ -116,6 +117,12 @@ const TerminalView = ({ port }) => {
                     setIsConnected(true);
                     term.writeln(`\x1b[1;32mConnected to EdgeView SSH Proxy (User: ${username || 'root'})...\x1b[0m`);
                     term.focus();
+
+                    // Check for initial command (used for container shell access)
+                    const initialCommand = params.get('initialCommand');
+                    if (initialCommand) {
+                        term.writeln(`\x1b[1;36mAuto-Executing: ${initialCommand}\x1b[0m`);
+                    }
                 };
 
                 ws.onmessage = (event) => {
@@ -181,7 +188,7 @@ const TerminalView = ({ port }) => {
                 // Default to standard size if fit fails
                 const cols = dims ? dims.cols : 80;
                 const rows = dims ? dims.rows : 24;
-                
+
                 console.log(`Initializing PTY with dimensions: ${cols}x${rows}`);
                 connectWebSocket(cols, rows);
             }, 100);
