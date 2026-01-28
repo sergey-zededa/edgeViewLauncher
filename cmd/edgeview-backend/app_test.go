@@ -39,6 +39,10 @@ type fakeZededaClient struct {
 	appDetails    map[string]*zededa.AppInstanceStatus
 	appConfigs    map[string]*zededa.AppInstanceConfig
 	appDetailsErr error
+
+	// Network Instances
+	networkInstances   map[string]*zededa.NetworkInstanceStatus
+	networkInstanceErr error
 }
 
 func (f *fakeZededaClient) GetEnterprise() (*zededa.Enterprise, error) {
@@ -95,6 +99,16 @@ func (f *fakeZededaClient) GetAppInstanceConfig(id string) (*zededa.AppInstanceC
 		return nil, nil
 	}
 	return f.appConfigs[id], nil
+}
+
+func (f *fakeZededaClient) GetNetworkInstanceDetails(niID string) (*zededa.NetworkInstanceStatus, error) {
+	if f.networkInstanceErr != nil {
+		return nil, f.networkInstanceErr
+	}
+	if f.networkInstances == nil {
+		return nil, nil
+	}
+	return f.networkInstances[niID], nil
 }
 
 func (f *fakeZededaClient) GetDevice(nodeID string) (map[string]interface{}, error) {

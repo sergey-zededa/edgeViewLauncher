@@ -12,6 +12,7 @@ class SecureStorageManager {
         this.secureTokensPath = path.join(this.configDir, 'secure-tokens.enc');
         this.configPath = path.join(this.configDir, 'config.json');
         this.backupPath = path.join(this.configDir, 'config.json.backup');
+        this.cachedTokens = null; // In-memory cache for decrypted tokens
     }
 
     /**
@@ -40,6 +41,11 @@ class SecureStorageManager {
      * @returns {Object} Map of cluster names to tokens, or null if file doesn't exist
      */
     getAllTokens() {
+        // Return cached tokens if available to avoid repeated Keychain prompts
+        if (this.cachedTokens) {
+            return this.cachedTokens;
+        }
+
         if (!fs.existsSync(this.secureTokensPath)) {
             return null;
         }
@@ -48,7 +54,8 @@ class SecureStorageManager {
             const encryptedData = fs.readFileSync(this.secureTokensPath, 'utf8');
             const buffer = Buffer.from(encryptedData, 'base64');
             const decrypted = safeStorage.decryptString(buffer);
-            return JSON.parse(decrypted);
+            this.cachedTokens = JSON.parse(decrypted);
+            return this.cachedTokens;
         } catch (err) {
             console.error('[SecureStorage] Failed to decrypt tokens:', err);
             throw new Error('Failed to decrypt tokens. You may need to re-enter your credentials.');
@@ -68,6 +75,7 @@ class SecureStorageManager {
             const base64Data = encrypted.toString('base64');
             
             fs.writeFileSync(this.secureTokensPath, base64Data, { mode: 0o600 });
+            this.cachedTokens = tokensMap; // Update cache
             console.log('[SecureStorage] Tokens saved successfully');
         } catch (err) {
             console.error('[SecureStorage] Failed to encrypt tokens:', err);

@@ -2479,20 +2479,16 @@ Do you want to try connecting anyway?`)) {
                           <ArrowRight size={12} className="tunnel-arrow" />
                         </div>
                         <div className="tunnel-local">
-                          <code>localhost:{tunnel.localPort}</code>
+                          <Copyable text={tunnel.type === 'SSH' ? `ssh -p ${tunnel.localPort} ${tunnel.username || 'root'}@localhost` : `localhost:${tunnel.localPort}`}>
+                            <code>localhost:{tunnel.localPort}</code>
+                          </Copyable>
                         </div>
                         <button
-                          className="icon-btn copy-btn"
-                          title="Copy address"
-                          onClick={() => {
-                            if (tunnel.type === 'SSH') {
-                              navigator.clipboard.writeText(`ssh -p ${tunnel.localPort} ${tunnel.username || 'root'}@localhost`);
-                            } else {
-                              navigator.clipboard.writeText(`localhost:${tunnel.localPort}`);
-                            }
-                          }}
+                          className="icon-btn"
+                          title="Open in Browser"
+                          onClick={() => window.electronAPI.openExternal(`http://localhost:${tunnel.localPort}`)}
                         >
-                          <Copy size={12} />
+                          <ExternalLink size={12} />
                         </button>
                         <div className="tunnel-stats">
                           <div
@@ -2572,7 +2568,9 @@ Do you want to try connecting anyway?`)) {
                           <ArrowRight size={12} className="tunnel-arrow" />
                         </div>
                         <div className="tunnel-local">
-                          <code>localhost:{tunnel.localPort}</code>
+                          <Copyable text={tunnel.type === 'SSH' ? `ssh -p ${tunnel.localPort} ${tunnel.username || 'root'}@localhost` : `localhost:${tunnel.localPort}`}>
+                            <code>localhost:{tunnel.localPort}</code>
+                          </Copyable>
                         </div>
                         <div className="tunnel-meta">
                           <span className="tunnel-device">{tunnel.nodeName || tunnel.nodeId}</span>
@@ -2583,20 +2581,7 @@ Do you want to try connecting anyway?`)) {
                           )}
                         </div>
                         <button
-                          className="icon-btn copy-btn"
-                          title="Copy address"
-                          onClick={() => {
-                            if (tunnel.type === 'SSH') {
-                              navigator.clipboard.writeText(`ssh -p ${tunnel.localPort} ${tunnel.username || 'root'}@localhost`);
-                            } else {
-                              navigator.clipboard.writeText(`localhost:${tunnel.localPort}`);
-                            }
-                          }}
-                        >
-                          <Copy size={12} />
-                        </button>
-                        <button
-                          className="icon-btn copy-btn"
+                          className="icon-btn"
                           title="Open in Browser"
                           onClick={() => window.electronAPI.openExternal(`http://localhost:${tunnel.localPort}`)}
                         >
@@ -2975,44 +2960,25 @@ Do you want to try connecting anyway?`)) {
                                           const isPopoverOpen = sshPopover?.key === popoverKey;
                                           return (
                                             <span key={ipIdx} style={{ position: 'relative' }}>
-                                              {ipIdx > 0 && ', '}
                                               <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                                                <button
-                                                  className="quick-tunnel-btn"
-                                                  onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    setSshPopover({
-                                                      key: popoverKey,
-                                                      ip,
-                                                      appName: app.name,
-                                                      username: savedUser
-                                                    });
-                                                  }}
-                                                  disabled={!!tunnelLoading || !isSessionConnected}
-                                                  title={`SSH as ${savedUser}@${ip} — click to connect`}
-                                                >
-                                                  {ip}
-                                                </button>
-                                                <span 
-                                                  className="inline-copy-icon"
-                                                  onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    navigator.clipboard.writeText(ip);
-                                                    addLog(`Copied IP: ${ip}`, 'success');
-                                                  }}
-                                                  title="Copy IP"
-                                                  style={{ 
-                                                    cursor: 'pointer', 
-                                                    opacity: 0.5, 
-                                                    display: 'flex', 
-                                                    alignItems: 'center',
-                                                    padding: '2px'
-                                                  }}
-                                                  onMouseEnter={(e) => e.currentTarget.style.opacity = 1}
-                                                  onMouseLeave={(e) => e.currentTarget.style.opacity = 0.5}
-                                                >
-                                                  <Copy size={10} />
-                                                </span>
+                                                <Copyable text={ip}>
+                                                  <button
+                                                    className="quick-tunnel-btn"
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      setSshPopover({
+                                                        key: popoverKey,
+                                                        ip,
+                                                        appName: app.name,
+                                                        username: savedUser
+                                                      });
+                                                    }}
+                                                    disabled={!!tunnelLoading || !isSessionConnected}
+                                                    title={`SSH as ${savedUser}@${ip} — click to connect`}
+                                                  >
+                                                    {ip}
+                                                  </button>
+                                                </Copyable>
                                               </span>
                                                 {isPopoverOpen && (
                                                 <div
@@ -3170,21 +3136,25 @@ Do you want to try connecting anyway?`)) {
                                           {c.portMaps && c.portMaps.filter(pm => pm.publicPort > 0).length > 0 ? (
                                             c.portMaps.filter(pm => pm.publicPort > 0).map((pm, pIdx) => (
                                               <div key={pIdx} style={{ marginBottom: '2px', display: 'flex', alignItems: 'center' }}>
-                                                <button
-                                                  className="quick-tunnel-btn"
-                                                  onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    const targetIp = pm.runtimeIp || app.ips?.[0] || selectedNode?.managementIps?.[0];
-                                                    if (targetIp) {
-                                                      startQuickTunnel(targetIp, pm.publicPort);
-                                                    }
-                                                  }}
-                                                  disabled={!!tunnelLoading || !isSessionConnected}
-                                                  title={`Click to start TCP tunnel to port ${pm.publicPort}`}
-                                                >
-                                                  {pm.runtimeIp || '0.0.0.0'}:{pm.publicPort}
-                                                </button>
-                                                <span className="entity-meta" style={{ margin: '0 6px' }}>→</span>
+                                                <div style={{ width: '130px', display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
+                                                  <Copyable text={`${pm.runtimeIp || '0.0.0.0'}:${pm.publicPort}`}>
+                                                    <button
+                                                      className="quick-tunnel-btn"
+                                                      onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        const targetIp = pm.runtimeIp || app.ips?.[0] || selectedNode?.managementIps?.[0];
+                                                        if (targetIp) {
+                                                          startQuickTunnel(targetIp, pm.publicPort);
+                                                        }
+                                                      }}
+                                                      disabled={!!tunnelLoading || !isSessionConnected}
+                                                      title={`Click to start TCP tunnel to port ${pm.publicPort}`}
+                                                    >
+                                                      {pm.runtimeIp || '0.0.0.0'}:{pm.publicPort}
+                                                    </button>
+                                                  </Copyable>
+                                                </div>
+                                                <span className="entity-meta" style={{ margin: '0 6px', flexShrink: 0 }}>→</span>
                                                 <span className="entity-meta">localhost:{pm.privatePort}</span>
                                               </div>
                                             ))
@@ -3193,41 +3163,36 @@ Do you want to try connecting anyway?`)) {
                                           )}
                                         </td>
                                         <td style={{ padding: '8px 12px', textAlign: 'center', position: 'relative' }}>
-                                          <button
-                                            className="connect-btn secondary"
-                                            style={{ padding: '4px 10px', fontSize: '11px' }}
-                                            disabled={!c.containerState?.toLowerCase().includes('running') || !isSessionConnected || !!tunnelLoading}
-                                            title={!c.containerState?.toLowerCase().includes('running') ? 'Container not running' : 'Open shell in container'}
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              if (!window.electronAPI?.startContainerShell) {
-                                                addLog('Container shell not available', 'error');
-                                                return;
-                                              }
-
-                                              // Check if we need to prompt for user (Docker Compose)
-                                              if (app.appType === 'APP_TYPE_DOCKER_COMPOSE') {
-                                                // Toggle popover
-                                                if (shellPrompt?.containerName === c.containerName) {
-                                                  setShellPrompt(null);
-                                                } else {
-                                                  const savedUser = getSavedSshUsername(app.name);
-                                                  setShellPrompt({
-                                                    containerName: c.containerName,
-                                                    username: savedUser || 'root',
-                                                    password: ''
-                                                  });
+                                          <div style={{ display: 'flex', justifyContent: 'center', width: '100%' }}>
+                                            <button
+                                              className="connect-btn secondary"
+                                              style={{ padding: '4px 10px', fontSize: '11px' }}
+                                              disabled={!c.containerState?.toLowerCase().includes('running') || !isSessionConnected || !!tunnelLoading}
+                                              title={!c.containerState?.toLowerCase().includes('running') ? 'Container not running' : 'Open shell in container'}
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                
+                                                if (app.appType === 'APP_TYPE_DOCKER_COMPOSE') {
+                                                  if (shellPrompt?.containerName === c.containerName) {
+                                                    setShellPrompt(null);
+                                                  } else {
+                                                    const savedUser = getSavedSshUsername(app.name);
+                                                    setShellPrompt({
+                                                      containerName: c.containerName,
+                                                      username: savedUser || 'root',
+                                                      password: ''
+                                                    });
+                                                  }
+                                                  return;
                                                 }
-                                                return;
-                                              }
 
-                                              // Standard logic for EVE containers (no prompt needed)
-                                              handleContainerShell(app, c, 'root', '');
-                                            }}
-                                          >
-                                            {tunnelLoading === `shell-${c.containerName}` ? <Activity size={12} className="animate-spin" /> : <Terminal size={12} />}
-                                            <span style={{ marginLeft: '4px' }}>Shell</span>
-                                          </button>
+                                                handleContainerShell(app, c, 'root', '');
+                                              }}
+                                            >
+                                              {tunnelLoading === `shell-${c.containerName}` ? <Activity size={12} className="animate-spin" /> : <Terminal size={12} />}
+                                              <span style={{ marginLeft: '4px' }}>Shell</span>
+                                            </button>
+                                          </div>
 
                                           {/* Shell Username Prompt Popover */}
                                           {shellPrompt?.containerName === c.containerName && (

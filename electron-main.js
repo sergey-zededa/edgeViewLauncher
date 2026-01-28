@@ -12,6 +12,7 @@ let goBackend;
 let BACKEND_PORT = null; // Will be set dynamically when Go backend starts
 let trayRefreshInterval = null; // For periodic menu refresh
 let secureStorage; // Secure storage manager instance
+let isBackendConfigured = false; // Track if secure config has been injected
 
 // Auto-updater configuration
 autoUpdater.autoDownload = false; // User-triggered downloads
@@ -476,37 +477,50 @@ function startGoBackend() {
     // Start with port 0 to let OS assign an available port
     goBackend = spawn(goExecutable, ['-port', '0']);
 
+    const handleBackendPort = (port) => {
+        if (BACKEND_PORT) return; // Already set
+        BACKEND_PORT = port;
+        console.log(`[Go Backend] Detected backend port: ${BACKEND_PORT}`);
+
+        // Initialize backend with secure tokens
+        if (!secureStorage) {
+            secureStorage = new SecureStorageManager();
+        }
+        try {
+            const config = secureStorage.loadConfigWithTokens();
+            if (config) {
+                console.log('[Go Backend] Injecting secure configuration...');
+                // We need to wait a moment for the server to be fully ready to accept connections
+                setTimeout(async () => {
+                    try {
+                        await callJSON(`http://localhost:${BACKEND_PORT}/api/settings`, 'POST', config);
+                        console.log('[Go Backend] Secure configuration injected successfully');
+                        isBackendConfigured = true;
+                    } catch (err) {
+                        console.error('[Go Backend] Failed to inject secure configuration:', err);
+                        // Mark as configured anyway to avoid blocking frontend forever,
+                        // though API calls might fail with 500/401
+                        isBackendConfigured = true;
+                    }
+                }, 500);
+            } else {
+                console.log('[Go Backend] No configuration to inject');
+                isBackendConfigured = true;
+            }
+        } catch (err) {
+            console.error('[Go Backend] Failed to load secure configuration:', err);
+            isBackendConfigured = true;
+        }
+    };
+
     goBackend.stdout.on('data', (data) => {
         const output = data.toString();
         console.log('[Go Backend]', output);
 
         // Parse the port from the Go backend's startup message
         const portMatch = output.match(/HTTP Server starting on :(\d+)/);
-        if (portMatch && !BACKEND_PORT) {
-            BACKEND_PORT = parseInt(portMatch[1], 10);
-            console.log(`[Go Backend] Detected backend port: ${BACKEND_PORT}`);
-
-            // Initialize backend with secure tokens
-            if (!secureStorage) {
-                secureStorage = new SecureStorageManager();
-            }
-            try {
-                const config = secureStorage.loadConfigWithTokens();
-                if (config) {
-                    console.log('[Go Backend] Injecting secure configuration...');
-                    // We need to wait a moment for the server to be fully ready to accept connections
-                    setTimeout(async () => {
-                        try {
-                            await callJSON(`http://localhost:${BACKEND_PORT}/api/settings`, 'POST', config);
-                            console.log('[Go Backend] Secure configuration injected successfully');
-                        } catch (err) {
-                            console.error('[Go Backend] Failed to inject secure configuration:', err);
-                        }
-                    }, 500);
-                }
-            } catch (err) {
-                console.error('[Go Backend] Failed to load secure configuration:', err);
-            }
+        if (portMatch) {
+            handleBackendPort(parseInt(portMatch[1], 10));
         }
     });
 
@@ -516,30 +530,8 @@ function startGoBackend() {
 
         // Parse the port from stderr too (log.Printf goes to stderr)
         const portMatch = output.match(/HTTP Server starting on :(\d+)/);
-        if (portMatch && !BACKEND_PORT) {
-            BACKEND_PORT = parseInt(portMatch[1], 10);
-            console.log(`[Go Backend] Detected backend port: ${BACKEND_PORT}`);
-
-            // Initialize backend with secure tokens (duplicate logic for stderr path)
-            if (!secureStorage) {
-                secureStorage = new SecureStorageManager();
-            }
-            try {
-                const config = secureStorage.loadConfigWithTokens();
-                if (config) {
-                    console.log('[Go Backend] Injecting secure configuration...');
-                    setTimeout(async () => {
-                        try {
-                            await callJSON(`http://localhost:${BACKEND_PORT}/api/settings`, 'POST', config);
-                            console.log('[Go Backend] Secure configuration injected successfully');
-                        } catch (err) {
-                            console.error('[Go Backend] Failed to inject secure configuration:', err);
-                        }
-                    }, 500);
-                }
-            } catch (err) {
-                console.error('[Go Backend] Failed to load secure configuration:', err);
-            }
+        if (portMatch) {
+            handleBackendPort(parseInt(portMatch[1], 10));
         }
     });
 
@@ -688,6 +680,20 @@ ipcMain.handle('api-call', async (event, endpoint, method, body) => {
         }
         if (!BACKEND_PORT) {
             throw new Error('Backend port not ready');
+        }
+    }
+
+    // Wait for configuration to be injected to avoid race conditions
+    if (!isBackendConfigured) {
+        const maxWait = 5000;
+        const interval = 100;
+        let waited = 0;
+        while (!isBackendConfigured && waited < maxWait) {
+            await new Promise(resolve => setTimeout(resolve, interval));
+            waited += interval;
+        }
+        if (!isBackendConfigured) {
+            console.warn('Backend configuration timed out, proceeding anyway...');
         }
     }
 
