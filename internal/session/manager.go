@@ -554,30 +554,34 @@ func (m *Manager) waitForTcpSetupOK(wsConn *websocket.Conn, key string, timeout 
 					continue
 				}
 
-				// Check for plain-text errors in the raw message if unwrapMessage didn't catch them specifically
-				// (though unwrapMessage should handle most now)
-				if strings.Contains(string(msg), "no device online") {
-					// fmt.Printf("DEBUG: waitForTcpSetupOK received 'no device online' (raw). Continuing wait...\n")
+				// Check for plain-text errors in the raw message
+				msgStr := string(msg)
+				if strings.Contains(msgStr, "no device online") {
 					continue
 				}
-				// Log unwrap failures but CONTINUE waiting unless it's a fatal error
-				// The device might send banners or keepalives that aren't envelopes
-				// fmt.Printf("DEBUG: waitForTcpSetupOK unwrap failed (ignoring): %v\n", err)
-				if len(msg) < 1000 {
-					// fmt.Printf("DEBUG: raw payload: %q\n", string(msg))
+
+				// FALLBACK: Check if the raw message contains tcpSetupOK
+				// Some versions might send this as a raw text frame instead of enveloped
+				if strings.Contains(msgStr, "+++tcpSetupOK+++") {
+					fmt.Printf("DEBUG: Found tcpSetupOK in raw message (unwrap failed)\n")
+					setupDone <- nil
+					return
 				}
+
+				// Log unwrap failures but CONTINUE waiting unless it's a fatal error
+				fmt.Printf("DEBUG: waitForTcpSetupOK unwrap failed: %v. Raw start: %.50q\n", err, msgStr)
 				continue
 			}
 
 			payloadStr := string(payload)
-			// fmt.Printf("DEBUG: waitForTcpSetupOK payload: %q\n", payloadStr)
+			fmt.Printf("DEBUG: waitForTcpSetupOK payload: %q\n", payloadStr)
 
 			if strings.Contains(payloadStr, "+++tcpSetupOK+++") {
 				setupDone <- nil
 				return
 			}
 			if strings.Contains(payloadStr, "+++Done+++") {
-				setupDone <- fmt.Errorf("device closed connection before tcpSetupOK")
+				setupDone <- fmt.Errorf("device closed connection before tcpSetupOK (Payload: %s)", payloadStr)
 				return
 			}
 		}

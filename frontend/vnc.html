@@ -6,6 +6,30 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VNC Viewer</title>
     <style>
+        :root {
+            --bg-header: #1a1a1a;
+            --bg-controls: #1a1a1a;
+            --bg-btn: #2a2a2a;
+            --bg-btn-hover: #3a3a3a;
+            --border-color: #333;
+            --text-primary: #fff;
+            --text-secondary: #999;
+            --text-btn: #fff;
+            --status-bg: rgba(255, 255, 255, 0.1);
+        }
+
+        html[data-theme="light"] {
+            --bg-header: #f5f5f7 !important;
+            --bg-controls: #f5f5f7 !important;
+            --bg-btn: #ffffff !important;
+            --bg-btn-hover: #e8e8ea !important;
+            --border-color: #d2d2d7 !important;
+            --text-primary: #1d1d1f !important;
+            --text-secondary: #424245 !important;
+            --text-btn: #1d1d1f !important;
+            --status-bg: rgba(0, 0, 0, 0.05) !important;
+        }
+
         * {
             margin: 0;
             padding: 0;
@@ -26,9 +50,9 @@
         }
 
         #vnc-header {
-            background: #1a1a1a;
+            background: var(--bg-header);
             padding: 10px 15px;
-            border-bottom: 1px solid #333;
+            border-bottom: 1px solid var(--border-color);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -50,7 +74,7 @@
         .header-btn {
             background: transparent;
             border: none;
-            color: #888;
+            color: var(--text-secondary);
             cursor: pointer;
             padding: 6px;
             border-radius: 4px;
@@ -61,8 +85,8 @@
         }
 
         .header-btn:hover {
-            background: rgba(255, 255, 255, 0.1);
-            color: #fff;
+            background: var(--status-bg);
+            color: var(--text-primary);
         }
 
         .header-btn svg {
@@ -71,7 +95,7 @@
         }
 
         #vnc-info {
-            color: #fff;
+            color: var(--text-primary);
             font-size: 13px;
             text-align: center;
             flex: 1;
@@ -86,7 +110,7 @@
 
         #vnc-details {
             font-size: 11px;
-            color: #999;
+            color: var(--text-secondary);
         }
 
         .status-dot {
@@ -112,9 +136,9 @@
         }
 
         #vnc-controls {
-            background: #1a1a1a;
+            background: var(--bg-controls);
             padding: 8px 15px;
-            border-top: 1px solid #333;
+            border-top: 1px solid var(--border-color);
             display: flex;
             gap: 8px;
             align-items: center;
@@ -122,22 +146,22 @@
         }
 
         .control-button {
-            background: #2a2a2a;
-            border: 1px solid #444;
-            color: #fff;
+            background: var(--bg-btn);
+            border: 1px solid var(--border-color);
+            color: var(--text-btn);
             padding: 6px 12px;
             border-radius: 4px;
             cursor: pointer;
             font-size: 12px;
-            transition: background 0.2s;
+            transition: all 0.2s;
         }
 
         .control-button:hover {
-            background: #3a3a3a;
+            background: var(--bg-btn-hover);
         }
 
         .control-button:active {
-            background: #444;
+            filter: brightness(0.9);
         }
 
         #loading {
@@ -149,6 +173,20 @@
             font-size: 16px;
         }
     </style>
+    <script>
+        (function () {
+            const urlParams = new URLSearchParams(window.location.search);
+            const theme = urlParams.get('theme') || localStorage.getItem('theme') || 'dark';
+            document.documentElement.setAttribute('data-theme', theme);
+
+            // Listen for theme changes in other windows
+            window.addEventListener('storage', (e) => {
+                if (e.key === 'theme' && e.newValue) {
+                    document.documentElement.setAttribute('data-theme', e.newValue);
+                }
+            });
+        })();
+    </script>
 </head>
 
 <body>
@@ -192,6 +230,10 @@
         const nodeName = urlParams.get('nodeName') || 'Unknown Device';
         const appName = urlParams.get('appName') || 'VNC';
         const tunnelId = urlParams.get('tunnelId') || '';
+        const theme = urlParams.get('theme') || localStorage.getItem('theme') || 'dark';
+
+        // Apply theme (already done in head, but sync again in case theme param changed)
+        document.documentElement.setAttribute('data-theme', theme);
 
         // Update header with connection details
         document.getElementById('vnc-details').textContent = `${nodeName} • ${appName}`;

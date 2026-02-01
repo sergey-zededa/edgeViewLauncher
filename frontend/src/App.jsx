@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { SearchNodes, ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, EnableExternalPolicy, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo } from './electronAPI';
-import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers, Shield } from 'lucide-react';
+import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers, Shield, Moon, Sun } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
 import Tooltip from './components/Tooltip';
 import About from './components/About';
@@ -77,10 +77,10 @@ const PortSelect = ({ ports, selectedValue, onChange, placeholder }) => {
         onClick={toggleDropdown}
         style={{
           padding: '8px 12px',
-          backgroundColor: '#1a1a1a',
-          border: '1px solid #333',
+          backgroundColor: 'var(--bg-surface)',
+          border: '1px solid var(--border-subtle)',
           borderRadius: '4px',
-          color: '#fff',
+          color: 'var(--text-primary)',
           cursor: 'pointer',
           display: 'flex',
           justifyContent: 'space-between',
@@ -108,8 +108,8 @@ const PortSelect = ({ ports, selectedValue, onChange, placeholder }) => {
             top: coords.top + 4,
             left: coords.left,
             width: coords.width,
-            backgroundColor: '#1e1e1e',
-            border: '1px solid #333',
+            backgroundColor: 'var(--bg-panel)',
+            border: '1px solid var(--border-subtle)',
             borderRadius: '4px',
             boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
             zIndex: 9999,
@@ -117,7 +117,7 @@ const PortSelect = ({ ports, selectedValue, onChange, placeholder }) => {
             overflowY: 'auto'
           }}>
             {ports.length === 0 ? (
-              <div style={{ padding: '8px 12px', color: '#666', fontSize: '12px' }}>No exposed ports</div>
+              <div style={{ padding: '8px 12px', color: 'var(--text-secondary)', fontSize: '12px' }}>No exposed ports</div>
             ) : (
               ports.map((pm, idx) => (
                 <div
@@ -131,11 +131,11 @@ const PortSelect = ({ ports, selectedValue, onChange, placeholder }) => {
                     padding: '8px 12px',
                     cursor: 'pointer',
                     fontSize: '13px',
-                    color: '#ccc',
-                    borderBottom: idx < ports.length - 1 ? '1px solid #2a2a2a' : 'none',
+                    color: 'var(--text-primary)',
+                    borderBottom: idx < ports.length - 1 ? '1px solid var(--border-subtle)' : 'none',
                     transition: 'background 0.1s'
                   }}
-                  onMouseEnter={(e) => e.target.style.backgroundColor = '#2a2a2a'}
+                  onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--bg-hover)'}
                   onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
@@ -222,6 +222,18 @@ function App() {
   const [enterprise, setEnterprise] = useState(null);
   const [userInfo, setUserInfo] = useState(null);
   const [projects, setProjects] = useState([]);
+
+  // Theme State
+  const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+  };
 
   // Device Details State
   const [services, setServices] = useState(null);
@@ -916,7 +928,7 @@ function App() {
       setGlobalStatus({ type: 'loading', message: `Starting TCP tunnel to ${ip}:${port}...` });
       addLog(`Starting TCP tunnel to ${ip}:${port}...`, 'info');
 
-      const result = await StartTunnel(selectedNode.id, ip, port);
+      const result = await StartTunnel(selectedNode.id, ip, port, 'TCP');
       const localPort = result.port || result;
       const tunnelId = result.tunnelId;
 
@@ -956,7 +968,7 @@ function App() {
       setGlobalStatus({ type: 'loading', message: `Starting TCP tunnel to ${ip}:${port}...` });
       addLog(`Starting TCP tunnel to ${ip}:${port}...`, 'info');
 
-      const result = await StartTunnel(selectedNode.id, ip, port);
+      const result = await StartTunnel(selectedNode.id, ip, port, 'TCP');
       const localPort = result.port || result;
       const tunnelId = result.tunnelId;
 
@@ -996,8 +1008,9 @@ function App() {
       await window.electronAPI.openVncWindow({
         port: localPort,
         nodeName: selectedNode.name,
-        appName: appName || 'VNC',
-        tunnelId
+        appName: appName,
+        tunnelId,
+        theme
       });
 
       setGlobalStatus({ type: 'success', message: `VNC connected on localhost:${localPort}`, duration: 3000 });
@@ -1038,7 +1051,8 @@ function App() {
         nodeName: selectedNode.name,
         targetInfo: `${username}@${ip}:22`,
         tunnelId,
-        username
+        username,
+        theme
       });
 
       setGlobalStatus({ type: 'success', message: `SSH connected on localhost:${localPort}`, duration: 3000 });
@@ -1100,7 +1114,8 @@ function App() {
           targetInfo: `${sshUser}@${selectedNode.name}`,
           tunnelId: tunnelId,
           username: sshUser,
-          password: sshPassword
+          password: sshPassword,
+          theme
         });
       } else {
         // Tunnel only
@@ -1458,7 +1473,8 @@ Do you want to try connecting anyway?`)) {
           port: port,
           nodeName: selectedNode.name,
           targetInfo: 'EVE-OS SSH',
-          tunnelId: tunnelId
+          tunnelId: tunnelId,
+          theme
         });
         addLog('In-app terminal launched', 'success');
       } else {
@@ -1692,36 +1708,6 @@ Do you want to try connecting anyway?`)) {
     }
   };
 
-  const handleStartExternalTunnel = async (ip, portStr) => {
-    if (!selectedNode) return;
-
-    const port = parseInt(portStr, 10);
-    if (isNaN(port) || port <= 0 || port > 65535) {
-      setGlobalStatus({ type: 'error', message: "Invalid port number." });
-      return;
-    }
-
-    setGlobalStatus({ type: 'loading', message: `Starting tunnel to ${ip}:${port}...` });
-
-    try {
-      const result = await StartTunnel(selectedNode.id, ip, port, "TCP"); // Use "TCP" as type
-      if (result.success) {
-        addLog(`Tunnel started: localhost:${result.port} -> ${ip}:${port}`, 'success');
-        setGlobalStatus({
-          type: 'success',
-          message: `Tunnel connected on localhost:${result.port}`
-        });
-        setTimeout(() => setGlobalStatus(null), 5000);
-      } else {
-        throw new Error(result.error || "Unknown error");
-      }
-    } catch (err) {
-      console.error("Failed to start external tunnel:", err);
-      const errMsg = err.message || String(err);
-      addLog(`Failed to start tunnel to ${ip}:${port}: ${errMsg}`, 'error');
-      setGlobalStatus({ type: 'error', message: `Tunnel failed: ${errMsg}` });
-    }
-  };
 
   const handleCollectInfo = async () => {
     if (!selectedNode) return;
@@ -2319,8 +2305,8 @@ Do you want to try connecting anyway?`)) {
               </div>
               <div className="cluster-details">
                 {viewingClusterName !== config.activeCluster && (
-                  <div className="cluster-actions-bar" style={{ marginBottom: '15px', paddingBottom: '15px', borderBottom: '1px solid #333' }}>
-                    <div className="info-text" style={{ fontSize: '12px', color: '#888', marginBottom: '10px' }}>
+                  <div className="cluster-actions-bar" style={{ marginBottom: '15px', paddingBottom: '15px', borderBottom: '1px solid var(--border-subtle)' }}>
+                    <div className="info-text" style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px' }}>
                       This cluster is not active.
                     </div>
                     <button
@@ -2461,6 +2447,33 @@ Do you want to try connecting anyway?`)) {
                   </div>
                 )}
 
+                {/* Theme Toggle */}
+                <div className="form-group">
+                  <label>Theme</label>
+                  <div
+                    onClick={toggleTheme}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      padding: '10px 12px',
+                      backgroundColor: 'var(--bg-secondary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      gap: '8px'
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'; }}
+                  >
+                    {theme === 'dark' ? <Moon size={16} /> : <Sun size={16} />}
+                    <span style={{ flex: 1, color: 'var(--text-primary)' }}>
+                      {theme === 'dark' ? 'Dark Theme' : 'Light Theme'}
+                    </span>
+                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Click to toggle</span>
+                  </div>
+                </div>
+
                 <div className="settings-actions">
                   {saveStatus && (
                     <span className={`status-text ${saveStatus.includes('Success') ? 'success' : 'muted'}`}>
@@ -2590,7 +2603,8 @@ Do you want to try connecting anyway?`)) {
                               port: tunnel.localPort,
                               username: tunnel.username,
                               nodeName: tunnel.nodeName,
-                              targetInfo: `${tunnel.username || 'root'}@${tunnel.nodeName}`
+                              targetInfo: `${tunnel.username || 'root'}@${tunnel.nodeName}`,
+                              theme
                             })}
                           >
                             <Terminal size={14} />
@@ -2648,7 +2662,7 @@ Do you want to try connecting anyway?`)) {
                             display: 'flex',
                             alignItems: 'center',
                             gap: '8px',
-                            borderBottom: '1px solid #333'
+                            borderBottom: '1px solid var(--border-subtle)'
                           }}>
                             <Terminal size={16} />
                             <span>Open in Built-in Terminal</span>
@@ -2727,8 +2741,8 @@ Do you want to try connecting anyway?`)) {
                           </div>
                         </div>
                         {/* Configuration Controls */}
-                        <div className="config-container" style={{ marginTop: '15px', borderTop: '1px solid #333', paddingTop: '15px' }}>
-                          <div style={{ fontSize: '12px', color: '#888', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                        <div className="config-container" style={{ marginTop: '15px', borderTop: '1px solid var(--border-subtle)', paddingTop: '15px' }}>
+                          <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                             Device Configuration
                           </div>
 
@@ -2742,8 +2756,8 @@ Do you want to try connecting anyway?`)) {
                               style={{
                                 display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
                                 fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
-                                backgroundColor: sshStatus.status === 'enabled' ? 'rgba(35, 134, 54, 0.2)' : sshStatus.status === 'mismatch' ? 'rgba(210, 153, 34, 0.2)' : 'rgba(255, 255, 255, 0.1)',
-                                color: sshStatus.status === 'enabled' ? '#238636' : sshStatus.status === 'mismatch' ? '#d29922' : '#c9d1d9',
+                                backgroundColor: sshStatus.status === 'enabled' ? 'var(--color-success-bg)' : sshStatus.status === 'mismatch' ? 'var(--color-warning-bg)' : 'var(--bg-secondary)',
+                                color: sshStatus.status === 'enabled' ? 'var(--color-success)' : sshStatus.status === 'mismatch' ? 'var(--color-warning)' : 'var(--text-primary)',
                                 border: 'none'
                               }}
                             >
@@ -2761,8 +2775,8 @@ Do you want to try connecting anyway?`)) {
                               style={{
                                 display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
                                 fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
-                                backgroundColor: sshStatus.vgaEnabled ? 'rgba(35, 134, 54, 0.2)' : 'rgba(255, 255, 255, 0.1)',
-                                color: sshStatus.vgaEnabled ? '#238636' : '#c9d1d9',
+                                backgroundColor: sshStatus.vgaEnabled ? 'var(--color-success-bg)' : 'var(--bg-secondary)',
+                                color: sshStatus.vgaEnabled ? 'var(--color-success)' : 'var(--text-primary)',
                                 border: 'none'
                               }}
                             >
@@ -2778,8 +2792,8 @@ Do you want to try connecting anyway?`)) {
                               style={{
                                 display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
                                 fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
-                                backgroundColor: sshStatus.usbEnabled ? 'rgba(35, 134, 54, 0.2)' : 'rgba(255, 255, 255, 0.1)',
-                                color: sshStatus.usbEnabled ? '#238636' : '#c9d1d9',
+                                backgroundColor: sshStatus.usbEnabled ? 'var(--color-success-bg)' : 'var(--bg-secondary)',
+                                color: sshStatus.usbEnabled ? 'var(--color-success)' : 'var(--text-primary)',
                                 border: 'none'
                               }}
                             >
@@ -2795,8 +2809,8 @@ Do you want to try connecting anyway?`)) {
                               style={{
                                 display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
                                 fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
-                                backgroundColor: sshStatus.consoleEnabled ? 'rgba(35, 134, 54, 0.2)' : 'rgba(255, 255, 255, 0.1)',
-                                color: sshStatus.consoleEnabled ? '#238636' : '#c9d1d9',
+                                backgroundColor: sshStatus.consoleEnabled ? 'var(--color-success-bg)' : 'var(--bg-secondary)',
+                                color: sshStatus.consoleEnabled ? 'var(--color-success)' : 'var(--text-primary)',
                                 border: 'none'
                               }}
                             >
@@ -2812,8 +2826,8 @@ Do you want to try connecting anyway?`)) {
                               style={{
                                 display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
                                 fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
-                                backgroundColor: sshStatus.externalPolicy ? 'rgba(35, 134, 54, 0.2)' : 'rgba(255, 255, 255, 0.1)',
-                                color: sshStatus.externalPolicy ? '#238636' : '#c9d1d9',
+                                backgroundColor: sshStatus.externalPolicy ? 'var(--color-success-bg)' : 'var(--bg-secondary)',
+                                color: sshStatus.externalPolicy ? 'var(--color-success)' : 'var(--text-primary)',
                                 border: 'none'
                               }}
                             >
@@ -2829,9 +2843,9 @@ Do you want to try connecting anyway?`)) {
                               style={{
                                 display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
                                 fontSize: '12px', fontWeight: '500', cursor: isSessionConnected ? 'pointer' : 'default', transition: 'all 0.2s',
-                                backgroundColor: isSessionConnected ? 'rgba(56, 139, 253, 0.15)' : 'rgba(255, 255, 255, 0.1)',
-                                color: isSessionConnected ? '#58a6ff' : '#c9d1d9',
-                                border: isSessionConnected ? '1px solid rgba(56, 139, 253, 0.3)' : 'none'
+                                backgroundColor: isSessionConnected ? 'var(--color-primary-bg)' : 'var(--bg-secondary)',
+                                color: isSessionConnected ? 'var(--color-primary)' : 'var(--text-primary)',
+                                border: isSessionConnected ? '1px solid var(--color-primary-border)' : 'none'
                               }}
                             >
                               <Download size={13} style={{ marginRight: '6px' }} />
@@ -2860,123 +2874,23 @@ Do you want to try connecting anyway?`)) {
                       padding: '6px 14px',
                       cursor: 'pointer',
                       border: '1px solid var(--border-subtle)',
-                      color: '#ffffff',
+                      color: 'var(--text-primary)',
                       display: 'flex',
                       alignItems: 'center',
-                      backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                      backgroundColor: 'var(--bg-hover)',
                       borderRadius: '6px'
                     }}
                     onClick={() => {
-                      setTcpTunnelConfig({ ip: '', port: '' });
+                      setTcpIpInput('');
+                      setTcpPortInput('');
+                      setTcpTunnelConfig({ id: 'manual' });
                     }}
                     title="Open TCP tunnel to external endpoint"
                   >
-                    <Activity size={14} style={{ marginRight: '8px', color: '#58a6ff' }} />
+                    <Activity size={14} style={{ marginRight: '8px', color: 'var(--color-primary)' }} />
                     External Endpoint TCP Tunnel
                   </button>
 
-                  {/* Popover for External TCP Tunnel */}
-                  {tcpTunnelConfig && (
-                    <div
-                      className="ssh-popover"
-                      style={{
-                        position: 'absolute',
-                        top: '100%',
-                        right: '0',
-                        marginTop: '8px',
-                        backgroundColor: '#1e1e1e',
-                        border: '1px solid #333',
-                        borderRadius: '6px',
-                        padding: '12px',
-                        boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
-                        zIndex: 1000,
-                        minWidth: '220px'
-                      }}
-                    >
-                      <div style={{ marginBottom: '12px', fontSize: '13px', fontWeight: '500', color: '#fff', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span>Connect to External Endpoint</span>
-                        <X
-                          size={14}
-                          style={{ cursor: 'pointer', color: '#888' }}
-                          onClick={() => setTcpTunnelConfig(null)}
-                        />
-                      </div>
-
-                      <div style={{ marginBottom: '8px' }}>
-                        <label style={{ display: 'block', fontSize: '11px', color: '#888', marginBottom: '4px' }}>Target IP</label>
-                        <input
-                          type="text"
-                          value={tcpTunnelConfig.ip}
-                          onChange={(e) => setTcpTunnelConfig({ ...tcpTunnelConfig, ip: e.target.value })}
-                          placeholder="e.g. 192.168.1.50"
-                          style={{
-                            width: '100%',
-                            boxSizing: 'border-box',
-                            padding: '6px 8px',
-                            backgroundColor: '#2a2a2a',
-                            border: '1px solid #444',
-                            borderRadius: '4px',
-                            color: '#fff',
-                            fontSize: '13px'
-                          }}
-                        />
-                      </div>
-
-                      <div style={{ marginBottom: '12px' }}>
-                        <label style={{ display: 'block', fontSize: '11px', color: '#888', marginBottom: '4px' }}>Target Port</label>
-                        <input
-                          type="text"
-                          value={tcpTunnelConfig.port}
-                          onChange={(e) => setTcpTunnelConfig({ ...tcpTunnelConfig, port: e.target.value })}
-                          placeholder="e.g. 8080"
-                          style={{
-                            width: '100%',
-                            boxSizing: 'border-box',
-                            padding: '6px 8px',
-                            backgroundColor: '#2a2a2a',
-                            border: '1px solid #444',
-                            borderRadius: '4px',
-                            color: '#fff',
-                            fontSize: '13px'
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              if (tcpTunnelConfig.ip && tcpTunnelConfig.port) {
-                                const ip = tcpTunnelConfig.ip;
-                                const port = tcpTunnelConfig.port;
-                                setTcpTunnelConfig(null);
-                                handleStartExternalTunnel(ip, port);
-                              }
-                            }
-                          }}
-                        />
-                      </div>
-
-                      <button
-                        disabled={!tcpTunnelConfig.ip || !tcpTunnelConfig.port}
-                        onClick={() => {
-                          const ip = tcpTunnelConfig.ip;
-                          const port = tcpTunnelConfig.port;
-                          setTcpTunnelConfig(null);
-                          handleStartExternalTunnel(ip, port);
-                        }}
-                        style={{
-                          width: '100%',
-                          boxSizing: 'border-box',
-                          padding: '6px 12px',
-                          backgroundColor: (!tcpTunnelConfig.ip || !tcpTunnelConfig.port) ? '#333' : '#238636',
-                          border: 'none',
-                          borderRadius: '4px',
-                          color: (!tcpTunnelConfig.ip || !tcpTunnelConfig.port) ? '#666' : '#fff',
-                          fontSize: '12px',
-                          cursor: (!tcpTunnelConfig.ip || !tcpTunnelConfig.port) ? 'not-allowed' : 'pointer',
-                          fontWeight: '500'
-                        }}
-                      >
-                        Connect
-                      </button>
-                    </div>
-                  )}
                 </div>
               </div>
             )}
@@ -3061,14 +2975,13 @@ Do you want to try connecting anyway?`)) {
                               paddingLeft: app.isChild ? '12px' : '16px',
                               // Only override borderLeft for children to create the tree line effect
                               // Parents keep the default border from .service-item class
-                              ...(app.isChild ? { borderLeft: '2px solid #333' } : {}),
+                              ...(app.isChild ? { borderLeft: '2px solid var(--border-color)' } : {}),
                               position: 'relative',
-                              marginBottom: '8px',
-                              backgroundColor: app.isChild ? '#161616' : '#1e1e1e'
+                              marginBottom: '8px'
                             }}>
                               {app.isChild && (
                                 <div style={{
-                                  position: 'absolute', left: '-2px', top: '24px', width: '12px', height: '2px', backgroundColor: '#333'
+                                  position: 'absolute', left: '-2px', top: '24px', width: '12px', height: '2px', backgroundColor: 'var(--border-color)'
                                 }} />
                               )}
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -3078,7 +2991,7 @@ Do you want to try connecting anyway?`)) {
                                       <Copyable text={app.name}>
                                         {app.name}
                                       </Copyable>
-                                      {app.pid && <span style={{ marginLeft: '8px', color: '#666', fontSize: '0.9em', fontWeight: 'normal' }}>(PID: {app.pid})</span>}
+                                      {app.pid && <span style={{ marginLeft: '8px', color: 'var(--text-secondary)', fontSize: '0.9em', fontWeight: 'normal' }}>(PID: {app.pid})</span>}
                                     </span>
                                     <div className="service-meta" style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
                                       {app.ips && app.ips.length > 0 && (
@@ -3119,8 +3032,8 @@ Do you want to try connecting anyway?`)) {
                                                       top: '100%',
                                                       left: '0',
                                                       marginTop: '4px',
-                                                      backgroundColor: '#1e1e1e',
-                                                      border: '1px solid #333',
+                                                      backgroundColor: 'var(--bg-panel)',
+                                                      border: '1px solid var(--border-subtle)',
                                                       borderRadius: '6px',
                                                       padding: '8px',
                                                       boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
@@ -3128,7 +3041,7 @@ Do you want to try connecting anyway?`)) {
                                                       minWidth: '180px'
                                                     }}
                                                   >
-                                                    <div style={{ marginBottom: '8px', fontSize: '12px', color: '#888' }}>
+                                                    <div style={{ marginBottom: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
                                                       SSH to {ip}
                                                     </div>
                                                     <input
@@ -3149,10 +3062,10 @@ Do you want to try connecting anyway?`)) {
                                                         width: '100%',
                                                         boxSizing: 'border-box',
                                                         padding: '6px 8px',
-                                                        backgroundColor: '#2a2a2a',
-                                                        border: '1px solid #444',
+                                                        backgroundColor: 'var(--bg-surface)',
+                                                        border: '1px solid var(--border-subtle)',
                                                         borderRadius: '4px',
-                                                        color: '#fff',
+                                                        color: 'var(--text-primary)',
                                                         fontSize: '13px',
                                                         marginBottom: '8px'
                                                       }}
@@ -3166,10 +3079,10 @@ Do you want to try connecting anyway?`)) {
                                                         width: '100%',
                                                         boxSizing: 'border-box',
                                                         padding: '6px 12px',
-                                                        backgroundColor: '#238636',
+                                                        backgroundColor: 'var(--color-success)',
                                                         border: 'none',
                                                         borderRadius: '4px',
-                                                        color: '#fff',
+                                                        color: 'var(--text-on-color)',
                                                         fontSize: '12px',
                                                         cursor: 'pointer',
                                                         fontWeight: '500'
@@ -3185,12 +3098,12 @@ Do you want to try connecting anyway?`)) {
                                         </span>
                                       )}
                                       {app.isRuntime && (
-                                        <span style={{ marginLeft: '8px', display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.85em', color: '#a371f7', verticalAlign: 'middle', marginTop: '0px' }}>
+                                        <span style={{ marginLeft: '8px', display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.85em', color: 'var(--color-purple)', verticalAlign: 'middle', marginTop: '0px' }}>
                                           <Box size={12} /> Compose Runtime
                                         </span>
                                       )}
                                       {app.appType === 'APP_TYPE_DOCKER_COMPOSE' && (
-                                        <span style={{ marginLeft: '8px', display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.85em', color: '#58a6ff', verticalAlign: 'middle', marginTop: '0px' }}>
+                                        <span style={{ marginLeft: '8px', display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.85em', color: 'var(--color-primary)', verticalAlign: 'middle', marginTop: '0px' }}>
                                           <Layers size={12} /> Compose App
                                         </span>
                                       )}
@@ -3269,11 +3182,43 @@ Do you want to try connecting anyway?`)) {
                                                     <Copyable text={`${pm.runtimeIp || '0.0.0.0'}:${pm.publicPort}`}>
                                                       <button
                                                         className="quick-tunnel-btn"
-                                                        onClick={(e) => {
+                                                        onClick={async (e) => {
                                                           e.stopPropagation();
                                                           const targetIp = pm.runtimeIp || app.ips?.[0] || selectedNode?.managementIps?.[0];
                                                           if (targetIp) {
-                                                            startQuickTunnel(targetIp, pm.publicPort);
+                                                            // If it's a VNC port, offer to open VNC viewer
+                                                            if (pm.publicPort === app.vncPort) {
+                                                              try {
+                                                                setTunnelLoading('vnc');
+                                                                setGlobalStatus({ type: 'loading', message: `Starting VNC tunnel to ${targetIp}:${pm.publicPort}...` });
+                                                                const vncTarget = targetIp;
+                                                                addLog(`Starting VNC tunnel to ${vncTarget}:${pm.publicPort}...`, 'info');
+                                                                const tunnelResult = await StartTunnel(selectedNode.id, vncTarget, pm.publicPort, 'vnc');
+                                                                const port = tunnelResult.port || tunnelResult;
+                                                                addLog(`VNC tunnel active on localhost:${port}`, 'success');
+                                                                addTunnel('VNC', vncTarget, pm.publicPort, port, tunnelResult.tunnelId);
+
+                                                                // Open VNC in new window
+                                                                await window.electronAPI.openVncWindow({
+                                                                  port: port,
+                                                                  nodeName: selectedNode.name,
+                                                                  appName: app.name,
+                                                                  tunnelId: tunnelResult.tunnelId,
+                                                                  theme
+                                                                });
+                                                                addLog(`VNC viewer opened in new window`, 'info');
+                                                                setExpandedServiceId(null);
+                                                              } catch (err) {
+                                                                console.error(err);
+                                                                handleTunnelError(err);
+                                                                addLog(`Failed to start VNC tunnel: ${err.message}`, 'error');
+                                                              } finally {
+                                                                setTunnelLoading(null);
+                                                                setGlobalStatus(null);
+                                                              }
+                                                            } else {
+                                                              startQuickTunnel(targetIp, pm.publicPort);
+                                                            }
                                                           }
                                                         }}
                                                         disabled={!!tunnelLoading || !isSessionConnected}
@@ -3308,7 +3253,7 @@ Do you want to try connecting anyway?`)) {
                                                       const savedUser = getSavedSshUsername(app.name);
                                                       setShellPrompt({
                                                         containerName: c.containerName,
-                                                        username: savedUser || 'root',
+                                                        username: savedUser,
                                                         password: ''
                                                       });
                                                     }
@@ -3333,8 +3278,8 @@ Do you want to try connecting anyway?`)) {
                                                   top: '100%',
                                                   right: '0',
                                                   marginTop: '4px',
-                                                  backgroundColor: '#1e1e1e',
-                                                  border: '1px solid #333',
+                                                  backgroundColor: 'var(--bg-panel)',
+                                                  border: '1px solid var(--border-subtle)',
                                                   borderRadius: '6px',
                                                   padding: '8px',
                                                   boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
@@ -3343,7 +3288,7 @@ Do you want to try connecting anyway?`)) {
                                                   textAlign: 'left'
                                                 }}
                                               >
-                                                <div style={{ marginBottom: '8px', fontSize: '12px', color: '#888' }}>
+                                                <div style={{ marginBottom: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
                                                   SSH Credentials
                                                 </div>
                                                 <input
@@ -3365,10 +3310,10 @@ Do you want to try connecting anyway?`)) {
                                                     width: '100%',
                                                     boxSizing: 'border-box',
                                                     padding: '6px 8px',
-                                                    backgroundColor: '#2a2a2a',
-                                                    border: '1px solid #444',
+                                                    backgroundColor: 'var(--bg-surface)',
+                                                    border: '1px solid var(--border-subtle)',
                                                     borderRadius: '4px',
-                                                    color: '#fff',
+                                                    color: 'var(--text-primary)',
                                                     fontSize: '13px',
                                                     marginBottom: '8px'
                                                   }}
@@ -3392,10 +3337,10 @@ Do you want to try connecting anyway?`)) {
                                                     width: '100%',
                                                     boxSizing: 'border-box',
                                                     padding: '6px 8px',
-                                                    backgroundColor: '#2a2a2a',
-                                                    border: '1px solid #444',
+                                                    backgroundColor: 'var(--bg-surface)',
+                                                    border: '1px solid var(--border-subtle)',
                                                     borderRadius: '4px',
-                                                    color: '#fff',
+                                                    color: 'var(--text-primary)',
                                                     fontSize: '13px',
                                                     marginBottom: '12px'
                                                   }}
@@ -3442,8 +3387,8 @@ Do you want to try connecting anyway?`)) {
                                           top: '100%',
                                           left: 0,
                                           marginTop: '4px',
-                                          backgroundColor: '#1e1e1e',
-                                          border: '1px solid #333',
+                                          backgroundColor: 'var(--bg-panel)',
+                                          border: '1px solid var(--border-subtle)',
                                           borderRadius: '6px',
                                           boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
                                           zIndex: 1000,
@@ -3470,7 +3415,8 @@ Do you want to try connecting anyway?`)) {
                                                   port: port,
                                                   nodeName: selectedNode.name,
                                                   appName: app.name,
-                                                  tunnelId: tunnelId
+                                                  tunnelId: tunnelId,
+                                                  theme
                                                 });
                                                 addLog(`VNC viewer opened in new window`, 'info');
                                                 setExpandedServiceId(null);
