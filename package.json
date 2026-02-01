@@ -25,7 +25,7 @@
   "license": "ISC",
   "repository": {
     "type": "git",
-    "url": "https://github.com/sergey-zededa/edgeViewLauncher.git"
+    "url": "https://github.com/sergio-zededa/edgeViewLauncher.git"
   },
   "dependencies": {
     "electron-updater": "^6.3.9"
@@ -40,7 +40,7 @@
     "productName": "EdgeView Launcher",
     "publish": {
       "provider": "github",
-      "owner": "sergey-zededa",
+      "owner": "sergio-zededa",
       "repo": "edgeViewLauncher",
       "private": true
     },
