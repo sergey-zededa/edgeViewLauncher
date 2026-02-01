@@ -43,6 +43,8 @@ type fakeZededaClient struct {
 	// Network Instances
 	networkInstances   map[string]*zededa.NetworkInstanceStatus
 	networkInstanceErr error
+
+	updateExternalPolicyErr error
 }
 
 func (f *fakeZededaClient) GetEnterprise() (*zededa.Enterprise, error) {
@@ -132,6 +134,10 @@ func (f *fakeZededaClient) SetUSBEnabled(nodeID string, enabled bool) error {
 
 func (f *fakeZededaClient) SetConsoleEnabled(nodeID string, enabled bool) error {
 	return nil
+}
+
+func (f *fakeZededaClient) UpdateEdgeViewExternalPolicy(nodeID string, enable bool) error {
+	return f.updateExternalPolicyErr
 }
 
 // newTestApp creates a properly initialized App for testing
