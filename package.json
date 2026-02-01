@@ -5,6 +5,7 @@
   "main": "electron-main.js",
   "scripts": {
     "start": "electron .",
+    "dev": "cross-env NODE_ENV=development electron .",
     "prebuild": "node scripts/generate-build-info.js",
     "build": "npm run build:mac",
     "build:mac": "npm run build:frontend && npm run build:backend:mac && electron-builder --mac --arm64 && rm -f dist-electron/builder-debug.yml",
@@ -30,6 +31,7 @@
     "electron-updater": "^6.3.9"
   },
   "devDependencies": {
+    "cross-env": "^10.1.0",
     "electron": "^39.2.7",
     "electron-builder": "^26.0.12"
   },

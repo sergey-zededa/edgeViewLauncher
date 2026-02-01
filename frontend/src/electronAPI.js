@@ -54,6 +54,10 @@ export const SetConsoleEnabled = (nodeId, enabled) => {
     return api.setConsoleEnabled(nodeId, enabled).then(res => res.data);
 };
 
+export const EnableExternalPolicy = (nodeId, enable) => {
+    return api.enableExternalPolicy(nodeId, enable).then(res => res.data);
+};
+
 export const DisableSSH = (nodeId) => {
     return api.disableSSH(nodeId).then(res => res.data);
 };

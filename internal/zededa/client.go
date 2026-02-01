@@ -545,6 +545,39 @@ func (c *Client) GetEdgeViewScript(nodeID string) (string, error) {
 	return scriptResp.ClientScript, nil
 }
 
+// UpdateEdgeViewExternalPolicy updates the device configuration to enable/disable external policy
+func (c *Client) UpdateEdgeViewExternalPolicy(nodeID string, enable bool) error {
+	// 1. Get Device
+	device, err := c.GetDevice(nodeID)
+	if err != nil {
+		return fmt.Errorf("failed to get device: %w", err)
+	}
+
+	// 2. Update edgeviewconfig
+	evConfig, ok := device["edgeviewconfig"].(map[string]interface{})
+	if !ok || evConfig == nil {
+		evConfig = make(map[string]interface{})
+	}
+
+	// Update extPolicy
+	// We want to set extPolicy: { "allowExt": true/false }
+	evConfig["extPolicy"] = map[string]interface{}{
+		"allowExt": enable,
+	}
+	// Also include other required fields if they are missing, based on user request example
+	// "generationId" might be needed? The API usually handles it, but let's be safe.
+	// The user example provided full config. Here we just merge extPolicy.
+
+	device["edgeviewconfig"] = evConfig
+
+	// 3. Update Device
+	if err := c.UpdateDevice(nodeID, device); err != nil {
+		return fmt.Errorf("failed to update device config: %w", err)
+	}
+
+	return nil
+}
+
 type SessionConfig struct {
 	URL     string
 	Token   string
@@ -1047,9 +1080,10 @@ type EdgeViewStatus struct {
 	Token          string // Active EdgeView JWT token
 	DispURL        string // Dispatcher URL
 	IsEncrypted    bool   // Encryption enabled in JWT info
+	ExternalPolicy bool   // New field
 }
 
-// GetEdgeViewStatus returns the detailed EdgeView status from the device
+// GetEdgeViewStatus returns the current EdgeView status of the node
 func (c *Client) GetEdgeViewStatus(nodeID string) (*EdgeViewStatus, error) {
 	device, err := c.GetDevice(nodeID)
 	if err != nil {
@@ -1099,6 +1133,15 @@ func (c *Client) GetEdgeViewStatus(nodeID string) (*EdgeViewStatus, error) {
 				if dispUrl, ok := jwtInfo["dispUrl"].(string); ok {
 					status.DispURL = dispUrl
 				}
+			}
+		}
+	}
+
+	// 2a. Check External Policy (extPolicy)
+	if evConfig, ok := device["edgeviewconfig"].(map[string]interface{}); ok {
+		if extPolicy, ok := evConfig["extPolicy"].(map[string]interface{}); ok {
+			if allowExt, ok := extPolicy["allowExt"].(bool); ok {
+				status.ExternalPolicy = allowExt
 			}
 		}
 	}

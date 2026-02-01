@@ -36,6 +36,7 @@ type zededaAPI interface {
 	GetNetworkInstanceDetails(niID string) (*zededa.NetworkInstanceStatus, error)
 	GetDevice(nodeID string) (map[string]interface{}, error)
 	VerifyToken(token string) (*zededa.TokenInfo, error)
+	UpdateEdgeViewExternalPolicy(nodeID string, enable bool) error
 }
 
 // sessionAPI defines the subset of session.Manager used by App.
@@ -827,6 +828,11 @@ func (a *App) SetupSSH(nodeID string) error {
 	return nil
 }
 
+// EnableExternalPolicy enables/disables external policy on a device
+func (a *App) EnableExternalPolicy(nodeID string, enable bool) error {
+	return a.zededaClient.UpdateEdgeViewExternalPolicy(nodeID, enable)
+}
+
 // SetVGAEnabled enables or disables VGA access on a device
 func (a *App) SetVGAEnabled(nodeID string, enabled bool) error {
 	return a.zededaClient.SetVGAEnabled(nodeID, enabled)
@@ -852,6 +858,7 @@ type SSHStatus struct {
 	USBEnabled     bool   `json:"usbEnabled"`
 	ConsoleEnabled bool   `json:"consoleEnabled"`
 	IsEncrypted    bool   `json:"isEncrypted"`
+	ExternalPolicy bool   `json:"externalPolicy"`
 }
 
 // GetSSHStatus returns the current SSH status of the node
@@ -897,6 +904,7 @@ func (a *App) GetSSHStatus(nodeID string) *SSHStatus {
 		USBEnabled:     evStatus.USBEnabled,
 		ConsoleEnabled: evStatus.ConsoleEnabled,
 		IsEncrypted:    evStatus.IsEncrypted,
+		ExternalPolicy: evStatus.ExternalPolicy,
 	}
 
 	// Override expiry with cached session if available and valid

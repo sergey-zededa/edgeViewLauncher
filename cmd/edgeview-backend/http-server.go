@@ -65,6 +65,11 @@ type SetUSBEnabledRequest struct {
 	Enabled bool   `json:"enabled"`
 }
 
+type EnableExternalPolicyRequest struct {
+	NodeID string `json:"nodeId"`
+	Enable bool   `json:"enable"`
+}
+
 type APIResponse struct {
 	Success bool        `json:"success"`
 	Data    interface{} `json:"data,omitempty"`
@@ -278,6 +283,22 @@ func (s *HTTPServer) handleSetConsoleEnabled(w http.ResponseWriter, r *http.Requ
 	}
 
 	s.sendSuccess(w, map[string]bool{"consoleEnabled": req.Enabled})
+}
+
+func (s *HTTPServer) handleEnableExternalPolicy(w http.ResponseWriter, r *http.Request) {
+	var req EnableExternalPolicyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, err)
+		return
+	}
+
+	err := s.app.EnableExternalPolicy(req.NodeID, req.Enable)
+	if err != nil {
+		s.sendError(w, err)
+		return
+	}
+
+	s.sendSuccess(w, map[string]bool{"externalPolicyEnabled": req.Enable})
 }
 
 func (s *HTTPServer) handleResetEdgeView(w http.ResponseWriter, r *http.Request) {
@@ -506,6 +527,7 @@ func (s *HTTPServer) Start() {
 	router.HandleFunc("/api/set-vga", s.handleSetVGAEnabled)
 	router.HandleFunc("/api/set-usb", s.handleSetUSBEnabled)
 	router.HandleFunc("/api/set-console", s.handleSetConsoleEnabled)
+	router.HandleFunc("/api/enable-external-policy", s.handleEnableExternalPolicy).Methods("POST")
 	router.HandleFunc("/api/collect-info/start", s.handleStartCollectInfo).Methods("POST")
 	router.HandleFunc("/api/collect-info/status", s.handleGetCollectInfoStatus).Methods("GET")
 	router.HandleFunc("/api/collect-info/download", s.handleDownloadCollectInfo).Methods("GET")
