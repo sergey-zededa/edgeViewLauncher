@@ -278,7 +278,14 @@ type cmdOpt struct {
 // 2. Send the tcp command and wait for +++tcpSetupOK+++
 // 3. Start accepting TCP clients that multiplex over the shared WebSocket
 // Returns the local port number and tunnel ID.
-func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, nodeID string, target string, protocol string) (int, string, error) {
+func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, nodeID string, target string, protocol string, onProgress func(string)) (int, string, error) {
+	// Helper to safely call progress callback
+	reportProgress := func(msg string) {
+		if onProgress != nil {
+			onProgress(msg)
+		}
+	}
+
 	// Determine the initial instance ID based on MaxInst
 	initialInstID := config.InstID
 	if config.MaxInst == 1 {
@@ -332,6 +339,9 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		if attempt > 1 {
 			fmt.Printf("DEBUG: Retry attempt %d/%d for tunnel setup...\n", attempt, maxRetries)
+			reportProgress(fmt.Sprintf("Retrying connection (attempt %d/%d)...", attempt, maxRetries))
+		} else {
+			reportProgress("Connecting to EdgeView...")
 		}
 
 		// Set the instance ID for this attempt
@@ -346,6 +356,7 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 			if attempt < maxRetries {
 				waitTime := time.Duration(attempt*2) * time.Second
 				fmt.Printf("DEBUG: Connection failed, waiting %v before retry...\n", waitTime)
+				reportProgress(fmt.Sprintf("Connection failed, retrying in %ds...", int(waitTime.Seconds())))
 				time.Sleep(waitTime)
 				continue
 			}
@@ -378,6 +389,7 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 
 		// Wait for +++tcpSetupOK+++ (with timeout)
 		fmt.Printf("DEBUG: Waiting for tcpSetupOK from device (attempt %d/%d)...\n", attempt, maxRetries)
+		reportProgress(fmt.Sprintf("Waiting for device confirmation (attempt %d/%d)...", attempt, maxRetries))
 		setupErr := m.waitForTcpSetupOK(wsConn, config.Key, 30*time.Second, config.Enc)
 		if setupErr == nil {
 			// fmt.Println("DEBUG: tcpSetupOK received, tunnel established successfully!")
@@ -388,6 +400,7 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 		if setupErr == ErrNoDeviceOnline {
 			seenNoDeviceOnline = true
 			fmt.Printf("DEBUG: Device is not online (attempt %d/%d). The device may not be connected to EdgeView yet.\n", attempt, maxRetries)
+			reportProgress(fmt.Sprintf("Device not online yet (attempt %d/%d)...", attempt, maxRetries))
 		} else {
 			fmt.Printf("DEBUG: Tunnel setup failed: %v (attempt %d/%d)\n", setupErr, attempt, maxRetries)
 		}
@@ -404,6 +417,7 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 					currentInstID = nextInstID
 					foundAlternative = true
 					fmt.Printf("DEBUG: Switching to alternative instance %d (previous failed)...\n", currentInstID)
+					reportProgress(fmt.Sprintf("Instance busy, switching to instance %d...", currentInstID))
 					break
 				}
 			}
@@ -418,6 +432,7 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 
 			// All instances tried - reset for next full round
 			fmt.Printf("DEBUG: All %d instances have been tried. Will retry with backoff.\n", config.MaxInst)
+			reportProgress(fmt.Sprintf("All instances busy, retrying (attempt %d/%d)...", attempt, maxRetries))
 			triedInstances = make(map[int]bool)
 			// Don't reset currentInstID to initial, just keep going round-robin or stay on current
 			// But to be safe and consistent, let's reset triedInstances and let the loop continue
@@ -436,6 +451,7 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 			// Start faster than before since we removed the initial 20s delay
 			waitTime := time.Duration(1<<uint(attempt)) * time.Second
 			fmt.Printf("DEBUG: Waiting %v before next attempt...\n", waitTime)
+			reportProgress(fmt.Sprintf("Waiting %ds before retry...", int(waitTime.Seconds())))
 			time.Sleep(waitTime)
 		}
 	}
@@ -1220,6 +1236,16 @@ func (m *Manager) connectToEdgeView(config *zededa.SessionConfig) (*websocket.Co
 
 	initialMsg := string(msg)
 	fmt.Printf("DEBUG: Received initial message: %s\n", initialMsg)
+
+	// Check for known error messages in the initial handshake
+	if strings.Contains(initialMsg, "can't have more than 2 peers") {
+		wsConn.Close()
+		return nil, "", ErrBusyInstance
+	}
+	if strings.Contains(initialMsg, "no device online") {
+		wsConn.Close()
+		return nil, "", ErrNoDeviceOnline
+	}
 
 	// Extract client IP address from message like "YourEndPointIPAddr:213.47.61.191"
 	clientIP := ""

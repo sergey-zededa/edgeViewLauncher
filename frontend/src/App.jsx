@@ -390,7 +390,19 @@ function App() {
     setTunnelLoading(`shell-${c.containerName}`);
     setGlobalStatus({ type: 'loading', message: `Opening shell in ${c.containerName}...` });
     addLog(`Opening shell in container: ${c.containerName}`, 'info');
+
+    let pollInterval = null;
     try {
+      // Poll progress for shell connection
+      pollInterval = setInterval(async () => {
+        try {
+          const progress = await GetConnectionProgress(selectedNode.id);
+          if (progress && progress.status) {
+            setGlobalStatus({ type: 'loading', message: progress.status });
+          }
+        } catch (e) { /* ignore */ }
+      }, 500);
+
       const result = await window.electronAPI.startContainerShell(
         selectedNode.id,
         app.name,
@@ -402,14 +414,19 @@ function App() {
         password,
         app.id // Pass App ID (UUID) for container name resolution
       );
+      clearInterval(pollInterval);
+      pollInterval = null;
+
       if (result.success) {
         addLog(`Container shell opened for ${c.containerName}`, 'success');
       } else {
         addLog(`Failed to open shell: ${result.error}`, 'error');
       }
     } catch (err) {
+      if (pollInterval) clearInterval(pollInterval);
       addLog(`Failed to open shell: ${err.message}`, 'error');
     } finally {
+      if (pollInterval) clearInterval(pollInterval);
       setTunnelLoading(null);
       setGlobalStatus(null);
     }
@@ -868,9 +885,21 @@ function App() {
   const extractErrorMessage = (err) => {
     const fullMessage = err.message || String(err);
     // Remove "Error invoking remote method 'api-call': Error: " prefix
-    const cleaned = fullMessage
+    let cleaned = fullMessage
       .replace(/^Error invoking remote method '[^']+': Error: /, '')
       .replace(/^Error: /, '');
+
+    // Map common low-level errors to user-friendly messages
+    if (cleaned.includes('websocket: close 1006')) {
+      cleaned = 'Connection closed unexpectedly (device might be offline or busy)';
+    } else if (cleaned.includes('i/o timeout')) {
+      cleaned = 'Connection timed out (network might be slow or unstable)';
+    } else if (cleaned.includes('404 Not Found')) {
+      cleaned = 'Resource not found on server';
+    } else if (cleaned.includes('500 Internal Server Error')) {
+      cleaned = 'Server encountered an internal error';
+    }
+
     return cleaned;
   };
 
@@ -910,13 +939,27 @@ function App() {
       return;
     }
 
+    let pollInterval = null;
     try {
       setTcpError('');
       setTunnelLoading('tcp');
       setGlobalStatus({ type: 'loading', message: `Starting TCP tunnel to ${ip}:${port}...` });
       addLog(`Starting TCP tunnel to ${ip}:${port}...`, 'info');
 
+      // Poll progress
+      pollInterval = setInterval(async () => {
+        try {
+          const progress = await GetConnectionProgress(selectedNode.id);
+          if (progress && progress.status) {
+            setGlobalStatus({ type: 'loading', message: progress.status });
+          }
+        } catch (e) { /* ignore */ }
+      }, 500);
+
       const result = await StartTunnel(selectedNode.id, ip, port);
+      clearInterval(pollInterval);
+      pollInterval = null;
+
       const localPort = result.port || result;
       const tunnelId = result.tunnelId;
 
@@ -935,12 +978,14 @@ function App() {
       const newConfig = await GetSettings();
       // handleTunnelError(err); // Removed invalid call
     } catch (err) {
+      if (pollInterval) clearInterval(pollInterval);
       console.error(err);
       handleTunnelError(err);
       const msg = err.message || String(err);
       setTcpError(msg);
       addLog(`Failed to start TCP tunnel: ${msg}`, 'error');
     } finally {
+      if (pollInterval) clearInterval(pollInterval);
       setTunnelLoading(null);
       setGlobalStatus(null);
     }
@@ -951,12 +996,26 @@ function App() {
     if (!selectedNode) return;
 
     const tunnelKey = `tcp-${ip}-${port}`;
+    let pollInterval = null;
     try {
       setTunnelLoading(tunnelKey);
       setGlobalStatus({ type: 'loading', message: `Starting TCP tunnel to ${ip}:${port}...` });
       addLog(`Starting TCP tunnel to ${ip}:${port}...`, 'info');
 
+      // Poll progress
+      pollInterval = setInterval(async () => {
+        try {
+          const progress = await GetConnectionProgress(selectedNode.id);
+          if (progress && progress.status) {
+            setGlobalStatus({ type: 'loading', message: progress.status });
+          }
+        } catch (e) { /* ignore */ }
+      }, 500);
+
       const result = await StartTunnel(selectedNode.id, ip, port);
+      clearInterval(pollInterval);
+      pollInterval = null;
+
       const localPort = result.port || result;
       const tunnelId = result.tunnelId;
 
@@ -967,10 +1026,12 @@ function App() {
 
       setGlobalStatus({ type: 'success', message: `Tunnel ready: localhost:${localPort}`, duration: 3000 });
     } catch (err) {
+      if (pollInterval) clearInterval(pollInterval);
       console.error(err);
       handleTunnelError(err);
       addLog(`Failed to start TCP tunnel: ${err.message || err}`, 'error');
     } finally {
+      if (pollInterval) clearInterval(pollInterval);
       setTunnelLoading(null);
       setGlobalStatus(null);
     }
@@ -980,12 +1041,26 @@ function App() {
   const startQuickVnc = async (ip, port, appName) => {
     if (!selectedNode) return;
 
+    let pollInterval = null;
     try {
       setTunnelLoading('vnc');
       setGlobalStatus({ type: 'loading', message: `Starting VNC connection to ${ip}:${port}...` });
       addLog(`Starting VNC tunnel to ${ip}:${port}...`, 'info');
 
+      // Poll progress
+      pollInterval = setInterval(async () => {
+        try {
+          const progress = await GetConnectionProgress(selectedNode.id);
+          if (progress && progress.status) {
+            setGlobalStatus({ type: 'loading', message: progress.status });
+          }
+        } catch (e) { /* ignore */ }
+      }, 500);
+
       const result = await StartTunnel(selectedNode.id, ip, port, 'vnc');
+      clearInterval(pollInterval);
+      pollInterval = null;
+
       const localPort = result.port || result;
       const tunnelId = result.tunnelId;
 
@@ -1002,10 +1077,12 @@ function App() {
 
       setGlobalStatus({ type: 'success', message: `VNC connected on localhost:${localPort}`, duration: 3000 });
     } catch (err) {
+      if (pollInterval) clearInterval(pollInterval);
       console.error(err);
       handleTunnelError(err);
       addLog(`Failed to start VNC: ${err.message || err}`, 'error');
     } finally {
+      if (pollInterval) clearInterval(pollInterval);
       setTunnelLoading(null);
       setGlobalStatus(null);
     }
@@ -1020,12 +1097,26 @@ function App() {
       saveSshUsername(appName, username);
     }
 
+    let pollInterval = null;
     try {
       setTunnelLoading('ssh');
       setGlobalStatus({ type: 'loading', message: `Starting SSH connection to ${username}@${ip}...` });
       addLog(`Starting SSH tunnel to ${username}@${ip}:22...`, 'info');
 
+      // Poll progress
+      pollInterval = setInterval(async () => {
+        try {
+          const progress = await GetConnectionProgress(selectedNode.id);
+          if (progress && progress.status) {
+            setGlobalStatus({ type: 'loading', message: progress.status });
+          }
+        } catch (e) { /* ignore */ }
+      }, 500);
+
       const result = await StartTunnel(selectedNode.id, ip, 22);
+      clearInterval(pollInterval);
+      pollInterval = null;
+
       const localPort = result.port || result;
       const tunnelId = result.tunnelId;
 
@@ -1043,10 +1134,12 @@ function App() {
 
       setGlobalStatus({ type: 'success', message: `SSH connected on localhost:${localPort}`, duration: 3000 });
     } catch (err) {
+      if (pollInterval) clearInterval(pollInterval);
       console.error(err);
       handleTunnelError(err);
       addLog(`Failed to start SSH: ${err.message || err}`, 'error');
     } finally {
+      if (pollInterval) clearInterval(pollInterval);
       setTunnelLoading(null);
       setGlobalStatus(null);
     }
@@ -1067,6 +1160,7 @@ function App() {
       return;
     }
 
+    let pollInterval = null;
     try {
       if (sshTunnelConfig.appName) {
         saveSshUsername(sshTunnelConfig.appName, sshUser);
@@ -1076,7 +1170,20 @@ function App() {
       setGlobalStatus({ type: 'loading', message: `Starting SSH tunnel to ${sshTarget}:${targetPort}...` });
       addLog(`Starting SSH tunnel to ${sshTarget}:${targetPort}...`, 'info');
 
+      // Poll progress
+      pollInterval = setInterval(async () => {
+        try {
+          const progress = await GetConnectionProgress(selectedNode.id);
+          if (progress && progress.status) {
+            setGlobalStatus({ type: 'loading', message: progress.status });
+          }
+        } catch (e) { /* ignore */ }
+      }, 500);
+
       const result = await StartTunnel(selectedNode.id, sshTarget, targetPort);
+      clearInterval(pollInterval);
+      pollInterval = null;
+
       const localPort = result.port || result;
       const tunnelId = result.tunnelId;
 
@@ -1114,11 +1221,13 @@ function App() {
       // Refresh session status to reflect potential encryption updates
       await loadSSHStatus(selectedNode.id, false);
     } catch (err) {
+      if (pollInterval) clearInterval(pollInterval);
       console.error(err);
       handleTunnelError(err);
       setSshError(err.message);
       addLog(`Failed to start SSH tunnel: ${err.message}`, 'error');
     } finally {
+      if (pollInterval) clearInterval(pollInterval);
       setTunnelLoading(null);
       setGlobalStatus(null);
     }
@@ -1722,8 +1831,9 @@ Do you want to try connecting anyway?`)) {
             }
           } else if (status.status === 'failed') {
             clearInterval(pollInterval);
-            addLog(`Collect info request failed: ${status.error}`, 'error');
-            setGlobalStatus({ type: 'error', message: `Collection failed: ${status.error}` });
+            const userMsg = extractErrorMessage(status.error);
+            addLog(`Collect info request failed: ${userMsg}`, 'error');
+            setGlobalStatus({ type: 'error', message: `Collection failed: ${userMsg}` });
             if (collectInfoJobRef.current === jobId) {
               collectInfoJobRef.current = null;
             }
@@ -2751,6 +2861,33 @@ Do you want to try connecting anyway?`)) {
                           </div>
                         </div>
                       </div>
+                      
+                      {sshStatus.managementIPs && sshStatus.managementIPs.length > 0 && (
+                        <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: '1px solid rgba(255, 255, 255, 0.05)' }}>
+                          <div className="status-label" style={{ marginBottom: '6px' }}>MANAGEMENT IPS</div>
+                          <div className="status-value" style={{ 
+                            display: 'flex', 
+                            flexWrap: 'wrap', 
+                            gap: '6px' 
+                          }}>
+                            {sshStatus.managementIPs.map((ip, i) => (
+                              <Copyable key={i} text={ip}>
+                                <span style={{ 
+                                  backgroundColor: 'rgba(255, 255, 255, 0.1)', 
+                                  padding: '2px 6px', 
+                                  borderRadius: '4px', 
+                                  fontSize: '11px',
+                                  fontFamily: 'monospace',
+                                  whiteSpace: 'nowrap'
+                                }}>
+                                  {ip}
+                                </span>
+                              </Copyable>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
                       {/* Configuration Controls */}
                       <div className="config-container" style={{ marginTop: '15px', borderTop: '1px solid #333', paddingTop: '15px' }}>
                         <div style={{ fontSize: '12px', color: '#888', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
@@ -2951,137 +3088,157 @@ Do you want to try connecting anyway?`)) {
                                     </Copyable>
                                     {app.pid && <span style={{ marginLeft: '8px', color: '#666', fontSize: '0.9em', fontWeight: 'normal' }}>(PID: {app.pid})</span>}
                                   </span>
-                                  <div className="service-meta" style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
-                                    {app.ips && app.ips.length > 0 && (
-                                      <span style={{ lineHeight: '1.2', display: 'flex', alignItems: 'center', gap: '4px', position: 'relative' }}>
-                                        {app.ips.map((ip, ipIdx) => {
-                                          const savedUser = getSavedSshUsername(app.name);
-                                          const popoverKey = `${app.name}-${ip}`;
-                                          const isPopoverOpen = sshPopover?.key === popoverKey;
-                                          return (
-                                            <span key={ipIdx} style={{ position: 'relative' }}>
-                                              <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                                                <Copyable text={ip}>
-                                                  <button
-                                                    className="quick-tunnel-btn"
-                                                    onClick={(e) => {
-                                                      e.stopPropagation();
-                                                      setSshPopover({
-                                                        key: popoverKey,
-                                                        ip,
-                                                        appName: app.name,
-                                                        username: savedUser
-                                                      });
-                                                    }}
-                                                    disabled={!!tunnelLoading || !isSessionConnected}
-                                                    title={`SSH as ${savedUser}@${ip} — click to connect`}
-                                                  >
-                                                    {ip}
-                                                  </button>
-                                                </Copyable>
-                                              </span>
-                                                {isPopoverOpen && (
-                                                <div
-                                                  ref={sshPopoverRef}
-                                                  className="ssh-popover"
-                                                  onClick={(e) => e.stopPropagation()}
-                                                  style={{
-                                                    position: 'absolute',
-                                                    top: '100%',
-                                                    left: '0',
-                                                    marginTop: '4px',
-                                                    backgroundColor: '#1e1e1e',
-                                                    border: '1px solid #333',
-                                                    borderRadius: '6px',
-                                                    padding: '8px',
-                                                    boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
-                                                    zIndex: 1000,
-                                                    minWidth: '180px'
-                                                  }}
-                                                >
-                                                  <div style={{ marginBottom: '8px', fontSize: '12px', color: '#888' }}>
-                                                    SSH to {ip}
-                                                  </div>
-                                                  <input
-                                                    type="text"
-                                                    value={sshPopover.username}
-                                                    onChange={(e) => setSshPopover({ ...sshPopover, username: e.target.value })}
-                                                    placeholder="Username"
-                                                    onKeyDown={(e) => {
-                                                      if (e.key === 'Enter') {
-                                                        setSshPopover(null);
-                                                        startQuickSsh(ip, app.name, sshPopover.username || 'root');
-                                                      } else if (e.key === 'Escape') {
-                                                        setSshPopover(null);
-                                                      }
-                                                    }}
-                                                    autoFocus
-                                                    style={{
-                                                      width: '100%',
-                                                      boxSizing: 'border-box',
-                                                      padding: '6px 8px',
-                                                      backgroundColor: '#2a2a2a',
-                                                      border: '1px solid #444',
-                                                      borderRadius: '4px',
-                                                      color: '#fff',
-                                                      fontSize: '13px',
-                                                      marginBottom: '8px'
-                                                    }}
-                                                  />
-                                                  <button
-                                                    onClick={() => {
-                                                      setSshPopover(null);
-                                                      startQuickSsh(ip, app.name, sshPopover.username || 'root');
-                                                    }}
-                                                    style={{
-                                                      width: '100%',
-                                                      boxSizing: 'border-box',
-                                                      padding: '6px 12px',
-                                                      backgroundColor: '#238636',
-                                                      border: 'none',
-                                                      borderRadius: '4px',
-                                                      color: '#fff',
-                                                      fontSize: '12px',
-                                                      cursor: 'pointer',
-                                                      fontWeight: '500'
-                                                    }}
-                                                  >
-                                                    Connect
-                                                  </button>
-                                                </div>
-                                              )}
-                                            </span>
-                                          );
-                                        })}
-                                      </span>
-                                    )}
-                                    {app.isRuntime && (
-                                      <span style={{ marginLeft: '8px', display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.85em', color: '#a371f7', verticalAlign: 'middle', marginTop: '0px' }}>
-                                        <Box size={12} /> Compose Runtime
-                                      </span>
-                                    )}
-                                    {app.appType === 'APP_TYPE_DOCKER_COMPOSE' && (
-                                      <span style={{ marginLeft: '8px', display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.85em', color: '#58a6ff', verticalAlign: 'middle', marginTop: '0px' }}>
-                                        <Layers size={12} /> Compose App
-                                      </span>
-                                    )}
+                                  {app.isRuntime && (
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.85em', color: '#a371f7', verticalAlign: 'middle', marginTop: '0px' }}>
+                                      <Box size={12} /> Compose Runtime
+                                    </span>
+                                  )}
+                                  {app.appType === 'APP_TYPE_DOCKER_COMPOSE' && (
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.85em', color: '#58a6ff', verticalAlign: 'middle', marginTop: '0px' }}>
+                                      <Layers size={12} /> Compose App
+                                    </span>
+                                  )}
+                                  <div className="service-meta" style={{ display: 'flex', alignItems: 'center', height: '100%', flexWrap: 'wrap', gap: '4px' }}>
+                                    {app.ips && app.ips.length > 0 && app.ips.map((ip, ipIdx) => {
+                                      const savedUser = getSavedSshUsername(app.name);
+                                      const popoverKey = `${app.name}-${ip}`;
+                                      const isPopoverOpen = sshPopover?.key === popoverKey;
+                                      return (
+                                        <div key={ipIdx} style={{ position: 'relative', display: 'inline-flex' }}>
+                                          <Copyable text={ip}>
+                                            <button
+                                              className="quick-tunnel-btn"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setSshPopover({
+                                                  key: popoverKey,
+                                                  ip,
+                                                  appName: app.name,
+                                                  username: savedUser
+                                                });
+                                              }}
+                                              disabled={!!tunnelLoading || !isSessionConnected}
+                                              title={`SSH as ${savedUser}@${ip} — click to connect`}
+                                              style={{
+                                                backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                                                border: '1px solid rgba(255, 255, 255, 0.1)',
+                                                borderRadius: '4px',
+                                                padding: '2px 6px',
+                                                fontSize: '11px',
+                                                fontFamily: 'monospace',
+                                                color: '#ccc',
+                                                cursor: 'pointer',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '4px'
+                                              }}
+                                            >
+                                              {ip}
+                                            </button>
+                                          </Copyable>
+                                          {isPopoverOpen && (
+                                            <div
+                                              ref={sshPopoverRef}
+                                              className="ssh-popover"
+                                              onClick={(e) => e.stopPropagation()}
+                                              style={{
+                                                position: 'absolute',
+                                                top: '100%',
+                                                left: '0',
+                                                marginTop: '4px',
+                                                backgroundColor: '#1e1e1e',
+                                                border: '1px solid #333',
+                                                borderRadius: '6px',
+                                                padding: '8px',
+                                                boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+                                                zIndex: 1000,
+                                                minWidth: '180px'
+                                              }}
+                                            >
+                                              <div style={{ marginBottom: '8px', fontSize: '12px', color: '#888' }}>
+                                                SSH to {ip}
+                                              </div>
+                                              <input
+                                                type="text"
+                                                value={sshPopover.username}
+                                                onChange={(e) => setSshPopover({ ...sshPopover, username: e.target.value })}
+                                                placeholder="Username"
+                                                onKeyDown={(e) => {
+                                                  if (e.key === 'Enter') {
+                                                    setSshPopover(null);
+                                                    startQuickSsh(ip, app.name, sshPopover.username || 'root');
+                                                  } else if (e.key === 'Escape') {
+                                                    setSshPopover(null);
+                                                  }
+                                                }}
+                                                autoFocus
+                                                style={{
+                                                  width: '100%',
+                                                  boxSizing: 'border-box',
+                                                  padding: '6px 8px',
+                                                  backgroundColor: '#2a2a2a',
+                                                  border: '1px solid #444',
+                                                  borderRadius: '4px',
+                                                  color: '#fff',
+                                                  fontSize: '13px',
+                                                  marginBottom: '8px'
+                                                }}
+                                              />
+                                              <button
+                                                onClick={() => {
+                                                  setSshPopover(null);
+                                                  startQuickSsh(ip, app.name, sshPopover.username || 'root');
+                                                }}
+                                                style={{
+                                                  width: '100%',
+                                                  boxSizing: 'border-box',
+                                                  padding: '6px 12px',
+                                                  backgroundColor: '#238636',
+                                                  border: 'none',
+                                                  borderRadius: '4px',
+                                                  color: '#fff',
+                                                  fontSize: '12px',
+                                                  cursor: 'pointer',
+                                                  fontWeight: '500'
+                                                }}
+                                              >
+                                                Connect
+                                              </button>
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
                                     {app.vncPort && (
-                                      <span style={{ marginLeft: app.ips && app.ips.length > 0 ? '8px' : '0', display: 'flex', alignItems: 'center' }}>
-                                        • VNC:
-                                        <button
-                                          className="quick-tunnel-btn"
-                                          style={{ marginLeft: '4px' }}
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            // Docker Compose apps require localhost for eve-os guacd
-                                            startQuickVnc('localhost', app.vncPort, app.name);
-                                          }}
-                                          disabled={!!tunnelLoading || !isSessionConnected}
-                                          title={`Click to start VNC on port ${app.vncPort}`}
-                                        >
-                                          Port {app.vncPort}
-                                        </button>
-                                      </span>
+                                      <div style={{ position: 'relative', display: 'inline-flex' }}>
+                                        <Copyable text={app.vncPort.toString()}>
+                                          <button
+                                            className="quick-tunnel-btn"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              // Docker Compose apps require localhost for eve-os guacd
+                                              startQuickVnc('localhost', app.vncPort, app.name);
+                                            }}
+                                            disabled={!!tunnelLoading || !isSessionConnected}
+                                            title={`Click to start VNC on port ${app.vncPort}`}
+                                            style={{
+                                              backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                                              border: '1px solid rgba(255, 255, 255, 0.1)',
+                                              borderRadius: '4px',
+                                              padding: '2px 6px',
+                                              fontSize: '11px',
+                                              fontFamily: 'monospace',
+                                              color: '#ccc',
+                                              cursor: 'pointer',
+                                              display: 'flex',
+                                              alignItems: 'center',
+                                              gap: '4px'
+                                            }}
+                                          >
+                                            VNC: {app.vncPort}
+                                          </button>
+                                        </Copyable>
+                                      </div>
                                     )}
                                   </div>
                                 </div>

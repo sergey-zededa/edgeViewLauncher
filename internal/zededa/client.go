@@ -437,6 +437,50 @@ func (c *Client) GetProjects() ([]Project, error) {
 	return projectResp.List, nil
 }
 
+// DeviceStatus matches the DeviceStatusMsg schema
+type DeviceStatus struct {
+	ID            string      `json:"id"`
+	Name          string      `json:"name"`
+	ProjectID     string      `json:"projectId"`
+	AdminState    string      `json:"adminState"`
+	RunState      string      `json:"runState"`
+	NetStatusList []NetStatus `json:"netStatusList,omitempty"`
+}
+
+// GetDeviceStatus fetches detailed device status information including network interfaces
+func (c *Client) GetDeviceStatus(nodeID string) (*DeviceStatus, error) {
+	if c.Token == "" {
+		return nil, fmt.Errorf("API token not configured")
+	}
+
+	url := fmt.Sprintf("%s/api/v1/devices/id/%s/status", c.BaseURL, nodeID)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %v", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var status DeviceStatus
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %v", err)
+	}
+
+	return &status, nil
+}
+
 // EdgeView Request/Response structures
 type EdgeViewConfig struct {
 	DebugKnob bool `json:"debugKnob"`

@@ -46,6 +46,7 @@ const (
 
 // StartCollectInfo initiates the collect info process
 func (m *Manager) StartCollectInfo(nodeID string) (string, error) {
+	fmt.Printf("DEBUG: StartCollectInfo called for node %s\n", nodeID)
 	// Get cached session
 	m.mu.RLock()
 	cached, ok := m.sessions[nodeID]
@@ -89,6 +90,7 @@ func (m *Manager) GetCollectInfoJob(jobID string) *CollectInfoJob {
 }
 
 func (m *Manager) runCollectInfo(ctx context.Context, job *CollectInfoJob, config *zededa.SessionConfig) {
+	fmt.Printf("DEBUG: runCollectInfo started for job %s\n", job.ID)
 	defer func() {
 		// Ensure status is updated on exit if not completed
 		m.collectMu.Lock()
@@ -99,11 +101,14 @@ func (m *Manager) runCollectInfo(ctx context.Context, job *CollectInfoJob, confi
 			}
 		}
 		m.collectMu.Unlock()
+		fmt.Printf("DEBUG: runCollectInfo finished for job %s. Final status: %s, Error: %s\n", job.ID, job.Status, job.Error)
 	}()
 
 	// Connect to WebSocket
+	fmt.Println("DEBUG: Connecting to EdgeView for collectinfo...")
 	wsConn, _, err := m.connectToEdgeView(config)
 	if err != nil {
+		fmt.Printf("DEBUG: CollectInfo connection failed: %v\n", err)
 		m.updateJobError(job, fmt.Sprintf("Failed to connect: %v", err))
 		return
 	}
@@ -117,7 +122,9 @@ func (m *Manager) runCollectInfo(ctx context.Context, job *CollectInfoJob, confi
 	}
 
 	queryBytes, _ := json.Marshal(query)
+	fmt.Println("DEBUG: Sending collectinfo command...")
 	if err := sendWrappedMessage(wsConn, queryBytes, config.Key, websocket.TextMessage, config.Enc); err != nil {
+		fmt.Printf("DEBUG: Failed to send command: %v\n", err)
 		m.updateJobError(job, fmt.Sprintf("Failed to send command: %v", err))
 		return
 	}
@@ -143,6 +150,7 @@ func (m *Manager) runCollectInfo(ctx context.Context, job *CollectInfoJob, confi
 	for {
 		select {
 		case <-ctx.Done():
+			fmt.Println("DEBUG: Context cancelled")
 			return
 		default:
 			// Read message
@@ -151,6 +159,7 @@ func (m *Manager) runCollectInfo(ctx context.Context, job *CollectInfoJob, confi
 				if job.Status == "completed" {
 					return // Normal exit if we marked it completed
 				}
+				fmt.Printf("DEBUG: ReadMessage error: %v\n", err)
 				m.updateJobError(job, fmt.Sprintf("Connection error: %v", err))
 				return
 			}
@@ -161,8 +170,13 @@ func (m *Manager) runCollectInfo(ctx context.Context, job *CollectInfoJob, confi
 			// Unwrap
 			payload, err := unwrapMessage(msg, config.Key, config.Enc)
 			if err != nil {
+				fmt.Printf("DEBUG: unwrapMessage error: %v\n", err)
 				if err == ErrNoDeviceOnline {
-					m.updateJobError(job, "Device offline")
+					m.updateJobError(job, "Device offline (no device online)")
+					return
+				}
+				if err == ErrBusyInstance {
+					m.updateJobError(job, "Device busy (instance limit reached)")
 					return
 				}
 				// Log but continue?
@@ -175,6 +189,7 @@ func (m *Manager) runCollectInfo(ctx context.Context, job *CollectInfoJob, confi
 			if !gotFileInfo {
 				var info copyFile
 				if err := json.Unmarshal(payload, &info); err == nil && info.Name != "" {
+					fmt.Printf("DEBUG: Got file info: %+v\n", info)
 					gotFileInfo = true
 					
 					// Determine total size (Size for file, DirSize for tar)
@@ -203,6 +218,7 @@ func (m *Manager) runCollectInfo(ctx context.Context, job *CollectInfoJob, confi
 					// Send Start-Copy confirmation
 					// Note: edgeview-client uses addEnvelopeAndWriteWss(..., false, false) which signs/encrypts based on state
 					// We use sendWrappedMessage which handles config.Enc
+					fmt.Println("DEBUG: Sending Start-Copy confirmation")
 					if err := sendWrappedMessage(wsConn, []byte(startCopyMessage), config.Key, websocket.TextMessage, config.Enc); err != nil {
 						m.updateJobError(job, fmt.Sprintf("Failed to send start confirmation: %v", err))
 						return
@@ -214,8 +230,10 @@ func (m *Manager) runCollectInfo(ctx context.Context, job *CollectInfoJob, confi
 			// 2. Text Control Messages
 			if mt == websocket.TextMessage {
 				payloadStr := string(payload)
+				// fmt.Printf("DEBUG: Received TextMessage: %s\n", payloadStr)
 				
 				if strings.Contains(payloadStr, tarCopyDoneMsg) {
+					fmt.Println("DEBUG: Tar copy done")
 					tarfileDone = true
 					// Extract server sent size if available: "+++TarCopyDone+++ +12345+++"
 					re := regexp.MustCompile(`\+(\d+)\+\+\+`)
@@ -227,6 +245,7 @@ func (m *Manager) runCollectInfo(ctx context.Context, job *CollectInfoJob, confi
 					}
 				} else if strings.Contains(payloadStr, closeMessage) {
 					// Done
+					fmt.Println("DEBUG: Transfer completed")
 					m.collectMu.Lock()
 					job.Status = "completed"
 					if job.Progress == 0 && serverSentSize > 0 {
