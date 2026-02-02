@@ -39,6 +39,10 @@ type fakeZededaClient struct {
 	appDetails    map[string]*zededa.AppInstanceStatus
 	appConfigs    map[string]*zededa.AppInstanceConfig
 	appDetailsErr error
+
+	// Network Instances
+	networkInstances   map[string]*zededa.NetworkInstanceStatus
+	networkInstanceErr error
 }
 
 func (f *fakeZededaClient) GetEnterprise() (*zededa.Enterprise, error) {
@@ -95,6 +99,20 @@ func (f *fakeZededaClient) GetAppInstanceConfig(id string) (*zededa.AppInstanceC
 		return nil, nil
 	}
 	return f.appConfigs[id], nil
+}
+
+func (f *fakeZededaClient) GetNetworkInstanceDetails(niID string) (*zededa.NetworkInstanceStatus, error) {
+	if f.networkInstanceErr != nil {
+		return nil, f.networkInstanceErr
+	}
+	if f.networkInstances == nil {
+		return nil, nil
+	}
+	return f.networkInstances[niID], nil
+}
+
+func (f *fakeZededaClient) GetDeviceStatus(nodeID string) (*zededa.DeviceStatus, error) {
+	return nil, errors.New("not implemented")
 }
 
 func (f *fakeZededaClient) GetDevice(nodeID string) (map[string]interface{}, error) {
@@ -158,7 +176,7 @@ func (m *fakeSessionManager) StoreCachedSession(nodeID string, cfg *zededa.Sessi
 	m.cached[nodeID] = &session.CachedSession{Config: cfg, Port: port, ExpiresAt: expiresAt}
 }
 
-func (m *fakeSessionManager) StartProxy(ctx context.Context, cfg *zededa.SessionConfig, nodeID string, target string, protocol string) (int, string, error) {
+func (m *fakeSessionManager) StartProxy(ctx context.Context, cfg *zededa.SessionConfig, nodeID string, target string, protocol string, onProgress func(string)) (int, string, error) {
 	return m.startProxyPort, m.startProxyID, m.startProxyErr
 }
 

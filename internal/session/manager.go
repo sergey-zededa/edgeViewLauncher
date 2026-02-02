@@ -278,7 +278,14 @@ type cmdOpt struct {
 // 2. Send the tcp command and wait for +++tcpSetupOK+++
 // 3. Start accepting TCP clients that multiplex over the shared WebSocket
 // Returns the local port number and tunnel ID.
-func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, nodeID string, target string, protocol string) (int, string, error) {
+func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, nodeID string, target string, protocol string, onProgress func(string)) (int, string, error) {
+	// Helper to safely call progress callback
+	reportProgress := func(msg string) {
+		if onProgress != nil {
+			onProgress(msg)
+		}
+	}
+
 	// Determine the initial instance ID based on MaxInst
 	initialInstID := config.InstID
 	if config.MaxInst == 1 {
@@ -332,6 +339,9 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		if attempt > 1 {
 			fmt.Printf("DEBUG: Retry attempt %d/%d for tunnel setup...\n", attempt, maxRetries)
+			reportProgress(fmt.Sprintf("Retrying connection (attempt %d/%d)...", attempt, maxRetries))
+		} else {
+			reportProgress("Connecting to EdgeView...")
 		}
 
 		// Set the instance ID for this attempt
@@ -346,6 +356,7 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 			if attempt < maxRetries {
 				waitTime := time.Duration(attempt*2) * time.Second
 				fmt.Printf("DEBUG: Connection failed, waiting %v before retry...\n", waitTime)
+				reportProgress(fmt.Sprintf("Connection failed, retrying in %ds...", int(waitTime.Seconds())))
 				time.Sleep(waitTime)
 				continue
 			}
@@ -378,6 +389,7 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 
 		// Wait for +++tcpSetupOK+++ (with timeout)
 		fmt.Printf("DEBUG: Waiting for tcpSetupOK from device (attempt %d/%d)...\n", attempt, maxRetries)
+		reportProgress(fmt.Sprintf("Waiting for device confirmation (attempt %d/%d)...", attempt, maxRetries))
 		setupErr := m.waitForTcpSetupOK(wsConn, config.Key, 30*time.Second, config.Enc)
 		if setupErr == nil {
 			// fmt.Println("DEBUG: tcpSetupOK received, tunnel established successfully!")
@@ -388,6 +400,7 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 		if setupErr == ErrNoDeviceOnline {
 			seenNoDeviceOnline = true
 			fmt.Printf("DEBUG: Device is not online (attempt %d/%d). The device may not be connected to EdgeView yet.\n", attempt, maxRetries)
+			reportProgress(fmt.Sprintf("Device not online yet (attempt %d/%d)...", attempt, maxRetries))
 		} else {
 			fmt.Printf("DEBUG: Tunnel setup failed: %v (attempt %d/%d)\n", setupErr, attempt, maxRetries)
 		}
@@ -404,6 +417,7 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 					currentInstID = nextInstID
 					foundAlternative = true
 					fmt.Printf("DEBUG: Switching to alternative instance %d (previous failed)...\n", currentInstID)
+					reportProgress(fmt.Sprintf("Instance busy, switching to instance %d...", currentInstID))
 					break
 				}
 			}
@@ -418,6 +432,7 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 
 			// All instances tried - reset for next full round
 			fmt.Printf("DEBUG: All %d instances have been tried. Will retry with backoff.\n", config.MaxInst)
+			reportProgress(fmt.Sprintf("All instances busy, retrying (attempt %d/%d)...", attempt, maxRetries))
 			triedInstances = make(map[int]bool)
 			// Don't reset currentInstID to initial, just keep going round-robin or stay on current
 			// But to be safe and consistent, let's reset triedInstances and let the loop continue
@@ -436,6 +451,7 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 			// Start faster than before since we removed the initial 20s delay
 			waitTime := time.Duration(1<<uint(attempt)) * time.Second
 			fmt.Printf("DEBUG: Waiting %v before next attempt...\n", waitTime)
+			reportProgress(fmt.Sprintf("Waiting %ds before retry...", int(waitTime.Seconds())))
 			time.Sleep(waitTime)
 		}
 	}
@@ -636,6 +652,46 @@ func (m *Manager) LaunchTerminal(port int, keyPath string) error {
 	return nil
 }
 
+// GetContainerExecCommand generates the command to exec into a container shell.
+// EVE-OS uses containerd, so we use `ctr t exec` to attach to running containers.
+// The containerID should be the full container ID or name as known to containerd.
+// Returns a command that can be run inside an SSH session to the EVE-OS host.
+func GetContainerExecCommand(containerID string, shell string) string {
+	if shell == "" {
+		// Default to /bin/sh as it's more universally available in containers
+		shell = "/bin/sh"
+	}
+
+	// Generate a unique exec-id based on timestamp to avoid conflicts
+	execID := fmt.Sprintf("shell-%d", time.Now().UnixNano())
+
+	// ctr command to exec into a container:
+	// ctr -n <namespace> t exec -t --exec-id <id> <containerID> <shell>
+	// For Docker Compose apps on EVE, containers typically run in the "eve" namespace
+	// We try /bin/bash first, fall back to /bin/sh
+	return fmt.Sprintf("ctr -n eve t exec -t --exec-id %s %s %s", execID, containerID, shell)
+}
+
+// GetDockerExecCommand generates the command to exec into a Docker container.
+// This is used for APP_TYPE_DOCKER_COMPOSE applications where we tunnel to the
+// app runtime and use the native docker CLI.
+func GetDockerExecCommand(containerName string, shell string, appID string) string {
+	if shell == "" {
+		shell = "/bin/sh"
+	}
+
+	// For ZEDEDA Docker Compose apps, containers are often prefixed with the App Instance ID.
+	// If appID is provided and the container name doesn't already start with it, prefix it.
+	finalContainerName := containerName
+	if appID != "" && !strings.HasPrefix(containerName, appID) {
+		// Try hyphenated prefix first (standard ZEDEDA pattern)
+		finalContainerName = fmt.Sprintf("%s-%s", appID, containerName)
+	}
+
+	// Standard docker exec command
+	return fmt.Sprintf("docker exec -it %s %s", finalContainerName, shell)
+}
+
 // ExecuteCommand executes an EdgeView command and returns the output
 func (m *Manager) ExecuteCommand(nodeID string, command string) (string, error) {
 	// Get cached session
@@ -681,10 +737,15 @@ func (m *Manager) ExecuteCommand(nodeID string, command string) (string, error) 
 
 		// 4. Connect to WebSocket
 		tlsConfig := &tls.Config{InsecureSkipVerify: false}
-		netDialer := &net.Dialer{}
+		netDialer := &net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}
 		dialer := &websocket.Dialer{
-			TLSClientConfig:  tlsConfig,
-			NetDialContext:   netDialer.DialContext,
+			TLSClientConfig: tlsConfig,
+			NetDialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return netDialer.DialContext(ctx, "tcp4", addr)
+			},
 			HandshakeTimeout: 15 * time.Second, // Faster timeout for command connections
 		}
 
@@ -1146,10 +1207,15 @@ func (m *Manager) connectToEdgeView(config *zededa.SessionConfig) (*websocket.Co
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: false,
 	}
-	netDialer := &net.Dialer{}
+	netDialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
 	dialer := &websocket.Dialer{
-		TLSClientConfig:  tlsConfig,
-		NetDialContext:   netDialer.DialContext,
+		TLSClientConfig: tlsConfig,
+		NetDialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return netDialer.DialContext(ctx, "tcp4", addr)
+		},
 		HandshakeTimeout: 45 * time.Second,
 	}
 
@@ -1170,6 +1236,16 @@ func (m *Manager) connectToEdgeView(config *zededa.SessionConfig) (*websocket.Co
 
 	initialMsg := string(msg)
 	fmt.Printf("DEBUG: Received initial message: %s\n", initialMsg)
+
+	// Check for known error messages in the initial handshake
+	if strings.Contains(initialMsg, "can't have more than 2 peers") {
+		wsConn.Close()
+		return nil, "", ErrBusyInstance
+	}
+	if strings.Contains(initialMsg, "no device online") {
+		wsConn.Close()
+		return nil, "", ErrNoDeviceOnline
+	}
 
 	// Extract client IP address from message like "YourEndPointIPAddr:213.47.61.191"
 	clientIP := ""

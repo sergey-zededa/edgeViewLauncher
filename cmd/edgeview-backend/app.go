@@ -33,7 +33,9 @@ type zededaAPI interface {
 	GetDeviceAppInstances(deviceID string) ([]zededa.AppInstance, error)
 	GetAppInstanceDetails(appInstanceID string) (*zededa.AppInstanceDetails, error)
 	GetAppInstanceConfig(appInstanceID string) (*zededa.AppInstanceConfig, error)
+	GetNetworkInstanceDetails(niID string) (*zededa.NetworkInstanceStatus, error)
 	GetDevice(nodeID string) (map[string]interface{}, error)
+	GetDeviceStatus(nodeID string) (*zededa.DeviceStatus, error)
 	VerifyToken(token string) (*zededa.TokenInfo, error)
 }
 
@@ -42,7 +44,7 @@ type sessionAPI interface {
 	GetCachedSession(nodeID string) (*session.CachedSession, bool)
 	StoreCachedSession(nodeID string, config *zededa.SessionConfig, port int, expiresAt time.Time)
 	// StartProxy starts a persistent EdgeView proxy for the given device nodeID and target.
-	StartProxy(ctx context.Context, config *zededa.SessionConfig, nodeID string, target string, protocol string) (int, string, error)
+	StartProxy(ctx context.Context, config *zededa.SessionConfig, nodeID string, target string, protocol string, onProgress func(string)) (int, string, error)
 	LaunchTerminal(port int, keyPath string) error
 	ExecuteCommand(nodeID string, command string) (string, error)
 	CloseTunnel(tunnelID string) error
@@ -379,15 +381,70 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (int, string, 
 	if needNewProxy {
 		// fmt.Println("Starting proxy...")
 		a.SetConnectionProgress(nodeID, "Starting local secure proxy...")
-		var err error
-		// Default to SSH (tcp/localhost:22)
-		port, tunnelID, err = a.sessionManager.StartProxy(a.ctx, sessionConfig, nodeID, "127.0.0.1:22", "ssh")
-		if err != nil {
-			fmt.Printf("StartProxy failed: %v\n", err)
-			a.SetConnectionProgress(nodeID, "Error: Failed to start proxy")
-			return 0, "", fmt.Errorf("failed to start proxy: %w", err)
+
+		// 1. Gather candidate IPs
+		// Always try localhost first
+		candidateIPs := []string{"127.0.0.1"}
+
+		// Fetch device status to find other management IPs
+		status, err := a.zededaClient.GetDeviceStatus(nodeID)
+		if err == nil && status != nil {
+			for _, ns := range status.NetStatusList {
+				if ns.Up {
+					for _, ip := range ns.IPs {
+						if ip != "" && ip != "127.0.0.1" {
+							candidateIPs = append(candidateIPs, ip)
+						}
+					}
+				}
+			}
+		} else {
+			fmt.Printf("Warning: Failed to fetch device status for IP discovery: %v\n", err)
 		}
-		// fmt.Printf("Proxy started on port %d (Tunnel ID: %s)\n", port, tunnelID)
+
+		// Remove duplicates
+		candidateIPs = uniqueStrings(candidateIPs)
+		fmt.Printf("DEBUG: Candidate IPs for SSH: %v\n", candidateIPs)
+
+		var port int
+		var tunnelID string
+		var lastErr error
+
+		// 2. Try each IP
+		for i, targetIP := range candidateIPs {
+			target := fmt.Sprintf("%s:22", targetIP)
+			msg := fmt.Sprintf("Connecting to %s...", targetIP)
+			if i > 0 {
+				msg = fmt.Sprintf("Localhost failed. Trying fallback IP %s (%d/%d)...", targetIP, i+1, len(candidateIPs))
+			}
+			a.SetConnectionProgress(nodeID, msg)
+
+			// We pass a progress callback that updates the global progress
+			// Note: StartProxy internal retries (maxRetries=5) might be too long if we have many IPs.
+			// However, since we want robustness, we keep it. The user sees progress.
+			port, tunnelID, err = a.sessionManager.StartProxy(a.ctx, sessionConfig, nodeID, target, "ssh", func(status string) {
+				// Prefix status with IP to give context
+				a.SetConnectionProgress(nodeID, fmt.Sprintf("[%s] %s", targetIP, status))
+			})
+
+			if err == nil {
+				// Success!
+				fmt.Printf("Successfully connected to %s\n", target)
+				lastErr = nil
+				break
+			}
+
+			fmt.Printf("Failed to connect to %s: %v\n", target, err)
+			lastErr = err
+			
+			// If we have more candidates, continue. 
+			// If this was the last one, we'll fall through with lastErr.
+		}
+
+		if lastErr != nil {
+			a.SetConnectionProgress(nodeID, "Error: Connection failed on all interfaces")
+			return 0, "", fmt.Errorf("failed to start proxy on any candidate IP: %w", lastErr)
+		}
 
 		// Cache the session config (always cache token/URL, cache port only for native terminal)
 		portToCache := 0
@@ -401,6 +458,10 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (int, string, 
 		} else {
 			// fmt.Printf("Session and proxy cached until %s\n", expiresAt.Format(time.RFC3339))
 		}
+		
+		// Return success values
+		a.SetConnectionProgress(nodeID, "Connected")
+		return port, tunnelID, nil
 	}
 
 	// Launch the terminal if requested
@@ -506,10 +567,15 @@ func (a *App) StartTunnel(nodeID, targetIP string, targetPort int, protocol stri
 	var tunnelID string
 	var err error
 
+	// Progress callback wrapper
+	onProgress := func(status string) {
+		a.SetConnectionProgress(nodeID, status)
+	}
+
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		fmt.Printf("DEBUG: Starting tunnel (attempt %d/%d)...\n", attempt, maxRetries)
 
-		port, tunnelID, err = a.sessionManager.StartProxy(a.ctx, cached.Config, nodeID, target, protocol)
+		port, tunnelID, err = a.sessionManager.StartProxy(a.ctx, cached.Config, nodeID, target, protocol, onProgress)
 
 		if err == nil {
 			fmt.Printf("Tunnel started on localhost:%d -> %s (ID: %s)\n", port, target, tunnelID)
@@ -525,6 +591,7 @@ func (a *App) StartTunnel(nodeID, targetIP string, targetPort int, protocol stri
 			if attempt == maxRetries {
 				fmt.Println("DEBUG: Last attempt failed with 'no device online'. Forcefully refreshing session...")
 				a.sessionManager.InvalidateSession(nodeID)
+				onProgress("Refreshing session (device unreachable)...")
 
 				// Init new session
 				script, initErr := a.zededaClient.InitSession(nodeID)
@@ -547,7 +614,8 @@ func (a *App) StartTunnel(nodeID, targetIP string, targetPort int, protocol stri
 
 				// One more try with fresh session
 				fmt.Println("DEBUG: Retrying with fresh session...")
-				port, tunnelID, err = a.sessionManager.StartProxy(a.ctx, cached.Config, nodeID, target, protocol)
+				onProgress("Retrying with new session...")
+				port, tunnelID, err = a.sessionManager.StartProxy(a.ctx, cached.Config, nodeID, target, protocol, onProgress)
 				if err == nil {
 					fmt.Printf("Tunnel started on localhost:%d -> %s (ID: %s) after session refresh\n", port, target, tunnelID)
 					return port, tunnelID, nil
@@ -849,8 +917,9 @@ type SSHStatus struct {
 	DebugKnob      bool   `json:"debugKnob"`
 	VGAEnabled     bool   `json:"vgaEnabled"`
 	USBEnabled     bool   `json:"usbEnabled"`
-	ConsoleEnabled bool   `json:"consoleEnabled"`
-	IsEncrypted    bool   `json:"isEncrypted"`
+	ConsoleEnabled bool     `json:"consoleEnabled"`
+	IsEncrypted    bool     `json:"isEncrypted"`
+	ManagementIPs  []string `json:"managementIPs"`
 }
 
 // GetSSHStatus returns the current SSH status of the node
@@ -896,6 +965,23 @@ func (a *App) GetSSHStatus(nodeID string) *SSHStatus {
 		USBEnabled:     evStatus.USBEnabled,
 		ConsoleEnabled: evStatus.ConsoleEnabled,
 		IsEncrypted:    evStatus.IsEncrypted,
+	}
+
+	// Fetch management IPs for display
+	// We do this in parallel or just sequentially since it's a status check
+	deviceStatus, err := a.zededaClient.GetDeviceStatus(nodeID)
+	if err == nil && deviceStatus != nil {
+		var ips []string
+		for _, ns := range deviceStatus.NetStatusList {
+			if ns.Up {
+				for _, ip := range ns.IPs {
+					if ip != "" && ip != "127.0.0.1" {
+						ips = append(ips, ip)
+					}
+				}
+			}
+		}
+		sshStatus.ManagementIPs = uniqueStrings(ips)
 	}
 
 	// Override expiry with cached session if available and valid
@@ -953,6 +1039,7 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 		Containers    []zededa.ContainerInfo `json:"containers,omitempty"`
 		AppType       string                 `json:"appType,omitempty"`
 		DockerCompose string                 `json:"dockerCompose,omitempty"`
+		InternalIPs   []string               `json:"internalIps,omitempty"`
 	}
 
 	type ServicesResponse struct {
@@ -1057,6 +1144,26 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 			if hasConfig {
 				svc.DockerCompose = config.DockerCompose
 			}
+
+			// Identify internal IPs by checking Network Instance kind
+			var internalIPs []string
+			for _, ns := range status.NetStatusList {
+				if ns.NetworkID != "" {
+					ni, err := a.zededaClient.GetNetworkInstanceDetails(ns.NetworkID)
+					if err == nil && ni != nil {
+						// Debug log to identify the correct Kind
+						fmt.Printf("DEBUG-NET: App %s, NetID %s, Kind=%s, Type=%s, Name=%s\n", app.Name, ns.NetworkID, ni.Kind, ni.Type, ni.Name)
+
+						// Kind "NETWORK_INSTANCE_KIND_LOCAL" indicates an airgapped/local network
+						if ni.Kind == "NETWORK_INSTANCE_KIND_LOCAL" {
+							internalIPs = append(internalIPs, ns.IPs...)
+						}
+					} else if err != nil {
+						fmt.Printf("DEBUG-NET: Failed to get NI details for %s: %v\n", ns.NetworkID, err)
+					}
+				}
+			}
+			svc.InternalIPs = uniqueStrings(internalIPs)
 
 			// Extract VNC info (from Config)
 			if hasConfig && config.VMInfo.VNC {
@@ -1192,6 +1299,7 @@ func (a *App) VerifyEdgeViewTunnel(nodeID string) error {
 
 // StartCollectInfo starts a collect info job
 func (a *App) StartCollectInfo(nodeID string) (string, error) {
+	fmt.Printf("DEBUG: App.StartCollectInfo calling session manager for %s\n", nodeID)
 	// Check if we have a cached session
 	_, ok := a.sessionManager.GetCachedSession(nodeID)
 	if !ok {

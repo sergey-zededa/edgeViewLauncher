@@ -2,11 +2,13 @@ package zededa
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"regexp"
 	"strings"
@@ -72,6 +74,15 @@ type Client struct {
 func NewClient(baseURL, token string) *Client {
 	// Clone default transport to keep proxy settings etc.
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+
+	// Force IPv4 for dual-stack environments where IPv6 might be flaky
+	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext(ctx, "tcp4", addr)
+	}
+
 	// Disable HTTP/2
 	transport.ForceAttemptHTTP2 = false
 	transport.TLSNextProto = make(map[string]func(string, *tls.Conn) http.RoundTripper)
@@ -210,9 +221,10 @@ type VMInfo struct {
 }
 
 type NetStatus struct {
-	Up     bool     `json:"up"`
-	IfName string   `json:"ifName"`
-	IPs    []string `json:"ipAddrs"`
+	Up        bool     `json:"up"`
+	IfName    string   `json:"ifName"`
+	IPs       []string `json:"ipAddrs"`
+	NetworkID string   `json:"networkId"`
 }
 
 type PortMap struct {
@@ -289,6 +301,48 @@ func (c *Client) GetAppInstanceDetails(appInstanceID string) (*AppInstanceDetail
 	}
 
 	return &details, nil
+}
+
+// NetworkInstanceStatus matches the NetworkInstanceStatusMsg schema
+type NetworkInstanceStatus struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Kind string `json:"kind"` // e.g. "NETWORK_INSTANCE_KIND_LOCAL"
+	Type string `json:"type"`
+}
+
+// GetNetworkInstanceDetails fetches detailed network instance status information
+func (c *Client) GetNetworkInstanceDetails(niID string) (*NetworkInstanceStatus, error) {
+	if c.Token == "" {
+		return nil, fmt.Errorf("API token not configured")
+	}
+
+	url := fmt.Sprintf("%s/api/v1/netinsts/id/%s/status", c.BaseURL, niID)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %v", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var status NetworkInstanceStatus
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %v", err)
+	}
+
+	return &status, nil
 }
 
 // GetAppInstanceConfig fetches the configuration for an edge app instance
@@ -383,10 +437,54 @@ func (c *Client) GetProjects() ([]Project, error) {
 	return projectResp.List, nil
 }
 
+// DeviceStatus matches the DeviceStatusMsg schema
+type DeviceStatus struct {
+	ID            string      `json:"id"`
+	Name          string      `json:"name"`
+	ProjectID     string      `json:"projectId"`
+	AdminState    string      `json:"adminState"`
+	RunState      string      `json:"runState"`
+	NetStatusList []NetStatus `json:"netStatusList,omitempty"`
+}
+
+// GetDeviceStatus fetches detailed device status information including network interfaces
+func (c *Client) GetDeviceStatus(nodeID string) (*DeviceStatus, error) {
+	if c.Token == "" {
+		return nil, fmt.Errorf("API token not configured")
+	}
+
+	url := fmt.Sprintf("%s/api/v1/devices/id/%s/status", c.BaseURL, nodeID)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %v", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var status DeviceStatus
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %v", err)
+	}
+
+	return &status, nil
+}
+
 // EdgeView Request/Response structures
 type EdgeViewConfig struct {
-	DebugKnob bool   `json:"debugKnob"`
-	Expiry    string `json:"expiry"` // minutes
+	DebugKnob bool `json:"debugKnob"`
+	Expiry    int  `json:"expiry"` // minutes
 }
 
 type EdgeViewScriptResponse struct {
@@ -399,7 +497,7 @@ func (c *Client) StartEdgeView(nodeID string) error {
 
 	payload := EdgeViewConfig{
 		DebugKnob: true,
-		Expiry:    "60", // 60 minutes
+		Expiry:    60, // 60 minutes
 	}
 
 	data, err := json.Marshal(payload)
@@ -434,7 +532,7 @@ func (c *Client) StopEdgeView(nodeID string) error {
 
 	payload := EdgeViewConfig{
 		DebugKnob: false,
-		Expiry:    "60",
+		Expiry:    60,
 	}
 
 	data, err := json.Marshal(payload)
