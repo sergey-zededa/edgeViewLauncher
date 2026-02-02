@@ -113,6 +113,10 @@ func (f *fakeZededaClient) GetNetworkInstanceDetails(niID string) (*zededa.Netwo
 	return f.networkInstances[niID], nil
 }
 
+func (f *fakeZededaClient) GetDeviceStatus(nodeID string) (*zededa.DeviceStatus, error) {
+	return nil, errors.New("not implemented")
+}
+
 func (f *fakeZededaClient) GetDevice(nodeID string) (map[string]interface{}, error) {
 	// Minimal stub used by App.GetNodeMeta; tests that rely on metadata
 	// can configure behavior later if needed. For now, return a basic
@@ -178,7 +182,7 @@ func (m *fakeSessionManager) StoreCachedSession(nodeID string, cfg *zededa.Sessi
 	m.cached[nodeID] = &session.CachedSession{Config: cfg, Port: port, ExpiresAt: expiresAt}
 }
 
-func (m *fakeSessionManager) StartProxy(ctx context.Context, cfg *zededa.SessionConfig, nodeID string, target string, protocol string) (int, string, error) {
+func (m *fakeSessionManager) StartProxy(ctx context.Context, cfg *zededa.SessionConfig, nodeID string, target string, protocol string, onProgress func(string)) (int, string, error) {
 	return m.startProxyPort, m.startProxyID, m.startProxyErr
 }
 

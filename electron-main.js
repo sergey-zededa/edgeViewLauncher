@@ -443,6 +443,11 @@ function createVncWindow(options) {
         vncWindow.show();
     });
 
+    // Forward renderer logs to terminal
+    vncWindow.webContents.on('console-message', (event, level, message) => {
+        console.log(`VNC Renderer [${nodeName}]:`, message);
+    });
+
     vncWindow.on('closed', () => {
         // Window closed, cleanup tunnel
         console.log(`VNC window closed for ${nodeName}`);

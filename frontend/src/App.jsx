@@ -402,7 +402,19 @@ function App() {
     setTunnelLoading(`shell-${c.containerName}`);
     setGlobalStatus({ type: 'loading', message: `Opening shell in ${c.containerName}...` });
     addLog(`Opening shell in container: ${c.containerName}`, 'info');
+
+    let pollInterval = null;
     try {
+      // Poll progress for shell connection
+      pollInterval = setInterval(async () => {
+        try {
+          const progress = await GetConnectionProgress(selectedNode.id);
+          if (progress && progress.status) {
+            setGlobalStatus({ type: 'loading', message: progress.status });
+          }
+        } catch (e) { /* ignore */ }
+      }, 500);
+
       const result = await window.electronAPI.startContainerShell(
         selectedNode.id,
         app.name,
@@ -414,14 +426,19 @@ function App() {
         password,
         app.id // Pass App ID (UUID) for container name resolution
       );
+      clearInterval(pollInterval);
+      pollInterval = null;
+
       if (result.success) {
         addLog(`Container shell opened for ${c.containerName}`, 'success');
       } else {
         addLog(`Failed to open shell: ${result.error}`, 'error');
       }
     } catch (err) {
+      if (pollInterval) clearInterval(pollInterval);
       addLog(`Failed to open shell: ${err.message}`, 'error');
     } finally {
+      if (pollInterval) clearInterval(pollInterval);
       setTunnelLoading(null);
       setGlobalStatus(null);
     }
@@ -880,9 +897,21 @@ function App() {
   const extractErrorMessage = (err) => {
     const fullMessage = err.message || String(err);
     // Remove "Error invoking remote method 'api-call': Error: " prefix
-    const cleaned = fullMessage
+    let cleaned = fullMessage
       .replace(/^Error invoking remote method '[^']+': Error: /, '')
       .replace(/^Error: /, '');
+
+    // Map common low-level errors to user-friendly messages
+    if (cleaned.includes('websocket: close 1006')) {
+      cleaned = 'Connection closed unexpectedly (device might be offline or busy)';
+    } else if (cleaned.includes('i/o timeout')) {
+      cleaned = 'Connection timed out (network might be slow or unstable)';
+    } else if (cleaned.includes('404 Not Found')) {
+      cleaned = 'Resource not found on server';
+    } else if (cleaned.includes('500 Internal Server Error')) {
+      cleaned = 'Server encountered an internal error';
+    }
+
     return cleaned;
   };
 
@@ -922,13 +951,27 @@ function App() {
       return;
     }
 
+    let pollInterval = null;
     try {
       setTcpError('');
       setTunnelLoading('tcp');
       setGlobalStatus({ type: 'loading', message: `Starting TCP tunnel to ${ip}:${port}...` });
       addLog(`Starting TCP tunnel to ${ip}:${port}...`, 'info');
 
-      const result = await StartTunnel(selectedNode.id, ip, port, 'TCP');
+      // Poll progress
+      pollInterval = setInterval(async () => {
+        try {
+          const progress = await GetConnectionProgress(selectedNode.id);
+          if (progress && progress.status) {
+            setGlobalStatus({ type: 'loading', message: progress.status });
+          }
+        } catch (e) { /* ignore */ }
+      }, 500);
+
+      const result = await StartTunnel(selectedNode.id, ip, port);
+      clearInterval(pollInterval);
+      pollInterval = null;
+
       const localPort = result.port || result;
       const tunnelId = result.tunnelId;
 
@@ -947,12 +990,14 @@ function App() {
       const newConfig = await GetSettings();
       // handleTunnelError(err); // Removed invalid call
     } catch (err) {
+      if (pollInterval) clearInterval(pollInterval);
       console.error(err);
       handleTunnelError(err);
       const msg = err.message || String(err);
       setTcpError(msg);
       addLog(`Failed to start TCP tunnel: ${msg}`, 'error');
     } finally {
+      if (pollInterval) clearInterval(pollInterval);
       setTunnelLoading(null);
       setGlobalStatus(null);
     }
@@ -963,12 +1008,26 @@ function App() {
     if (!selectedNode) return;
 
     const tunnelKey = `tcp-${ip}-${port}`;
+    let pollInterval = null;
     try {
       setTunnelLoading(tunnelKey);
       setGlobalStatus({ type: 'loading', message: `Starting TCP tunnel to ${ip}:${port}...` });
       addLog(`Starting TCP tunnel to ${ip}:${port}...`, 'info');
 
-      const result = await StartTunnel(selectedNode.id, ip, port, 'TCP');
+      // Poll progress
+      pollInterval = setInterval(async () => {
+        try {
+          const progress = await GetConnectionProgress(selectedNode.id);
+          if (progress && progress.status) {
+            setGlobalStatus({ type: 'loading', message: progress.status });
+          }
+        } catch (e) { /* ignore */ }
+      }, 500);
+
+      const result = await StartTunnel(selectedNode.id, ip, port);
+      clearInterval(pollInterval);
+      pollInterval = null;
+
       const localPort = result.port || result;
       const tunnelId = result.tunnelId;
 
@@ -979,10 +1038,12 @@ function App() {
 
       setGlobalStatus({ type: 'success', message: `Tunnel ready: localhost:${localPort}`, duration: 3000 });
     } catch (err) {
+      if (pollInterval) clearInterval(pollInterval);
       console.error(err);
       handleTunnelError(err);
       addLog(`Failed to start TCP tunnel: ${err.message || err}`, 'error');
     } finally {
+      if (pollInterval) clearInterval(pollInterval);
       setTunnelLoading(null);
       setGlobalStatus(null);
     }
@@ -992,12 +1053,26 @@ function App() {
   const startQuickVnc = async (ip, port, appName) => {
     if (!selectedNode) return;
 
+    let pollInterval = null;
     try {
       setTunnelLoading('vnc');
       setGlobalStatus({ type: 'loading', message: `Starting VNC connection to ${ip}:${port}...` });
       addLog(`Starting VNC tunnel to ${ip}:${port}...`, 'info');
 
+      // Poll progress
+      pollInterval = setInterval(async () => {
+        try {
+          const progress = await GetConnectionProgress(selectedNode.id);
+          if (progress && progress.status) {
+            setGlobalStatus({ type: 'loading', message: progress.status });
+          }
+        } catch (e) { /* ignore */ }
+      }, 500);
+
       const result = await StartTunnel(selectedNode.id, ip, port, 'vnc');
+      clearInterval(pollInterval);
+      pollInterval = null;
+
       const localPort = result.port || result;
       const tunnelId = result.tunnelId;
 
@@ -1015,10 +1090,12 @@ function App() {
 
       setGlobalStatus({ type: 'success', message: `VNC connected on localhost:${localPort}`, duration: 3000 });
     } catch (err) {
+      if (pollInterval) clearInterval(pollInterval);
       console.error(err);
       handleTunnelError(err);
       addLog(`Failed to start VNC: ${err.message || err}`, 'error');
     } finally {
+      if (pollInterval) clearInterval(pollInterval);
       setTunnelLoading(null);
       setGlobalStatus(null);
     }
@@ -1033,12 +1110,26 @@ function App() {
       saveSshUsername(appName, username);
     }
 
+    let pollInterval = null;
     try {
       setTunnelLoading('ssh');
       setGlobalStatus({ type: 'loading', message: `Starting SSH connection to ${username}@${ip}...` });
       addLog(`Starting SSH tunnel to ${username}@${ip}:22...`, 'info');
 
+      // Poll progress
+      pollInterval = setInterval(async () => {
+        try {
+          const progress = await GetConnectionProgress(selectedNode.id);
+          if (progress && progress.status) {
+            setGlobalStatus({ type: 'loading', message: progress.status });
+          }
+        } catch (e) { /* ignore */ }
+      }, 500);
+
       const result = await StartTunnel(selectedNode.id, ip, 22);
+      clearInterval(pollInterval);
+      pollInterval = null;
+
       const localPort = result.port || result;
       const tunnelId = result.tunnelId;
 
@@ -1057,10 +1148,12 @@ function App() {
 
       setGlobalStatus({ type: 'success', message: `SSH connected on localhost:${localPort}`, duration: 3000 });
     } catch (err) {
+      if (pollInterval) clearInterval(pollInterval);
       console.error(err);
       handleTunnelError(err);
       addLog(`Failed to start SSH: ${err.message || err}`, 'error');
     } finally {
+      if (pollInterval) clearInterval(pollInterval);
       setTunnelLoading(null);
       setGlobalStatus(null);
     }
@@ -1081,6 +1174,7 @@ function App() {
       return;
     }
 
+    let pollInterval = null;
     try {
       if (sshTunnelConfig.appName) {
         saveSshUsername(sshTunnelConfig.appName, sshUser);
@@ -1090,7 +1184,20 @@ function App() {
       setGlobalStatus({ type: 'loading', message: `Starting SSH tunnel to ${sshTarget}:${targetPort}...` });
       addLog(`Starting SSH tunnel to ${sshTarget}:${targetPort}...`, 'info');
 
+      // Poll progress
+      pollInterval = setInterval(async () => {
+        try {
+          const progress = await GetConnectionProgress(selectedNode.id);
+          if (progress && progress.status) {
+            setGlobalStatus({ type: 'loading', message: progress.status });
+          }
+        } catch (e) { /* ignore */ }
+      }, 500);
+
       const result = await StartTunnel(selectedNode.id, sshTarget, targetPort);
+      clearInterval(pollInterval);
+      pollInterval = null;
+
       const localPort = result.port || result;
       const tunnelId = result.tunnelId;
 
@@ -1129,11 +1236,13 @@ function App() {
       // Refresh session status to reflect potential encryption updates
       await loadSSHStatus(selectedNode.id, false);
     } catch (err) {
+      if (pollInterval) clearInterval(pollInterval);
       console.error(err);
       handleTunnelError(err);
       setSshError(err.message);
       addLog(`Failed to start SSH tunnel: ${err.message}`, 'error');
     } finally {
+      if (pollInterval) clearInterval(pollInterval);
       setTunnelLoading(null);
       setGlobalStatus(null);
     }
@@ -1778,8 +1887,9 @@ Do you want to try connecting anyway?`)) {
             }
           } else if (status.status === 'failed') {
             clearInterval(pollInterval);
-            addLog(`Collect info request failed: ${status.error}`, 'error');
-            setGlobalStatus({ type: 'error', message: `Collection failed: ${status.error}` });
+            const userMsg = extractErrorMessage(status.error);
+            addLog(`Collect info request failed: ${userMsg}`, 'error');
+            setGlobalStatus({ type: 'error', message: `Collection failed: ${userMsg}` });
             if (collectInfoJobRef.current === jobId) {
               collectInfoJobRef.current = null;
             }
@@ -2682,69 +2792,96 @@ Do you want to try connecting anyway?`)) {
                     </div>
                   </div>
 
-                  <div className="ssh-details-wrapper" style={{ position: 'relative', minHeight: '80px' }}>
-                    {sshStatus ? (
-                      <div className="ssh-details" style={{ opacity: loadingSSH ? 0.3 : 1, transition: 'opacity 0.2s' }}>
-                        <div className="status-grid">
-                          {(sshStatus.instID !== undefined || sshStatus.maxInst !== undefined) && (
-                            <div className="status-item">
-                              <div className="status-label">INSTANCE</div>
-                              <div className="status-value">
-                                {sshStatus.instID !== undefined && sshStatus.maxInst !== undefined
-                                  ? `${sshStatus.instID}/${sshStatus.maxInst}`
-                                  : '-'}
-                              </div>
-                            </div>
-                          )}
-                          {sshStatus.maxSessions > 0 && (
-                            <div className="status-item">
-                              <div className="status-label">MAX SESSIONS</div>
-                              <div className="status-value">{sshStatus.maxSessions}</div>
-                            </div>
-                          )}
+                <div className="ssh-details-wrapper" style={{ position: 'relative', minHeight: '80px' }}>
+                  {sshStatus ? (
+                    <div className="ssh-details" style={{ opacity: loadingSSH ? 0.3 : 1, transition: 'opacity 0.2s' }}>
+                      <div className="status-grid">
+                        {(sshStatus.instID !== undefined || sshStatus.maxInst !== undefined) && (
                           <div className="status-item">
-                            <div className="status-label">ENCRYPTION</div>
-                            <div className={`status-value ${(sessionStatus?.isEncrypted || sshStatus?.isEncrypted) ? 'success' : 'mismatch'}`}>
-                              {(sessionStatus?.isEncrypted || sshStatus?.isEncrypted) ? (
-                                <><Lock size={14} /> Encrypted</>
-                              ) : (
-                                <><Unlock size={14} /> Unencrypted</>
-                              )}
+                            <div className="status-label">INSTANCE</div>
+                            <div className="status-value">
+                              {sshStatus.instID !== undefined && sshStatus.maxInst !== undefined
+                                ? `${sshStatus.instID}/${sshStatus.maxInst}`
+                                : '-'}
                             </div>
                           </div>
+                        )}
+                        {sshStatus.maxSessions > 0 && (
                           <div className="status-item">
-                            <div className="status-label">SESSION</div>
-                            <div className={`status-value ${isSessionConnected ? 'success' : 'error'}`}>
-                              {isSessionConnected ? (
-                                <><Check size={14} /> Activated</>
-                              ) : (
-                                <><X size={14} /> Inactive</>
-                              )}
-                            </div>
+                            <div className="status-label">MAX SESSIONS</div>
+                            <div className="status-value">{sshStatus.maxSessions}</div>
                           </div>
-                          <div className="status-item">
-                            <div className="status-label">EXPIRES</div>
-                            <div className={`status-value ${expiryInfo.colorClass}`}>
-                              {expiryInfo.timestamp ? (
-                                <span title={new Date(expiryInfo.timestamp).toLocaleString(undefined, getTimeFormatOptions())}>
-                                  {expiryInfo.label}
-                                </span>
-                              ) : '-'}
-                              <button
-                                className="inline-icon-btn"
-                                title="Restart EdgeView session"
-                                onClick={handleResetEdgeView}
-                              >
-                                <RefreshCw size={14} />
-                              </button>
-                            </div>
+                        )}
+                        <div className="status-item">
+                          <div className="status-label">ENCRYPTION</div>
+                          <div className={`status-value ${(sessionStatus?.isEncrypted || sshStatus?.isEncrypted) ? 'success' : 'mismatch'}`}>
+                            {(sessionStatus?.isEncrypted || sshStatus?.isEncrypted) ? (
+                              <><Lock size={14} /> Encrypted</>
+                            ) : (
+                              <><Unlock size={14} /> Unencrypted</>
+                            )}
                           </div>
                         </div>
-                        {/* Configuration Controls */}
-                        <div className="config-container" style={{ marginTop: '15px', borderTop: '1px solid var(--border-subtle)', paddingTop: '15px' }}>
-                          <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                            Device Configuration
+                        <div className="status-item">
+                          <div className="status-label">SESSION</div>
+                          <div className={`status-value ${isSessionConnected ? 'success' : 'error'}`}>
+                            {isSessionConnected ? (
+                              <><Check size={14} /> Activated</>
+                            ) : (
+                              <><X size={14} /> Inactive</>
+                            )}
                           </div>
+                        </div>
+                        <div className="status-item">
+                          <div className="status-label">EXPIRES</div>
+                          <div className={`status-value ${expiryInfo.colorClass}`}>
+                            {expiryInfo.timestamp ? (
+                              <span title={new Date(expiryInfo.timestamp).toLocaleString(undefined, getTimeFormatOptions())}>
+                                {expiryInfo.label}
+                              </span>
+                            ) : '-'}
+                            <button
+                              className="inline-icon-btn"
+                              title="Restart EdgeView session"
+                              onClick={handleResetEdgeView}
+                            >
+                              <RefreshCw size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {sshStatus.managementIPs && sshStatus.managementIPs.length > 0 && (
+                        <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: '1px solid rgba(255, 255, 255, 0.05)' }}>
+                          <div className="status-label" style={{ marginBottom: '6px' }}>MANAGEMENT IPS</div>
+                          <div className="status-value" style={{ 
+                            display: 'flex', 
+                            flexWrap: 'wrap', 
+                            gap: '6px' 
+                          }}>
+                            {sshStatus.managementIPs.map((ip, i) => (
+                              <Copyable key={i} text={ip}>
+                                <span style={{ 
+                                  backgroundColor: 'rgba(255, 255, 255, 0.1)', 
+                                  padding: '2px 6px', 
+                                  borderRadius: '4px', 
+                                  fontSize: '11px',
+                                  fontFamily: 'monospace',
+                                  whiteSpace: 'nowrap'
+                                }}>
+                                  {ip}
+                                </span>
+                              </Copyable>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Configuration Controls */}
+                      <div className="config-container" style={{ marginTop: '15px', borderTop: '1px solid #333', paddingTop: '15px' }}>
+                        <div style={{ fontSize: '12px', color: '#888', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          Device Configuration
+                        </div>
 
                           <div className="config-row" style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', justifyContent: 'space-between' }}>
 
@@ -2983,136 +3120,142 @@ Do you want to try connecting anyway?`)) {
                                 <div style={{
                                   position: 'absolute', left: '-2px', top: '24px', width: '12px', height: '2px', backgroundColor: 'var(--border-color)'
                                 }} />
-                              )}
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <div className="service-info" style={{ flex: 1, minWidth: 0 }}>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', height: '100%' }}>
-                                    <span className="service-name" style={{ lineHeight: '1.2', display: 'flex', alignItems: 'center' }}>
-                                      <Copyable text={app.name}>
-                                        {app.name}
-                                      </Copyable>
-                                      {app.pid && <span style={{ marginLeft: '8px', color: 'var(--text-secondary)', fontSize: '0.9em', fontWeight: 'normal' }}>(PID: {app.pid})</span>}
+                            )}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <div className="service-info" style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', height: '100%' }}>
+                                  <span className="service-name" style={{ lineHeight: '1.2', display: 'flex', alignItems: 'center' }}>
+                                    <Copyable text={app.name}>
+                                      {app.name}
+                                    </Copyable>
+                                    {app.pid && <span style={{ marginLeft: '8px', color: '#666', fontSize: '0.9em', fontWeight: 'normal' }}>(PID: {app.pid})</span>}
+                                  </span>
+                                  {app.isRuntime && (
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.85em', color: '#a371f7', verticalAlign: 'middle', marginTop: '0px' }}>
+                                      <Box size={12} /> Compose Runtime
                                     </span>
-                                    <div className="service-meta" style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
-                                      {app.ips && app.ips.length > 0 && (
-                                        <span style={{ lineHeight: '1.2', display: 'flex', alignItems: 'center', gap: '4px', position: 'relative' }}>
-                                          {app.ips.map((ip, ipIdx) => {
-                                            const savedUser = getSavedSshUsername(app.name);
-                                            const popoverKey = `${app.name}-${ip}`;
-                                            const isPopoverOpen = sshPopover?.key === popoverKey;
-                                            return (
-                                              <span key={ipIdx} style={{ position: 'relative' }}>
-                                                <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                                                  <Copyable text={ip}>
-                                                    <button
-                                                      className="quick-tunnel-btn"
-                                                      onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        setSshPopover({
-                                                          key: popoverKey,
-                                                          ip,
-                                                          appName: app.name,
-                                                          username: savedUser
-                                                        });
-                                                      }}
-                                                      disabled={!!tunnelLoading || !isSessionConnected}
-                                                      title={`SSH as ${savedUser}@${ip} — click to connect`}
-                                                    >
-                                                      {ip}
-                                                    </button>
-                                                  </Copyable>
-                                                </span>
-                                                {isPopoverOpen && (
-                                                  <div
-                                                    ref={sshPopoverRef}
-                                                    className="ssh-popover"
-                                                    onClick={(e) => e.stopPropagation()}
-                                                    style={{
-                                                      position: 'absolute',
-                                                      top: '100%',
-                                                      left: '0',
-                                                      marginTop: '4px',
-                                                      backgroundColor: 'var(--bg-panel)',
-                                                      border: '1px solid var(--border-subtle)',
-                                                      borderRadius: '6px',
-                                                      padding: '8px',
-                                                      boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
-                                                      zIndex: 1000,
-                                                      minWidth: '180px'
-                                                    }}
-                                                  >
-                                                    <div style={{ marginBottom: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                                                      SSH to {ip}
-                                                    </div>
-                                                    <input
-                                                      type="text"
-                                                      value={sshPopover.username}
-                                                      onChange={(e) => setSshPopover({ ...sshPopover, username: e.target.value })}
-                                                      placeholder="Username"
-                                                      onKeyDown={(e) => {
-                                                        if (e.key === 'Enter') {
-                                                          setSshPopover(null);
-                                                          startQuickSsh(ip, app.name, sshPopover.username || 'root');
-                                                        } else if (e.key === 'Escape') {
-                                                          setSshPopover(null);
-                                                        }
-                                                      }}
-                                                      autoFocus
-                                                      style={{
-                                                        width: '100%',
-                                                        boxSizing: 'border-box',
-                                                        padding: '6px 8px',
-                                                        backgroundColor: 'var(--bg-surface)',
-                                                        border: '1px solid var(--border-subtle)',
-                                                        borderRadius: '4px',
-                                                        color: 'var(--text-primary)',
-                                                        fontSize: '13px',
-                                                        marginBottom: '8px'
-                                                      }}
-                                                    />
-                                                    <button
-                                                      onClick={() => {
-                                                        setSshPopover(null);
-                                                        startQuickSsh(ip, app.name, sshPopover.username || 'root');
-                                                      }}
-                                                      style={{
-                                                        width: '100%',
-                                                        boxSizing: 'border-box',
-                                                        padding: '6px 12px',
-                                                        backgroundColor: 'var(--color-success)',
-                                                        border: 'none',
-                                                        borderRadius: '4px',
-                                                        color: 'var(--text-on-color)',
-                                                        fontSize: '12px',
-                                                        cursor: 'pointer',
-                                                        fontWeight: '500'
-                                                      }}
-                                                    >
-                                                      Connect
-                                                    </button>
-                                                  </div>
-                                                )}
-                                              </span>
-                                            );
-                                          })}
-                                        </span>
-                                      )}
-                                      {app.isRuntime && (
-                                        <span style={{ marginLeft: '8px', display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.85em', color: 'var(--color-purple)', verticalAlign: 'middle', marginTop: '0px' }}>
-                                          <Box size={12} /> Compose Runtime
-                                        </span>
-                                      )}
-                                      {app.appType === 'APP_TYPE_DOCKER_COMPOSE' && (
-                                        <span style={{ marginLeft: '8px', display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.85em', color: 'var(--color-primary)', verticalAlign: 'middle', marginTop: '0px' }}>
-                                          <Layers size={12} /> Compose App
-                                        </span>
-                                      )}
-                                      {app.vncPort && (
-                                        <span style={{ marginLeft: app.ips && app.ips.length > 0 ? '8px' : '0', display: 'flex', alignItems: 'center' }}>
-                                          • VNC:
+                                  )}
+                                  {app.appType === 'APP_TYPE_DOCKER_COMPOSE' && (
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.85em', color: '#58a6ff', verticalAlign: 'middle', marginTop: '0px' }}>
+                                      <Layers size={12} /> Compose App
+                                    </span>
+                                  )}
+                                  <div className="service-meta" style={{ display: 'flex', alignItems: 'center', height: '100%', flexWrap: 'wrap', gap: '4px' }}>
+                                    {app.ips && app.ips.length > 0 && app.ips.map((ip, ipIdx) => {
+                                      const savedUser = getSavedSshUsername(app.name);
+                                      const popoverKey = `${app.name}-${ip}`;
+                                      const isPopoverOpen = sshPopover?.key === popoverKey;
+                                      return (
+                                        <div key={ipIdx} style={{ position: 'relative', display: 'inline-flex' }}>
+                                          <Copyable text={ip}>
+                                            <button
+                                              className="quick-tunnel-btn"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setSshPopover({
+                                                  key: popoverKey,
+                                                  ip,
+                                                  appName: app.name,
+                                                  username: savedUser
+                                                });
+                                              }}
+                                              disabled={!!tunnelLoading || !isSessionConnected}
+                                              title={`SSH as ${savedUser}@${ip} — click to connect`}
+                                              style={{
+                                                backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                                                border: '1px solid rgba(255, 255, 255, 0.1)',
+                                                borderRadius: '4px',
+                                                padding: '2px 6px',
+                                                fontSize: '11px',
+                                                fontFamily: 'monospace',
+                                                color: '#ccc',
+                                                cursor: 'pointer',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '4px'
+                                              }}
+                                            >
+                                              {ip}
+                                            </button>
+                                          </Copyable>
+                                          {isPopoverOpen && (
+                                            <div
+                                              ref={sshPopoverRef}
+                                              className="ssh-popover"
+                                              onClick={(e) => e.stopPropagation()}
+                                              style={{
+                                                position: 'absolute',
+                                                top: '100%',
+                                                left: '0',
+                                                marginTop: '4px',
+                                                backgroundColor: '#1e1e1e',
+                                                border: '1px solid #333',
+                                                borderRadius: '6px',
+                                                padding: '8px',
+                                                boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+                                                zIndex: 1000,
+                                                minWidth: '180px'
+                                              }}
+                                            >
+                                              <div style={{ marginBottom: '8px', fontSize: '12px', color: '#888' }}>
+                                                SSH to {ip}
+                                              </div>
+                                              <input
+                                                type="text"
+                                                value={sshPopover.username}
+                                                onChange={(e) => setSshPopover({ ...sshPopover, username: e.target.value })}
+                                                placeholder="Username"
+                                                onKeyDown={(e) => {
+                                                  if (e.key === 'Enter') {
+                                                    setSshPopover(null);
+                                                    startQuickSsh(ip, app.name, sshPopover.username || 'root');
+                                                  } else if (e.key === 'Escape') {
+                                                    setSshPopover(null);
+                                                  }
+                                                }}
+                                                autoFocus
+                                                style={{
+                                                  width: '100%',
+                                                  boxSizing: 'border-box',
+                                                  padding: '6px 8px',
+                                                  backgroundColor: '#2a2a2a',
+                                                  border: '1px solid #444',
+                                                  borderRadius: '4px',
+                                                  color: '#fff',
+                                                  fontSize: '13px',
+                                                  marginBottom: '8px'
+                                                }}
+                                              />
+                                              <button
+                                                onClick={() => {
+                                                  setSshPopover(null);
+                                                  startQuickSsh(ip, app.name, sshPopover.username || 'root');
+                                                }}
+                                                style={{
+                                                  width: '100%',
+                                                  boxSizing: 'border-box',
+                                                  padding: '6px 12px',
+                                                  backgroundColor: '#238636',
+                                                  border: 'none',
+                                                  borderRadius: '4px',
+                                                  color: '#fff',
+                                                  fontSize: '12px',
+                                                  cursor: 'pointer',
+                                                  fontWeight: '500'
+                                                }}
+                                              >
+                                                Connect
+                                              </button>
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                    {app.vncPort && (
+                                      <div style={{ position: 'relative', display: 'inline-flex' }}>
+                                        <Copyable text={app.vncPort.toString()}>
                                           <button
                                             className="quick-tunnel-btn"
-                                            style={{ marginLeft: '4px' }}
                                             onClick={(e) => {
                                               e.stopPropagation();
                                               // Docker Compose apps require localhost for eve-os guacd
@@ -3120,145 +3263,127 @@ Do you want to try connecting anyway?`)) {
                                             }}
                                             disabled={!!tunnelLoading || !isSessionConnected}
                                             title={`Click to start VNC on port ${app.vncPort}`}
+                                            style={{
+                                              backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                                              border: '1px solid rgba(255, 255, 255, 0.1)',
+                                              borderRadius: '4px',
+                                              padding: '2px 6px',
+                                              fontSize: '11px',
+                                              fontFamily: 'monospace',
+                                              color: '#ccc',
+                                              cursor: 'pointer',
+                                              display: 'flex',
+                                              alignItems: 'center',
+                                              gap: '4px'
+                                            }}
                                           >
-                                            Port {app.vncPort}
+                                            VNC: {app.vncPort}
                                           </button>
-                                        </span>
-                                      )}
-                                    </div>
+                                        </Copyable>
+                                      </div>
+                                    )}
                                   </div>
                                 </div>
-                                <div className="service-actions">
-                                  {app.appType === 'APP_TYPE_DOCKER_COMPOSE' && app.containers && app.containers.length > 0 && (
-                                    <button
-                                      className={`connect-btn ${expandedServiceContainers[idx] ? 'active' : 'secondary'}`}
-                                      onClick={() => setExpandedServiceContainers(prev => ({ ...prev, [idx]: !prev[idx] }))}
-                                      style={{ marginRight: '8px' }}
-                                      title="Show containers"
-                                    >
-                                      <Box size={14} /> {expandedServiceContainers[idx] ? 'Hide' : 'Containers'}
-                                    </button>
-                                  )}
-                                  <button
-                                    className={`connect-btn ${expandedServiceId === idx ? 'active' : 'secondary'}`}
-                                    onClick={() => setExpandedServiceId(expandedServiceId === idx ? null : idx)}
-                                    title={!isSessionConnected ? "EdgeView session not active" : "Connect to service"}
-                                    disabled={!isSessionConnected}
-                                  >
-                                    <Globe size={14} /> {expandedServiceId === idx ? 'Close' : 'Connect'}
-                                  </button>
-                                </div>
                               </div>
-                              {expandedServiceContainers[idx] && app.containers && (
-                                <div style={{ marginTop: '12px', borderTop: '1px solid var(--border-subtle)', paddingTop: '12px', width: '100%', overflowX: 'auto' }}>
-                                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
-                                    <thead>
-                                      <tr style={{ color: 'var(--text-secondary)', textAlign: 'left', borderBottom: '1px solid var(--border-subtle)' }}>
-                                        <th style={{ padding: '8px 12px', width: '40px', textAlign: 'left' }}>Status</th>
-                                        <th style={{ padding: '8px 12px', width: '30%', textAlign: 'left' }}>Name</th>
-                                        <th style={{ padding: '8px 12px', textAlign: 'left' }}>Port Mapping (Host → Container)</th>
-                                        <th style={{ padding: '8px 12px', width: '120px', textAlign: 'center' }}>Actions</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {app.containers.map((c, cIdx) => (
-                                        <tr key={cIdx} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                                          <td style={{ padding: '8px 12px', textAlign: 'left' }}>
-                                            <div style={{
-                                              width: '8px', height: '8px', borderRadius: '50%',
-                                              backgroundColor: c.containerState?.toLowerCase().includes('running') ? 'var(--color-success)' : 'var(--color-danger)'
-                                            }} title={c.containerState} />
-                                          </td>
-                                          <td style={{ padding: '8px 12px', textAlign: 'left' }}>
-                                            <Copyable text={c.containerName}>
-                                              <span className="entity-name">{c.containerName}</span>
-                                            </Copyable>
-                                          </td>
-                                          <td style={{ padding: '8px 12px', textAlign: 'left' }}>
-                                            {c.portMaps && c.portMaps.filter(pm => pm.publicPort > 0).length > 0 ? (
-                                              c.portMaps.filter(pm => pm.publicPort > 0).map((pm, pIdx) => (
-                                                <div key={pIdx} style={{ marginBottom: '2px', display: 'flex', alignItems: 'center' }}>
-                                                  <div style={{ width: '130px', display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
-                                                    <Copyable text={`${pm.runtimeIp || '0.0.0.0'}:${pm.publicPort}`}>
-                                                      <button
-                                                        className="quick-tunnel-btn"
-                                                        onClick={async (e) => {
-                                                          e.stopPropagation();
-                                                          const targetIp = pm.runtimeIp || app.ips?.[0] || selectedNode?.managementIps?.[0];
-                                                          if (targetIp) {
-                                                            // If it's a VNC port, offer to open VNC viewer
-                                                            if (pm.publicPort === app.vncPort) {
-                                                              try {
-                                                                setTunnelLoading('vnc');
-                                                                setGlobalStatus({ type: 'loading', message: `Starting VNC tunnel to ${targetIp}:${pm.publicPort}...` });
-                                                                const vncTarget = targetIp;
-                                                                addLog(`Starting VNC tunnel to ${vncTarget}:${pm.publicPort}...`, 'info');
-                                                                const tunnelResult = await StartTunnel(selectedNode.id, vncTarget, pm.publicPort, 'vnc');
-                                                                const port = tunnelResult.port || tunnelResult;
-                                                                addLog(`VNC tunnel active on localhost:${port}`, 'success');
-                                                                addTunnel('VNC', vncTarget, pm.publicPort, port, tunnelResult.tunnelId);
-
-                                                                // Open VNC in new window
-                                                                await window.electronAPI.openVncWindow({
-                                                                  port: port,
-                                                                  nodeName: selectedNode.name,
-                                                                  appName: app.name,
-                                                                  tunnelId: tunnelResult.tunnelId,
-                                                                  theme
-                                                                });
-                                                                addLog(`VNC viewer opened in new window`, 'info');
-                                                                setExpandedServiceId(null);
-                                                              } catch (err) {
-                                                                console.error(err);
-                                                                handleTunnelError(err);
-                                                                addLog(`Failed to start VNC tunnel: ${err.message}`, 'error');
-                                                              } finally {
-                                                                setTunnelLoading(null);
-                                                                setGlobalStatus(null);
-                                                              }
-                                                            } else {
-                                                              startQuickTunnel(targetIp, pm.publicPort);
-                                                            }
-                                                          }
-                                                        }}
-                                                        disabled={!!tunnelLoading || !isSessionConnected}
-                                                        title={`Click to start TCP tunnel to port ${pm.publicPort}`}
-                                                      >
-                                                        {pm.runtimeIp || '0.0.0.0'}:{pm.publicPort}
-                                                      </button>
-                                                    </Copyable>
-                                                  </div>
-                                                  <span className="entity-meta" style={{ margin: '0 6px', flexShrink: 0 }}>→</span>
-                                                  <span className="entity-meta">localhost:{pm.privatePort}</span>
+                              <div className="service-actions">
+                                {app.appType === 'APP_TYPE_DOCKER_COMPOSE' && app.containers && app.containers.length > 0 && (
+                                  <button
+                                    className={`connect-btn ${expandedServiceContainers[idx] ? 'active' : 'secondary'}`}
+                                    onClick={() => setExpandedServiceContainers(prev => ({ ...prev, [idx]: !prev[idx] }))}
+                                    style={{ marginRight: '8px' }}
+                                    title="Show containers"
+                                  >
+                                    <Box size={14} /> {expandedServiceContainers[idx] ? 'Hide' : 'Containers'}
+                                  </button>
+                                )}
+                                <button
+                                  className={`connect-btn ${expandedServiceId === idx ? 'active' : 'secondary'}`}
+                                  onClick={() => setExpandedServiceId(expandedServiceId === idx ? null : idx)}
+                                  title={!isSessionConnected ? "EdgeView session not active" : "Connect to service"}
+                                  disabled={!isSessionConnected}
+                                >
+                                  <Globe size={14} /> {expandedServiceId === idx ? 'Close' : 'Connect'}
+                                </button>
+                              </div>
+                            </div>
+                            {expandedServiceContainers[idx] && app.containers && (
+                              <div style={{ marginTop: '12px', borderTop: '1px solid var(--border-subtle)', paddingTop: '12px', width: '100%', overflowX: 'auto' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                                  <thead>
+                                    <tr style={{ color: 'var(--text-secondary)', textAlign: 'left', borderBottom: '1px solid var(--border-subtle)' }}>
+                                      <th style={{ padding: '8px 12px', width: '40px', textAlign: 'left' }}>Status</th>
+                                      <th style={{ padding: '8px 12px', width: '30%', textAlign: 'left' }}>Name</th>
+                                      <th style={{ padding: '8px 12px', textAlign: 'left' }}>Port Mapping (Host → Container)</th>
+                                      <th style={{ padding: '8px 12px', width: '120px', textAlign: 'center' }}>Actions</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {app.containers.map((c, cIdx) => (
+                                      <tr key={cIdx} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                                        <td style={{ padding: '8px 12px', textAlign: 'left' }}>
+                                          <div style={{
+                                            width: '8px', height: '8px', borderRadius: '50%',
+                                            backgroundColor: c.containerState?.toLowerCase().includes('running') ? 'var(--color-success)' : 'var(--color-danger)'
+                                          }} title={c.containerState} />
+                                        </td>
+                                        <td style={{ padding: '8px 12px', textAlign: 'left' }}>
+                                          <Copyable text={c.containerName}>
+                                            <span className="entity-name">{c.containerName}</span>
+                                          </Copyable>
+                                        </td>
+                                        <td style={{ padding: '8px 12px', textAlign: 'left' }}>
+                                          {c.portMaps && c.portMaps.filter(pm => pm.publicPort > 0).length > 0 ? (
+                                            c.portMaps.filter(pm => pm.publicPort > 0).map((pm, pIdx) => (
+                                              <div key={pIdx} style={{ marginBottom: '2px', display: 'flex', alignItems: 'center' }}>
+                                                <div style={{ width: '130px', display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
+                                                  <Copyable text={`${pm.runtimeIp || '0.0.0.0'}:${pm.publicPort}`}>
+                                                    <button
+                                                      className="quick-tunnel-btn"
+                                                      onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        const targetIp = pm.runtimeIp || app.ips?.[0] || selectedNode?.managementIps?.[0];
+                                                        if (targetIp) {
+                                                          startQuickTunnel(targetIp, pm.publicPort);
+                                                        }
+                                                      }}
+                                                      disabled={!!tunnelLoading || !isSessionConnected}
+                                                      title={`Click to start TCP tunnel to port ${pm.publicPort}`}
+                                                    >
+                                                      {pm.runtimeIp || '0.0.0.0'}:{pm.publicPort}
+                                                    </button>
+                                                  </Copyable>
                                                 </div>
-                                              ))
-                                            ) : (
-                                              <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>No public ports</span>
-                                            )}
-                                          </td>
-                                          <td style={{ padding: '8px 12px', textAlign: 'center', position: 'relative' }}>
-                                            <div style={{ display: 'flex', justifyContent: 'center', width: '100%' }}>
-                                              <button
-                                                className="connect-btn secondary"
-                                                style={{ padding: '4px 10px', fontSize: '11px' }}
-                                                disabled={!c.containerState?.toLowerCase().includes('running') || !isSessionConnected || !!tunnelLoading}
-                                                title={!c.containerState?.toLowerCase().includes('running') ? 'Container not running' : 'Open shell in container'}
-                                                onClick={(e) => {
-                                                  e.stopPropagation();
-
-                                                  if (app.appType === 'APP_TYPE_DOCKER_COMPOSE') {
-                                                    if (shellPrompt?.containerName === c.containerName) {
-                                                      setShellPrompt(null);
-                                                    } else {
-                                                      const savedUser = getSavedSshUsername(app.name);
-                                                      setShellPrompt({
-                                                        containerName: c.containerName,
-                                                        username: savedUser,
-                                                        password: ''
-                                                      });
-                                                    }
-                                                    return;
+                                                <span className="entity-meta" style={{ margin: '0 6px', flexShrink: 0 }}>→</span>
+                                                <span className="entity-meta">localhost:{pm.privatePort}</span>
+                                              </div>
+                                            ))
+                                          ) : (
+                                            <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>No public ports</span>
+                                          )}
+                                        </td>
+                                        <td style={{ padding: '8px 12px', textAlign: 'center', position: 'relative' }}>
+                                          <div style={{ display: 'flex', justifyContent: 'center', width: '100%' }}>
+                                            <button
+                                              className="connect-btn secondary"
+                                              style={{ padding: '4px 10px', fontSize: '11px' }}
+                                              disabled={!c.containerState?.toLowerCase().includes('running') || !isSessionConnected || !!tunnelLoading}
+                                              title={!c.containerState?.toLowerCase().includes('running') ? 'Container not running' : 'Open shell in container'}
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                
+                                                if (app.appType === 'APP_TYPE_DOCKER_COMPOSE') {
+                                                  if (shellPrompt?.containerName === c.containerName) {
+                                                    setShellPrompt(null);
+                                                  } else {
+                                                    const savedUser = getSavedSshUsername(app.name);
+                                                    setShellPrompt({
+                                                      containerName: c.containerName,
+                                                      username: savedUser || 'root',
+                                                      password: ''
+                                                    });
                                                   }
+                                                  return;
+                                                }
 
                                                   handleContainerShell(app, c, 'root', '');
                                                 }}
