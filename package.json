@@ -27,7 +27,7 @@
     "url": "https://github.com/sergey-zededa/edgeViewLauncher.git"
   },
   "dependencies": {
-    "electron-updater": "^6.3.9"
+    "electron-updater": "^6.7.3"
   },
   "devDependencies": {
     "electron": "^40.0.0",
