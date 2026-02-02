@@ -21,7 +21,7 @@
     "name": "ZEDEDA",
     "email": "support@zededa.com"
   },
-  "license": "ISC",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/sergey-zededa/edgeViewLauncher.git"
