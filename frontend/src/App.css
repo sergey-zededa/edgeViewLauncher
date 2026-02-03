@@ -1,23 +1,4 @@
-:root {
-    --bg-primary: #0d1117;
-    --bg-secondary: #161b22;
-    --bg-tertiary: #21262d;
-    --bg-hover: #30363d;
-    --text-primary: #c9d1d9;
-    --text-secondary: #8b949e;
-    --text-placeholder: #484f58;
-    --border-color: #30363d;
-    --accent-color: #58a6ff;
-    --accent-hover: #79c0ff;
-    --highlight-color: rgba(56, 139, 253, 0.15);
-    --scrollbar-thumb: #30363d;
-    --scrollbar-thumb-hover: #484f58;
-
-    /* Tooltip colors */
-    --tooltip-bg: #21262d;
-    --tooltip-border: #30363d;
-    --text-color: #c9d1d9;
-}
+/* Color variables are defined in index.css and support theme switching */
 
 body {
     margin: 0;
@@ -59,7 +40,7 @@ body {
 }
 
 .cluster-info .user-email.expiring-soon {
-    color: #ff6b6b;
+    color: var(--color-danger);
     font-weight: 500;
 }
 
@@ -237,16 +218,16 @@ body {
 }
 
 .status-dot.online {
-    background: #238636;
+    background: var(--color-success);
     box-shadow: 0 0 5px rgba(35, 134, 54, 0.4);
 }
 
 .status-dot.offline {
-    background: #da3633;
+    background: var(--color-danger);
 }
 
 .status-dot.suspect {
-    background: #d29922;
+    background: var(--color-warning);
 }
 
 .node-actions {
@@ -395,7 +376,8 @@ body {
     display: flex;
     flex-direction: column;
     gap: 16px;
-    padding-bottom: 40px; /* Extra padding for bottom alignment */
+    padding-bottom: 40px;
+    /* Extra padding for bottom alignment */
 }
 
 .form-group {
@@ -438,12 +420,12 @@ body {
 }
 
 .settings-error-banner svg {
-    color: #da3633;
+    color: var(--color-danger);
     flex-shrink: 0;
 }
 
 .settings-error-banner span {
-    color: #da3633;
+    color: var(--color-danger);
     font-size: 13px;
     font-weight: 500;
 }
@@ -483,7 +465,7 @@ body {
 /* Authentication Error Banner */
 .auth-error-banner {
     background: linear-gradient(135deg, rgba(218, 54, 51, 0.1) 0%, rgba(218, 54, 51, 0.05) 100%);
-    border-left: 4px solid #da3633;
+    border-left: 4px solid var(--color-danger);
     padding: 16px 20px;
     border-bottom: 1px solid rgba(218, 54, 51, 0.2);
     animation: slideDown 0.3s ease-out;
@@ -510,7 +492,7 @@ body {
 }
 
 .auth-error-content>svg {
-    color: #da3633;
+    color: var(--color-danger);
     flex-shrink: 0;
 }
 
@@ -522,7 +504,7 @@ body {
 }
 
 .auth-error-text strong {
-    color: #da3633;
+    color: var(--color-danger);
     font-size: 14px;
     font-weight: 600;
 }
@@ -533,7 +515,7 @@ body {
 }
 
 .auth-error-button {
-    background: #da3633;
+    background: var(--color-danger);
     color: white;
     border: none;
     padding: 8px 16px;
@@ -546,7 +528,7 @@ body {
 }
 
 .auth-error-button:hover {
-    background: #c42a27;
+    background: var(--color-danger);
     transform: translateY(-1px);
     box-shadow: 0 2px 8px rgba(218, 54, 51, 0.3);
 }
@@ -634,12 +616,12 @@ body {
 }
 
 .tunnel-badge.encrypted {
-    color: #238636;
+    color: var(--color-success);
     background: rgba(35, 134, 54, 0.1);
 }
 
 .tunnel-badge.unencrypted {
-    color: #d29922;
+    color: var(--color-warning);
     background: rgba(210, 153, 34, 0.1);
 }
 
@@ -679,8 +661,8 @@ body {
 
 .icon-btn.danger:hover {
     background: rgba(218, 54, 51, 0.2);
-    color: #da3633;
-    border-color: #da3633;
+    color: var(--color-danger);
+    border-color: var(--color-danger);
 }
 
 /* SSH Status Section */
@@ -722,16 +704,16 @@ body {
 
 .status-value.enabled,
 .status-value.success {
-    color: #238636;
+    color: var(--color-success);
 }
 
 .status-value.disabled,
 .status-value.error {
-    color: #da3633;
+    color: var(--color-danger);
 }
 
 .status-value.mismatch {
-    color: #d29922;
+    color: var(--color-warning);
 }
 
 .ssh-controls {
@@ -751,17 +733,17 @@ body {
 
 .status-badge.enabled {
     background: rgba(35, 134, 54, 0.2);
-    color: #238636;
+    color: var(--color-success);
 }
 
 .status-badge.disabled {
     background: rgba(218, 54, 51, 0.2);
-    color: #da3633;
+    color: var(--color-danger);
 }
 
 .status-badge.warning {
     background: rgba(210, 153, 34, 0.2);
-    color: #d29922;
+    color: var(--color-warning);
 }
 
 .action-link {
@@ -777,7 +759,7 @@ body {
 }
 
 .action-link.danger {
-    color: #da3633;
+    color: var(--color-danger);
 }
 
 /* Services List */
@@ -820,13 +802,14 @@ body {
 .connect-btn {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    border-radius: 4px;
-    font-size: 12px;
+    gap: 8px;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 13px;
     font-weight: 500;
     cursor: pointer;
     border: 1px solid var(--border-color);
+    transition: all 0.2s;
 }
 
 .connect-btn.secondary {
@@ -944,7 +927,7 @@ body {
 }
 
 .activity-log {
-    background: #000;
+    background: var(--bg-surface);
     border: 1px solid var(--border-color);
     border-radius: 6px;
 }
@@ -972,19 +955,19 @@ body {
 }
 
 .log-entry.success {
-    color: #238636;
+    color: var(--color-success);
 }
 
 .log-entry.error {
-    color: #da3633;
+    color: var(--color-danger);
 }
 
 .log-entry.warning {
-    color: #d29922;
+    color: var(--color-warning);
 }
 
 .log-entry.closed {
-    color: #d29922;
+    color: var(--color-warning);
 }
 
 .log-time {
@@ -1109,12 +1092,12 @@ body {
 }
 
 .token-status.valid {
-    color: #238636;
+    color: var(--color-success);
     background: rgba(35, 134, 54, 0.1);
 }
 
 .token-status.expired {
-    color: #da3633;
+    color: var(--color-danger);
     background: rgba(218, 54, 51, 0.1);
 }
 
@@ -1166,12 +1149,12 @@ body {
 }
 
 .token-info-value.expired {
-    color: #da3633;
+    color: var(--color-danger);
     font-weight: 500;
 }
 
 .token-info-value.expiring {
-    color: #ff6b6b;
+    color: var(--color-danger);
     font-weight: 500;
 }
 
@@ -1203,28 +1186,38 @@ body {
 .split-btn-container {
     position: relative;
     display: inline-flex;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    border-radius: 6px;
 }
 
 .split-main {
-    border-radius: 6px 0 0 6px;
-    border-right: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px 0 0 6px !important;
+    border-right: 1px solid rgba(255, 255, 255, 0.2) !important;
 }
 
 .split-arrow {
-    border-radius: 0 6px 6px 0;
+    border-radius: 0 6px 6px 0 !important;
     min-width: 32px;
 }
 
 /* Terminal Button Styling */
 .connect-btn.primary {
-    background: var(--bg-tertiary);
-    color: var(--text-primary);
-    border: none;
+    background: var(--color-accent);
+    color: var(--text-inverse);
+    border: 1px solid var(--color-accent);
     font-weight: 500;
+    transition: all 0.2s;
+}
+
+.connect-btn.primary img {
+    filter: brightness(0) invert(1);
+    opacity: 0.9;
 }
 
 .connect-btn.primary:hover:not(:disabled) {
-    background: var(--bg-hover);
+    background: var(--color-accent);
+    filter: brightness(1.1);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
 .connect-btn.primary:disabled {
@@ -1356,12 +1349,12 @@ body {
 }
 
 .update-available-row {
-    color: #4a90e2;
+    color: var(--color-accent);
     font-weight: 500;
 }
 
 .update-ready-row {
-    color: #238636;
+    color: var(--color-success);
     font-weight: 500;
 }
 
@@ -1471,12 +1464,14 @@ body {
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background-color: #484f58; /* Inactive/Grey */
+    background-color: var(--text-muted);
+    /* Inactive/Grey */
     transition: all 0.3s ease;
 }
 
 .activity-dot.active {
-    background-color: #238636; /* Active/Green */
+    background-color: var(--color-success);
+    /* Active/Green */
     box-shadow: 0 0 4px rgba(35, 134, 54, 0.6);
     animation: pulse 2s infinite;
 }
@@ -1485,9 +1480,11 @@ body {
     0% {
         box-shadow: 0 0 0 0 rgba(35, 134, 54, 0.4);
     }
+
     70% {
         box-shadow: 0 0 0 4px rgba(35, 134, 54, 0);
     }
+
     100% {
         box-shadow: 0 0 0 0 rgba(35, 134, 54, 0);
     }

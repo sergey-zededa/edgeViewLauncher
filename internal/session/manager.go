@@ -519,7 +519,7 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 		go func() {
 			defer m.CloseTunnel(tunnel.ID)
 			if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
-				fmt.Printf("HTTP server error: %v\n", err)
+				fmt.Printf("TUNNEL[%s] VNC server Error: %v\n", tunnel.ID, err)
 			}
 		}()
 
@@ -570,30 +570,34 @@ func (m *Manager) waitForTcpSetupOK(wsConn *websocket.Conn, key string, timeout 
 					continue
 				}
 
-				// Check for plain-text errors in the raw message if unwrapMessage didn't catch them specifically
-				// (though unwrapMessage should handle most now)
-				if strings.Contains(string(msg), "no device online") {
-					// fmt.Printf("DEBUG: waitForTcpSetupOK received 'no device online' (raw). Continuing wait...\n")
+				// Check for plain-text errors in the raw message
+				msgStr := string(msg)
+				if strings.Contains(msgStr, "no device online") {
 					continue
 				}
-				// Log unwrap failures but CONTINUE waiting unless it's a fatal error
-				// The device might send banners or keepalives that aren't envelopes
-				// fmt.Printf("DEBUG: waitForTcpSetupOK unwrap failed (ignoring): %v\n", err)
-				if len(msg) < 1000 {
-					// fmt.Printf("DEBUG: raw payload: %q\n", string(msg))
+
+				// FALLBACK: Check if the raw message contains tcpSetupOK
+				// Some versions might send this as a raw text frame instead of enveloped
+				if strings.Contains(msgStr, "+++tcpSetupOK+++") {
+					fmt.Printf("DEBUG: Found tcpSetupOK in raw message (unwrap failed)\n")
+					setupDone <- nil
+					return
 				}
+
+				// Log unwrap failures but CONTINUE waiting unless it's a fatal error
+				fmt.Printf("DEBUG: waitForTcpSetupOK unwrap failed: %v. Raw start: %.50q\n", err, msgStr)
 				continue
 			}
 
 			payloadStr := string(payload)
-			// fmt.Printf("DEBUG: waitForTcpSetupOK payload: %q\n", payloadStr)
+			fmt.Printf("DEBUG: waitForTcpSetupOK payload: %q\n", payloadStr)
 
 			if strings.Contains(payloadStr, "+++tcpSetupOK+++") {
 				setupDone <- nil
 				return
 			}
 			if strings.Contains(payloadStr, "+++Done+++") {
-				setupDone <- fmt.Errorf("device closed connection before tcpSetupOK")
+				setupDone <- fmt.Errorf("device closed connection before tcpSetupOK (Payload: %s)", payloadStr)
 				return
 			}
 		}
@@ -1715,6 +1719,7 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 
 // handleWSClient handles a single WebSocket client using the shared WebSocket
 func (m *Manager) handleWSClient(ctx context.Context, wsConn *websocket.Conn, tunnel *Tunnel) {
+	fmt.Printf("TUNNEL[%s] New VNC WebSocket client connected from %s\n", tunnel.ID, wsConn.RemoteAddr())
 	conn := NewWSConnAdapter(wsConn)
 
 	// Allocate a channel number for this client

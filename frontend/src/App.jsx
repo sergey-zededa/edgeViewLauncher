@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { SearchNodes, ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo } from './electronAPI';
-import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers } from 'lucide-react';
+import { SearchNodes, ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, EnableExternalPolicy, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo } from './electronAPI';
+import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers, Shield, Moon, Sun } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
 import Tooltip from './components/Tooltip';
 import About from './components/About';
@@ -77,10 +77,10 @@ const PortSelect = ({ ports, selectedValue, onChange, placeholder }) => {
         onClick={toggleDropdown}
         style={{
           padding: '8px 12px',
-          backgroundColor: '#1a1a1a',
-          border: '1px solid #333',
+          backgroundColor: 'var(--bg-surface)',
+          border: '1px solid var(--border-subtle)',
           borderRadius: '4px',
-          color: '#fff',
+          color: 'var(--text-primary)',
           cursor: 'pointer',
           display: 'flex',
           justifyContent: 'space-between',
@@ -108,8 +108,8 @@ const PortSelect = ({ ports, selectedValue, onChange, placeholder }) => {
             top: coords.top + 4,
             left: coords.left,
             width: coords.width,
-            backgroundColor: '#1e1e1e',
-            border: '1px solid #333',
+            backgroundColor: 'var(--bg-panel)',
+            border: '1px solid var(--border-subtle)',
             borderRadius: '4px',
             boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
             zIndex: 9999,
@@ -117,7 +117,7 @@ const PortSelect = ({ ports, selectedValue, onChange, placeholder }) => {
             overflowY: 'auto'
           }}>
             {ports.length === 0 ? (
-              <div style={{ padding: '8px 12px', color: '#666', fontSize: '12px' }}>No exposed ports</div>
+              <div style={{ padding: '8px 12px', color: 'var(--text-secondary)', fontSize: '12px' }}>No exposed ports</div>
             ) : (
               ports.map((pm, idx) => (
                 <div
@@ -131,11 +131,11 @@ const PortSelect = ({ ports, selectedValue, onChange, placeholder }) => {
                     padding: '8px 12px',
                     cursor: 'pointer',
                     fontSize: '13px',
-                    color: '#ccc',
-                    borderBottom: idx < ports.length - 1 ? '1px solid #2a2a2a' : 'none',
+                    color: 'var(--text-primary)',
+                    borderBottom: idx < ports.length - 1 ? '1px solid var(--border-subtle)' : 'none',
                     transition: 'background 0.1s'
                   }}
-                  onMouseEnter={(e) => e.target.style.backgroundColor = '#2a2a2a'}
+                  onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--bg-hover)'}
                   onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
@@ -171,13 +171,13 @@ const Copyable = ({ text, children, style = {} }) => {
   };
 
   return (
-    <span 
+    <span
       onMouseEnter={() => setShowCopy(true)}
       onMouseLeave={() => setShowCopy(false)}
-      style={{ 
-        position: 'relative', 
-        display: 'inline-flex', 
-        alignItems: 'center', 
+      style={{
+        position: 'relative',
+        display: 'inline-flex',
+        alignItems: 'center',
         gap: '4px',
         userSelect: 'text',
         cursor: 'text',
@@ -186,7 +186,7 @@ const Copyable = ({ text, children, style = {} }) => {
       onClick={(e) => e.stopPropagation()} // Prevent row click
     >
       {children || text}
-      <span 
+      <span
         onClick={handleCopy}
         style={{
           display: 'inline-flex',
@@ -222,6 +222,18 @@ function App() {
   const [enterprise, setEnterprise] = useState(null);
   const [userInfo, setUserInfo] = useState(null);
   const [projects, setProjects] = useState([]);
+
+  // Theme State
+  const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+  };
 
   // Device Details State
   const [services, setServices] = useState(null);
@@ -1071,8 +1083,9 @@ function App() {
       await window.electronAPI.openVncWindow({
         port: localPort,
         nodeName: selectedNode.name,
-        appName: appName || 'VNC',
-        tunnelId
+        appName: appName,
+        tunnelId,
+        theme
       });
 
       setGlobalStatus({ type: 'success', message: `VNC connected on localhost:${localPort}`, duration: 3000 });
@@ -1129,7 +1142,8 @@ function App() {
         nodeName: selectedNode.name,
         targetInfo: `${username}@${ip}:22`,
         tunnelId,
-        username
+        username,
+        theme
       });
 
       setGlobalStatus({ type: 'success', message: `SSH connected on localhost:${localPort}`, duration: 3000 });
@@ -1207,7 +1221,8 @@ function App() {
           targetInfo: `${sshUser}@${selectedNode.name}`,
           tunnelId: tunnelId,
           username: sshUser,
-          password: sshPassword
+          password: sshPassword,
+          theme
         });
       } else {
         // Tunnel only
@@ -1567,7 +1582,8 @@ Do you want to try connecting anyway?`)) {
           port: port,
           nodeName: selectedNode.name,
           targetInfo: 'EVE-OS SSH',
-          tunnelId: tunnelId
+          tunnelId: tunnelId,
+          theme
         });
         addLog('In-app terminal launched', 'success');
       } else {
@@ -1761,6 +1777,46 @@ Do you want to try connecting anyway?`)) {
       }
     }
   };
+
+  const handleEnableExternalPolicy = async () => {
+    if (!selectedNode || !sshStatus) {
+      setGlobalStatus({ type: 'error', message: "No node selected or status unknown." });
+      return;
+    }
+
+    const currentStatus = sshStatus.externalPolicy;
+    const action = currentStatus ? "disable" : "enable";
+    const newState = !currentStatus;
+
+    if (!confirm(`Are you sure you want to ${action} external policy for this device? This will update the device configuration.`)) {
+      return;
+    }
+
+    setGlobalStatus({ type: 'loading', message: `${action === "enable" ? "Enabling" : "Disabling"} external policy...` });
+
+    try {
+      await EnableExternalPolicy(selectedNode.id, newState);
+      addLog(`External policy ${action}d successfully`, 'success');
+
+      // Update local state immediately for better UX, though reloadSSHStatus will also catch it
+      setSshStatus(prev => ({ ...prev, externalPolicy: newState }));
+
+      setGlobalStatus({
+        type: 'success',
+        message: `External policy ${action}d. Device configuration updated.`
+      });
+
+      // Refresh status to be sure
+      setTimeout(() => loadSSHStatus(selectedNode.id), 1000);
+      setTimeout(() => setGlobalStatus(null), 5000);
+    } catch (err) {
+      console.error(`Failed to ${action} external policy:`, err);
+      const errMsg = err.message || String(err);
+      addLog(`Failed to ${action} external policy: ${errMsg}`, 'error');
+      setGlobalStatus({ type: 'error', message: `Failed to ${action} external policy: ${errMsg}` });
+    }
+  };
+
 
   const handleCollectInfo = async () => {
     if (!selectedNode) return;
@@ -2359,8 +2415,8 @@ Do you want to try connecting anyway?`)) {
               </div>
               <div className="cluster-details">
                 {viewingClusterName !== config.activeCluster && (
-                  <div className="cluster-actions-bar" style={{ marginBottom: '15px', paddingBottom: '15px', borderBottom: '1px solid #333' }}>
-                    <div className="info-text" style={{ fontSize: '12px', color: '#888', marginBottom: '10px' }}>
+                  <div className="cluster-actions-bar" style={{ marginBottom: '15px', paddingBottom: '15px', borderBottom: '1px solid var(--border-subtle)' }}>
+                    <div className="info-text" style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px' }}>
                       This cluster is not active.
                     </div>
                     <button
@@ -2501,6 +2557,33 @@ Do you want to try connecting anyway?`)) {
                   </div>
                 )}
 
+                {/* Theme Toggle */}
+                <div className="form-group">
+                  <label>Theme</label>
+                  <div
+                    onClick={toggleTheme}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      padding: '10px 12px',
+                      backgroundColor: 'var(--bg-secondary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      gap: '8px'
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'; }}
+                  >
+                    {theme === 'dark' ? <Moon size={16} /> : <Sun size={16} />}
+                    <span style={{ flex: 1, color: 'var(--text-primary)' }}>
+                      {theme === 'dark' ? 'Dark Theme' : 'Light Theme'}
+                    </span>
+                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Click to toggle</span>
+                  </div>
+                </div>
+
                 <div className="settings-actions">
                   {saveStatus && (
                     <span className={`status-text ${saveStatus.includes('Success') ? 'success' : 'muted'}`}>
@@ -2630,7 +2713,8 @@ Do you want to try connecting anyway?`)) {
                               port: tunnel.localPort,
                               username: tunnel.username,
                               nodeName: tunnel.nodeName,
-                              targetInfo: `${tunnel.username || 'root'}@${tunnel.nodeName}`
+                              targetInfo: `${tunnel.username || 'root'}@${tunnel.nodeName}`,
+                              theme
                             })}
                           >
                             <Terminal size={14} />
@@ -2650,158 +2734,63 @@ Do you want to try connecting anyway?`)) {
               </div>
             )}
 
-            {/* Global tunnels view (all devices) */}
-            {showGlobalTunnels && activeTunnels.filter(t => t.status !== 'failed').length > 0 && (
-              <div className="active-tunnels-section global">
-                <div className="section-title">All Active Tunnels</div>
-                <div className="tunnel-list">
-                  {activeTunnels.filter(t => t.status !== 'failed').map(tunnel => (
-                    <div key={tunnel.id} className="tunnel-item">
-                      <div className="tunnel-info">
-                        <div className="tunnel-type">
-                          {tunnel.type === 'VNC' && <Monitor size={14} className="tunnel-icon" />}
-                          {tunnel.type === 'SSH' && <Terminal size={14} className="tunnel-icon" />}
-                          {tunnel.type === 'TCP' && <Activity size={14} className="tunnel-icon" />}
-                          <span>{tunnel.type}</span>
-                          {tunnel.isEncrypted ? (
-                            <span className="tunnel-badge encrypted" title="End-to-End Encrypted">
-                              <Lock size={10} />
-                            </span>
-                          ) : (
-                            <span className="tunnel-badge unencrypted" title="Not Encrypted">
-                              <Unlock size={10} />
-                            </span>
-                          )}
-                        </div>
-                        <div className="tunnel-target">
-                          <span>{tunnel.targetIP}:{tunnel.targetPort}</span>
-                          <ArrowRight size={12} className="tunnel-arrow" />
-                        </div>
-                        <div className="tunnel-local">
-                          <Copyable text={tunnel.type === 'SSH' ? `ssh -p ${tunnel.localPort} ${tunnel.username || 'root'}@localhost` : `localhost:${tunnel.localPort}`}>
-                            <code>localhost:{tunnel.localPort}</code>
-                          </Copyable>
-                        </div>
-                        <div className="tunnel-meta">
-                          <span className="tunnel-device">{tunnel.nodeName || tunnel.nodeId}</span>
-                          {tunnel.projectId && (
-                            <span className="tunnel-project">
-                              • {projects[tunnel.projectId] || tunnel.projectId}
-                            </span>
-                          )}
-                        </div>
-                        <button
-                          className="icon-btn"
-                          title="Open in Browser"
-                          onClick={() => window.electronAPI.openExternal(`http://localhost:${tunnel.localPort}`)}
-                        >
-                          <ExternalLink size={12} />
-                        </button>
-                        <div className="tunnel-stats">
-                          <div
-                            className={`activity-dot ${Date.now() - (tunnel.lastActivity || 0) < 5000 ? 'active' : ''}`}
-                            title={Date.now() - (tunnel.lastActivity || 0) < 5000 ? "Active (Data transferring)" : "Idle"}
-                          ></div>
-                          <span className="stats-text" title="Data Transferred">
-                            <span title="Bytes Sent">TX: {formatBytes(tunnel.bytesSent)}</span>
-                            <span className="divider">|</span>
-                            <span title="Bytes Received">RX: {formatBytes(tunnel.bytesReceived)}</span>
-                          </span>
-                        </div>
-                      </div>
-                      <div className="tunnel-actions">
-                        {tunnel.type === 'VNC' && (
-                          <button
-                            className="icon-btn"
-                            title="Open VNC Viewer"
-                            onClick={() => window.electronAPI.openExternal(`vnc://localhost:${tunnel.localPort}`)}
-                          >
-                            <ExternalLink size={14} />
-                          </button>
-                        )}
-                        {tunnel.type === 'SSH' && (
-                          <button
-                            className="icon-btn"
-                            title="Open Terminal"
-                            onClick={() => window.electronAPI.openTerminalWindow({
-                              port: tunnel.localPort,
-                              username: tunnel.username,
-                              nodeName: tunnel.nodeName,
-                              targetInfo: `${tunnel.username || 'root'}@${tunnel.nodeName}`
-                            })}
-                          >
-                            <Terminal size={14} />
-                          </button>
-                        )}
-                        <button
-                          className="icon-btn danger"
-                          title="Stop Tunnel"
-                          onClick={() => StopTunnel(tunnel.id)}
-                        >
-                          <X size={14} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
 
-            {selectedNode && (
-              <div className="ssh-status-section">
-                <div className="section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span>EdgeView Session</span>
-                  <div className="split-btn-container" ref={dropdownRef}>
-                    <button
-                      className={`connect-btn primary split-main`}
-                      onClick={() => setShowTerminalMenu(!showTerminalMenu)}
-                      disabled={!sshStatus || sshStatus.status !== 'enabled' || !isSessionConnected}
-                      title={(!sshStatus || sshStatus.status !== 'enabled')
-                        ? "SSH must be enabled first"
-                        : !isSessionConnected
-                          ? "Session is not connected"
-                          : "Open SSH Terminal"}
-                      style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', fontSize: '12px' }}
-                    >
-                      <Terminal size={16} />
-                      <img src={eveOsIcon} alt="EVE-OS" style={{ height: '14px', width: 'auto' }} />
-                      EVE-OS SSH Terminal
-                    </button>
-                    <button
-                      className={`connect-btn primary split-arrow`}
-                      onClick={() => setShowTerminalMenu(!showTerminalMenu)}
-                      disabled={!sshStatus || sshStatus.status !== 'enabled' || !isSessionConnected}
-                      style={{ padding: '6px 8px' }}
-                    >
-                      <ChevronDown size={14} />
-                    </button>
-                    {showTerminalMenu && (
-                      <div className="dropdown-menu">
-                        <div className="dropdown-item" onClick={() => startSession(selectedNode.id, true)} style={{
-                          padding: '10px 14px',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '8px',
-                          borderBottom: '1px solid #333'
-                        }}>
-                          <Terminal size={16} />
-                          <span>Open in Built-in Terminal</span>
+            {
+              selectedNode && (
+                <div className="ssh-status-section">
+                  <div className="section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>EdgeView Session</span>
+                    <div className="split-btn-container" ref={dropdownRef}>
+                      <button
+                        className={`connect-btn primary split-main`}
+                        onClick={() => setShowTerminalMenu(!showTerminalMenu)}
+                        disabled={!sshStatus || sshStatus.status !== 'enabled' || !isSessionConnected}
+                        title={(!sshStatus || sshStatus.status !== 'enabled')
+                          ? "SSH must be enabled first"
+                          : !isSessionConnected
+                            ? "Session is not connected"
+                            : "Open SSH Terminal"}
+                        style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', fontSize: '12px' }}
+                      >
+                        <Terminal size={16} />
+                        <img src={eveOsIcon} alt="EVE-OS" style={{ height: '14px', width: 'auto' }} />
+                        EVE-OS SSH Terminal
+                      </button>
+                      <button
+                        className={`connect-btn primary split-arrow`}
+                        onClick={() => setShowTerminalMenu(!showTerminalMenu)}
+                        disabled={!sshStatus || sshStatus.status !== 'enabled' || !isSessionConnected}
+                        style={{ padding: '6px 8px' }}
+                      >
+                        <ChevronDown size={14} />
+                      </button>
+                      {showTerminalMenu && (
+                        <div className="dropdown-menu">
+                          <div className="dropdown-item" onClick={() => startSession(selectedNode.id, true)} style={{
+                            padding: '10px 14px',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            borderBottom: '1px solid var(--border-subtle)'
+                          }}>
+                            <Terminal size={16} />
+                            <span>Open in Built-in Terminal</span>
+                          </div>
+                          <div className="dropdown-item" onClick={() => startSession(selectedNode.id, false)} style={{
+                            padding: '10px 14px',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px'
+                          }}>
+                            <ExternalLink size={16} />
+                            <span>Use External Terminal</span>
+                          </div>
                         </div>
-                        <div className="dropdown-item" onClick={() => startSession(selectedNode.id, false)} style={{
-                          padding: '10px 14px',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '8px'
-                        }}>
-                          <ExternalLink size={16} />
-                          <span>Use External Terminal</span>
-                        </div>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
-                </div>
 
                 <div className="ssh-details-wrapper" style={{ position: 'relative', minHeight: '80px' }}>
                   {sshStatus ? (
@@ -2894,189 +2883,242 @@ Do you want to try connecting anyway?`)) {
                           Device Configuration
                         </div>
 
-                        <div className="config-row" style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', justifyContent: 'space-between' }}>
+                          <div className="config-row" style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', justifyContent: 'space-between' }}>
 
-                          {/* SSH Control */}
-                          <div
-                            className={`config-chip ${sshStatus.status === 'enabled' ? 'enabled' : sshStatus.status === 'mismatch' ? 'warning' : 'disabled'}`}
-                            onClick={sshStatus.status === 'enabled' ? handleDisableSSH : handleSetupSSH}
-                            title={sshStatus.status === 'enabled' ? "SSH Enabled - Click to Disable" : sshStatus.status === 'mismatch' ? "Key Mismatch - Click to Fix" : "SSH Disabled - Click to Enable"}
-                            style={{
-                              display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
-                              fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
-                              backgroundColor: sshStatus.status === 'enabled' ? 'rgba(35, 134, 54, 0.2)' : sshStatus.status === 'mismatch' ? 'rgba(210, 153, 34, 0.2)' : 'rgba(255, 255, 255, 0.1)',
-                              color: sshStatus.status === 'enabled' ? '#238636' : sshStatus.status === 'mismatch' ? '#d29922' : '#c9d1d9',
-                              border: 'none'
-                            }}
-                          >
-                            {sshStatus.status === 'enabled' ? <Unlock size={13} style={{ marginRight: '6px' }} /> :
-                              sshStatus.status === 'mismatch' ? <AlertTriangle size={13} style={{ marginRight: '6px' }} /> :
-                                <Lock size={13} style={{ marginRight: '6px' }} />}
-                            {sshStatus.status === 'enabled' ? 'SSH Enabled' : sshStatus.status === 'mismatch' ? 'SSH Key Mismatch' : 'Enable SSH'}
+                            {/* SSH Control */}
+                            <div
+                              className={`config-chip ${sshStatus.status === 'enabled' ? 'enabled' : sshStatus.status === 'mismatch' ? 'warning' : 'disabled'}`}
+                              onClick={sshStatus.status === 'enabled' ? handleDisableSSH : handleSetupSSH}
+                              title={sshStatus.status === 'enabled' ? "SSH Enabled - Click to Disable" : sshStatus.status === 'mismatch' ? "Key Mismatch - Click to Fix" : "SSH Disabled - Click to Enable"}
+                              style={{
+                                display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
+                                fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
+                                backgroundColor: sshStatus.status === 'enabled' ? 'var(--color-success-bg)' : sshStatus.status === 'mismatch' ? 'var(--color-warning-bg)' : 'var(--bg-secondary)',
+                                color: sshStatus.status === 'enabled' ? 'var(--color-success)' : sshStatus.status === 'mismatch' ? 'var(--color-warning)' : 'var(--text-primary)',
+                                border: 'none'
+                              }}
+                            >
+                              {sshStatus.status === 'enabled' ? <Unlock size={13} style={{ marginRight: '6px' }} /> :
+                                sshStatus.status === 'mismatch' ? <AlertTriangle size={13} style={{ marginRight: '6px' }} /> :
+                                  <Lock size={13} style={{ marginRight: '6px' }} />}
+                              {sshStatus.status === 'enabled' ? 'SSH Enabled' : sshStatus.status === 'mismatch' ? 'SSH Key Mismatch' : 'Enable SSH'}
+                            </div>
+
+                            {/* VGA Control */}
+                            <div
+                              className={`config-chip ${sshStatus.vgaEnabled ? 'enabled' : 'disabled'}`}
+                              onClick={() => handleToggleVGA(!sshStatus.vgaEnabled)}
+                              title={sshStatus.vgaEnabled ? "VGA Enabled - Click to Disable" : "VGA Disabled - Click to Enable"}
+                              style={{
+                                display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
+                                fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
+                                backgroundColor: sshStatus.vgaEnabled ? 'var(--color-success-bg)' : 'var(--bg-secondary)',
+                                color: sshStatus.vgaEnabled ? 'var(--color-success)' : 'var(--text-primary)',
+                                border: 'none'
+                              }}
+                            >
+                              <Monitor size={13} style={{ marginRight: '6px' }} />
+                              {sshStatus.vgaEnabled ? 'VGA Enabled' : 'Enable VGA'}
+                            </div>
+
+                            {/* USB Control */}
+                            <div
+                              className={`config-chip ${sshStatus.usbEnabled ? 'enabled' : 'disabled'}`}
+                              onClick={() => handleToggleUSB(!sshStatus.usbEnabled)}
+                              title={sshStatus.usbEnabled ? "USB Enabled - Click to Disable" : "USB Disabled - Click to Enable"}
+                              style={{
+                                display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
+                                fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
+                                backgroundColor: sshStatus.usbEnabled ? 'var(--color-success-bg)' : 'var(--bg-secondary)',
+                                color: sshStatus.usbEnabled ? 'var(--color-success)' : 'var(--text-primary)',
+                                border: 'none'
+                              }}
+                            >
+                              <Activity size={13} style={{ marginRight: '6px' }} />
+                              {sshStatus.usbEnabled ? 'USB Enabled' : 'Enable USB'}
+                            </div>
+
+                            {/* Console Control */}
+                            <div
+                              className={`config-chip ${sshStatus.consoleEnabled ? 'enabled' : 'disabled'}`}
+                              onClick={() => handleToggleConsole(!sshStatus.consoleEnabled)}
+                              title={sshStatus.consoleEnabled ? "Console Enabled - Click to Disable" : "Console Disabled - Click to Enable"}
+                              style={{
+                                display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
+                                fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
+                                backgroundColor: sshStatus.consoleEnabled ? 'var(--color-success-bg)' : 'var(--bg-secondary)',
+                                color: sshStatus.consoleEnabled ? 'var(--color-success)' : 'var(--text-primary)',
+                                border: 'none'
+                              }}
+                            >
+                              <Terminal size={13} style={{ marginRight: '6px' }} />
+                              {sshStatus.consoleEnabled ? 'Console Enabled' : 'Enable Console'}
+                            </div>
+
+                            {/* External Policy Control */}
+                            <div
+                              className={`config-chip ${sshStatus.externalPolicy ? 'enabled' : 'disabled'}`}
+                              onClick={handleEnableExternalPolicy}
+                              title={sshStatus.externalPolicy ? "External Policy Enabled - Click to Disable" : "Enable External Policy (allowExt: true)"}
+                              style={{
+                                display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
+                                fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
+                                backgroundColor: sshStatus.externalPolicy ? 'var(--color-success-bg)' : 'var(--bg-secondary)',
+                                color: sshStatus.externalPolicy ? 'var(--color-success)' : 'var(--text-primary)',
+                                border: 'none'
+                              }}
+                            >
+                              <Shield size={13} style={{ marginRight: '6px' }} />
+                              {sshStatus.externalPolicy ? 'Ext. Policy Enabled' : 'Enable Ext. Policy'}
+                            </div>
+
+                            {/* Collect Info */}
+                            <div
+                              className={`config-chip ${isSessionConnected ? '' : 'disabled'}`}
+                              onClick={isSessionConnected ? handleCollectInfo : undefined}
+                              title={isSessionConnected ? "Collect system information (tech-support bundle)" : "Session must be active to collect info"}
+                              style={{
+                                display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
+                                fontSize: '12px', fontWeight: '500', cursor: isSessionConnected ? 'pointer' : 'default', transition: 'all 0.2s',
+                                backgroundColor: isSessionConnected ? 'var(--color-primary-bg)' : 'var(--bg-secondary)',
+                                color: isSessionConnected ? 'var(--color-primary)' : 'var(--text-primary)',
+                                border: isSessionConnected ? '1px solid var(--color-primary-border)' : 'none'
+                              }}
+                            >
+                              <Download size={13} style={{ marginRight: '6px' }} />
+                              Collect Info
+                            </div>
+
                           </div>
-
-                          {/* VGA Control */}
-                          <div
-                            className={`config-chip ${sshStatus.vgaEnabled ? 'enabled' : 'disabled'}`}
-                            onClick={() => handleToggleVGA(!sshStatus.vgaEnabled)}
-                            title={sshStatus.vgaEnabled ? "VGA Enabled - Click to Disable" : "VGA Disabled - Click to Enable"}
-                            style={{
-                              display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
-                              fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
-                              backgroundColor: sshStatus.vgaEnabled ? 'rgba(35, 134, 54, 0.2)' : 'rgba(255, 255, 255, 0.1)',
-                              color: sshStatus.vgaEnabled ? '#238636' : '#c9d1d9',
-                              border: 'none'
-                            }}
-                          >
-                            <Monitor size={13} style={{ marginRight: '6px' }} />
-                            {sshStatus.vgaEnabled ? 'VGA Enabled' : 'Enable VGA'}
-                          </div>
-
-                          {/* USB Control */}
-                          <div
-                            className={`config-chip ${sshStatus.usbEnabled ? 'enabled' : 'disabled'}`}
-                            onClick={() => handleToggleUSB(!sshStatus.usbEnabled)}
-                            title={sshStatus.usbEnabled ? "USB Enabled - Click to Disable" : "USB Disabled - Click to Enable"}
-                            style={{
-                              display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
-                              fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
-                              backgroundColor: sshStatus.usbEnabled ? 'rgba(35, 134, 54, 0.2)' : 'rgba(255, 255, 255, 0.1)',
-                              color: sshStatus.usbEnabled ? '#238636' : '#c9d1d9',
-                              border: 'none'
-                            }}
-                          >
-                            <Activity size={13} style={{ marginRight: '6px' }} />
-                            {sshStatus.usbEnabled ? 'USB Enabled' : 'Enable USB'}
-                          </div>
-
-                          {/* Console Control */}
-                          <div
-                            className={`config-chip ${sshStatus.consoleEnabled ? 'enabled' : 'disabled'}`}
-                            onClick={() => handleToggleConsole(!sshStatus.consoleEnabled)}
-                            title={sshStatus.consoleEnabled ? "Console Enabled - Click to Disable" : "Console Disabled - Click to Enable"}
-                            style={{
-                              display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
-                              fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
-                              backgroundColor: sshStatus.consoleEnabled ? 'rgba(35, 134, 54, 0.2)' : 'rgba(255, 255, 255, 0.1)',
-                              color: sshStatus.consoleEnabled ? '#238636' : '#c9d1d9',
-                              border: 'none'
-                            }}
-                          >
-                            <Terminal size={13} style={{ marginRight: '6px' }} />
-                            {sshStatus.consoleEnabled ? 'Console Enabled' : 'Enable Console'}
-                          </div>
-
-                          {/* Collect Info */}
-                          <div
-                            className={`config-chip ${isSessionConnected ? '' : 'disabled'}`}
-                            onClick={isSessionConnected ? handleCollectInfo : undefined}
-                            title={isSessionConnected ? "Collect system information (tech-support bundle)" : "Session must be active to collect info"}
-                            style={{
-                              display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
-                              fontSize: '12px', fontWeight: '500', cursor: isSessionConnected ? 'pointer' : 'default', transition: 'all 0.2s',
-                              backgroundColor: isSessionConnected ? 'rgba(56, 139, 253, 0.15)' : 'rgba(255, 255, 255, 0.1)',
-                              color: isSessionConnected ? '#58a6ff' : '#c9d1d9',
-                              border: isSessionConnected ? '1px solid rgba(56, 139, 253, 0.3)' : 'none'
-                            }}
-                          >
-                            <Download size={13} style={{ marginRight: '6px' }} />
-                            Collect Info
-                          </div>
-
                         </div>
                       </div>
-                    </div>
-                  ) : !loadingSSH && (
-                    <div className="error-text">Failed to check status</div>
-                  )}
+                    ) : !loadingSSH && (
+                      <div className="error-text">Failed to check status</div>
+                    )}
+                  </div>
+                </div>
+              )
+            }
+
+            {/* Contextual Action Button (Outside Config Box) */}
+            {selectedNode && sshStatus?.externalPolicy && (
+              <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginBottom: '16px', marginTop: '-8px', marginRight: '16px' }}>
+                <div style={{ position: 'relative' }}>
+                  <button
+                    className={`btn secondary`}
+                    style={{
+                      fontSize: '12px',
+                      padding: '6px 14px',
+                      cursor: 'pointer',
+                      border: '1px solid var(--border-subtle)',
+                      color: 'var(--text-primary)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      backgroundColor: 'var(--bg-hover)',
+                      borderRadius: '6px'
+                    }}
+                    onClick={() => {
+                      setTcpIpInput('');
+                      setTcpPortInput('');
+                      setTcpTunnelConfig({ id: 'manual' });
+                    }}
+                    title="Open TCP tunnel to external endpoint"
+                  >
+                    <Activity size={14} style={{ marginRight: '8px', color: 'var(--color-primary)' }} />
+                    External Endpoint TCP Tunnel
+                  </button>
+
                 </div>
               </div>
             )}
 
-            {selectedNode && (
-              <div className="details-header">
-                <h3>Running Applications</h3>
-              </div>
-            )}
 
-            {loadingServices ? (
-              <div className="loading-state">
-                <Activity className="loading-icon animate-spin" size={24} />
-                <p>Scanning services...</p>
-              </div>
-            ) : error ? (
-              <div
-                className={`error-message ${error.type === 'success' ? 'success-message' : ''}`}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '12px'
-                }}
-              >
-                {error.type === 'success' && error.message.includes('reconnect') && (
-                  <RefreshCw className="animate-spin" size={18} />
-                )}
-                <span>{error.message}</span>
-              </div>
-            ) : services ? (
-              <div className="services-list">
-                {(() => {
-                  const rawList = Array.isArray(services) ? services : (services.services || []);
-                  
-                  // Grouping Logic for Docker Compose
-                  const displayList = [];
-                  const childrenIds = new Set();
-                  const parentsMap = new Map();
-                  
-                  rawList.forEach(app => {
-                    if (app.appType === 'APP_TYPE_DOCKER_COMPOSE') {
-                       // Find parent runtime (non-compose app sharing an IP)
-                       const parent = rawList.find(p => 
-                         p.id !== app.id && 
-                         p.appType !== 'APP_TYPE_DOCKER_COMPOSE' &&
-                         p.ips && app.ips && 
-                         p.ips.some(ip => app.ips.includes(ip))
-                       );
-                       if (parent) {
-                         if (!parentsMap.has(parent.id)) parentsMap.set(parent.id, []);
-                         parentsMap.get(parent.id).push(app);
-                         childrenIds.add(app.id);
-                       }
-                    }
-                  });
-                  
-                  rawList.forEach(app => {
-                    if (!childrenIds.has(app.id)) {
-                      displayList.push({ ...app, isChild: false, isRuntime: parentsMap.has(app.id) });
-                      if (parentsMap.has(app.id)) {
-                        parentsMap.get(app.id).forEach(child => {
-                          displayList.push({ ...child, isChild: true });
-                        });
+            {
+              selectedNode && (
+                <div className="details-header">
+                  <h3>Running Applications</h3>
+                </div>
+              )
+            }
+
+            {
+              loadingServices ? (
+                <div className="loading-state">
+                  <Activity className="loading-icon animate-spin" size={24} />
+                  <p>Scanning services...</p>
+                </div>
+              ) : error ? (
+                <div
+                  className={`error-message ${error.type === 'success' ? 'success-message' : ''}`}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '12px'
+                  }}
+                >
+                  {error.type === 'success' && error.message.includes('reconnect') && (
+                    <RefreshCw className="animate-spin" size={18} />
+                  )}
+                  <span>{error.message}</span>
+                </div>
+              ) : services ? (
+                <div className="services-list">
+                  {(() => {
+                    const rawList = Array.isArray(services) ? services : (services.services || []);
+
+                    // Grouping Logic for Docker Compose
+                    const displayList = [];
+                    const childrenIds = new Set();
+                    const parentsMap = new Map();
+
+                    rawList.forEach(app => {
+                      if (app.appType === 'APP_TYPE_DOCKER_COMPOSE') {
+                        // Find parent runtime (non-compose app sharing an IP)
+                        const parent = rawList.find(p =>
+                          p.id !== app.id &&
+                          p.appType !== 'APP_TYPE_DOCKER_COMPOSE' &&
+                          p.ips && app.ips &&
+                          p.ips.some(ip => app.ips.includes(ip))
+                        );
+                        if (parent) {
+                          if (!parentsMap.has(parent.id)) parentsMap.set(parent.id, []);
+                          parentsMap.get(parent.id).push(app);
+                          childrenIds.add(app.id);
+                        }
                       }
-                    }
-                  });
+                    });
 
-                  const globalError = !Array.isArray(services) ? services.error : null;
-                  return (
-                    <>
-                      {displayList.length > 0 ? (
-                        displayList.map((app, idx) => (
-                          <div key={idx} className="service-item" style={{ 
-                            flexDirection: 'column', 
-                            alignItems: 'stretch',
-                            marginLeft: app.isChild ? '32px' : '0',
-                            paddingLeft: app.isChild ? '12px' : '16px',
-                            // Only override borderLeft for children to create the tree line effect
-                            // Parents keep the default border from .service-item class
-                            ...(app.isChild ? { borderLeft: '2px solid #333' } : {}),
-                            position: 'relative',
-                            marginBottom: '8px',
-                            backgroundColor: app.isChild ? '#161616' : '#1e1e1e' 
-                          }}>
-                            {app.isChild && (
+                    rawList.forEach(app => {
+                      if (!childrenIds.has(app.id)) {
+                        displayList.push({ ...app, isChild: false, isRuntime: parentsMap.has(app.id) });
+                        if (parentsMap.has(app.id)) {
+                          parentsMap.get(app.id).forEach(child => {
+                            displayList.push({ ...child, isChild: true });
+                          });
+                        }
+                      }
+                    });
+
+                    const globalError = !Array.isArray(services) ? services.error : null;
+                    return (
+                      <>
+                        {displayList.length > 0 ? (
+                          displayList.map((app, idx) => (
+                            <div key={idx} className="service-item" style={{
+                              flexDirection: 'column',
+                              alignItems: 'stretch',
+                              marginLeft: app.isChild ? '32px' : '0',
+                              paddingLeft: app.isChild ? '12px' : '16px',
+                              // Only override borderLeft for children to create the tree line effect
+                              // Parents keep the default border from .service-item class
+                              ...(app.isChild ? { borderLeft: '2px solid var(--border-color)' } : {}),
+                              position: 'relative',
+                              marginBottom: '8px'
+                            }}>
+                              {app.isChild && (
                                 <div style={{
-                                  position: 'absolute', left: '-2px', top: '24px', width: '12px', height: '2px', backgroundColor: '#333'
+                                  position: 'absolute', left: '-2px', top: '24px', width: '12px', height: '2px', backgroundColor: 'var(--border-color)'
                                 }} />
                             )}
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -3343,524 +3385,497 @@ Do you want to try connecting anyway?`)) {
                                                   return;
                                                 }
 
-                                                handleContainerShell(app, c, 'root', '');
-                                              }}
-                                            >
-                                              {tunnelLoading === `shell-${c.containerName}` ? <Activity size={12} className="animate-spin" /> : <Terminal size={12} />}
-                                              <span style={{ marginLeft: '4px' }}>Shell</span>
-                                            </button>
-                                          </div>
+                                                  handleContainerShell(app, c, 'root', '');
+                                                }}
+                                              >
+                                                {tunnelLoading === `shell-${c.containerName}` ? <Activity size={12} className="animate-spin" /> : <Terminal size={12} />}
+                                                <span style={{ marginLeft: '4px' }}>Shell</span>
+                                              </button>
+                                            </div>
 
-                                          {/* Shell Username Prompt Popover */}
-                                          {shellPrompt?.containerName === c.containerName && (
-                                            <div
-                                              className="ssh-popover"
-                                              onClick={(e) => e.stopPropagation()}
-                                              style={{
-                                                position: 'absolute',
-                                                top: '100%',
-                                                right: '0',
-                                                marginTop: '4px',
-                                                backgroundColor: '#1e1e1e',
-                                                border: '1px solid #333',
-                                                borderRadius: '6px',
-                                                padding: '8px',
-                                                boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
-                                                zIndex: 1000,
-                                                minWidth: '220px',
-                                                textAlign: 'left'
-                                              }}
-                                            >
-                                              <div style={{ marginBottom: '8px', fontSize: '12px', color: '#888' }}>
-                                                SSH Credentials
-                                              </div>
-                                              <input
-                                                type="text"
-                                                value={shellPrompt.username}
-                                                onChange={(e) => setShellPrompt({ ...shellPrompt, username: e.target.value })}
-                                                placeholder="Username (e.g. ubuntu)"
-                                                autoFocus
-                                                onKeyDown={(e) => {
-                                                  if (e.key === 'Enter') {
-                                                    // Move to password
-                                                    e.preventDefault();
-                                                    document.getElementById(`shell-pass-${c.containerName}`)?.focus();
-                                                  } else if (e.key === 'Escape') {
-                                                    setShellPrompt(null);
-                                                  }
-                                                }}
+                                            {/* Shell Username Prompt Popover */}
+                                            {shellPrompt?.containerName === c.containerName && (
+                                              <div
+                                                className="ssh-popover"
+                                                onClick={(e) => e.stopPropagation()}
                                                 style={{
-                                                  width: '100%',
-                                                  boxSizing: 'border-box',
-                                                  padding: '6px 8px',
-                                                  backgroundColor: '#2a2a2a',
-                                                  border: '1px solid #444',
-                                                  borderRadius: '4px',
-                                                  color: '#fff',
-                                                  fontSize: '13px',
-                                                  marginBottom: '8px'
+                                                  position: 'absolute',
+                                                  top: '100%',
+                                                  right: '0',
+                                                  marginTop: '4px',
+                                                  backgroundColor: 'var(--bg-panel)',
+                                                  border: '1px solid var(--border-subtle)',
+                                                  borderRadius: '6px',
+                                                  padding: '8px',
+                                                  boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+                                                  zIndex: 1000,
+                                                  minWidth: '220px',
+                                                  textAlign: 'left'
                                                 }}
-                                              />
-                                              <input
-                                                id={`shell-pass-${c.containerName}`}
-                                                type="password"
-                                                value={shellPrompt.password || ''}
-                                                onChange={(e) => setShellPrompt({ ...shellPrompt, password: e.target.value })}
-                                                placeholder="Password (optional)"
-                                                onKeyDown={(e) => {
-                                                  if (e.key === 'Enter') {
+                                              >
+                                                <div style={{ marginBottom: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                                                  SSH Credentials
+                                                </div>
+                                                <input
+                                                  type="text"
+                                                  value={shellPrompt.username}
+                                                  onChange={(e) => setShellPrompt({ ...shellPrompt, username: e.target.value })}
+                                                  placeholder="Username (e.g. ubuntu)"
+                                                  autoFocus
+                                                  onKeyDown={(e) => {
+                                                    if (e.key === 'Enter') {
+                                                      // Move to password
+                                                      e.preventDefault();
+                                                      document.getElementById(`shell-pass-${c.containerName}`)?.focus();
+                                                    } else if (e.key === 'Escape') {
+                                                      setShellPrompt(null);
+                                                    }
+                                                  }}
+                                                  style={{
+                                                    width: '100%',
+                                                    boxSizing: 'border-box',
+                                                    padding: '6px 8px',
+                                                    backgroundColor: 'var(--bg-surface)',
+                                                    border: '1px solid var(--border-subtle)',
+                                                    borderRadius: '4px',
+                                                    color: 'var(--text-primary)',
+                                                    fontSize: '13px',
+                                                    marginBottom: '8px'
+                                                  }}
+                                                />
+                                                <input
+                                                  id={`shell-pass-${c.containerName}`}
+                                                  type="password"
+                                                  value={shellPrompt.password || ''}
+                                                  onChange={(e) => setShellPrompt({ ...shellPrompt, password: e.target.value })}
+                                                  placeholder="Password (optional)"
+                                                  onKeyDown={(e) => {
+                                                    if (e.key === 'Enter') {
+                                                      saveSshUsername(app.name, shellPrompt.username || 'root');
+                                                      handleContainerShell(app, c, shellPrompt.username || 'root', shellPrompt.password || '');
+                                                      setShellPrompt(null);
+                                                    } else if (e.key === 'Escape') {
+                                                      setShellPrompt(null);
+                                                    }
+                                                  }}
+                                                  style={{
+                                                    width: '100%',
+                                                    boxSizing: 'border-box',
+                                                    padding: '6px 8px',
+                                                    backgroundColor: 'var(--bg-surface)',
+                                                    border: '1px solid var(--border-subtle)',
+                                                    borderRadius: '4px',
+                                                    color: 'var(--text-primary)',
+                                                    fontSize: '13px',
+                                                    marginBottom: '12px'
+                                                  }}
+                                                />
+                                                <button
+                                                  className="connect-btn primary"
+                                                  style={{ width: '100%', justifyContent: 'center' }}
+                                                  onClick={() => {
                                                     saveSshUsername(app.name, shellPrompt.username || 'root');
                                                     handleContainerShell(app, c, shellPrompt.username || 'root', shellPrompt.password || '');
                                                     setShellPrompt(null);
-                                                  } else if (e.key === 'Escape') {
-                                                    setShellPrompt(null);
-                                                  }
-                                                }}
-                                                style={{
-                                                  width: '100%',
-                                                  boxSizing: 'border-box',
-                                                  padding: '6px 8px',
-                                                  backgroundColor: '#2a2a2a',
-                                                  border: '1px solid #444',
-                                                  borderRadius: '4px',
-                                                  color: '#fff',
-                                                  fontSize: '13px',
-                                                  marginBottom: '12px'
-                                                }}
-                                              />
-                                              <button
-                                                className="connect-btn primary"
-                                                style={{ width: '100%', justifyContent: 'center' }}
-                                                onClick={() => {
-                                                  saveSshUsername(app.name, shellPrompt.username || 'root');
-                                                  handleContainerShell(app, c, shellPrompt.username || 'root', shellPrompt.password || '');
-                                                  setShellPrompt(null);
-                                                }}
-                                              >
-                                                Connect
-                                              </button>
-                                            </div>
-                                          )}
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                            )}
-                            {expandedServiceId === idx && (
-                              <div className="service-options">
-                                {app.vncPort && (
-                                  <div className="option-btn-container" style={{ position: 'relative' }}>
-                                    <div
-                                      className={`option-btn ${tunnelLoading === 'vnc' ? 'loading' : ''} ${sessionExpired ? 'disabled' : ''}`}
-                                      onClick={() => {
-                                        if (sessionExpired || tunnelLoading) return;
-                                        setVncMenuAppId(vncMenuAppId === app.id ? null : app.id);
-                                        setShowVncMenu(vncMenuAppId !== app.id);
-                                      }}
-                                    >
-                                      {tunnelLoading === 'vnc' ? <Activity size={20} className="option-icon animate-spin" /> : <Monitor size={20} className="option-icon" />}
-                                      <span className="option-label">Launch VNC</span>
-                                      <ChevronDown size={16} style={{ marginLeft: '4px' }} />
-                                    </div>
-                                    {showVncMenu && vncMenuAppId === app.id && (
-                                      <div ref={dropdownRef} className="dropdown-menu" style={{
-                                        position: 'absolute',
-                                        top: '100%',
-                                        left: 0,
-                                        marginTop: '4px',
-                                        backgroundColor: '#1e1e1e',
-                                        border: '1px solid #333',
-                                        borderRadius: '6px',
-                                        boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
-                                        zIndex: 1000,
-                                        minWidth: '200px'
-                                      }}>
-                                        <div
-                                          className="dropdown-item"
-                                          onClick={async () => {
-                                            setShowVncMenu(false);
-                                            setVncMenuAppId(null);
-                                            try {
-                                              setTunnelLoading('vnc');
-                                              setGlobalStatus({ type: 'loading', message: `Starting VNC tunnel to localhost:${app.vncPort}...` });
-                                              const vncTarget = 'localhost';
-                                              addLog(`Starting VNC tunnel to ${vncTarget}:${app.vncPort}...`, 'info');
-                                              const result = await StartTunnel(selectedNode.id, vncTarget, app.vncPort, 'vnc');
-                                              const port = result.port || result;
-                                              const tunnelId = result.tunnelId;
-                                              addLog(`VNC tunnel active on localhost:${port}`, 'success');
-                                              addTunnel('VNC', vncTarget, app.vncPort, port, tunnelId);
-
-                                              // Open VNC in new window
-                                              await window.electronAPI.openVncWindow({
-                                                port: port,
-                                                nodeName: selectedNode.name,
-                                                appName: app.name,
-                                                tunnelId: tunnelId
-                                              });
-                                              addLog(`VNC viewer opened in new window`, 'info');
-                                              setExpandedServiceId(null);
-                                            } catch (err) {
-                                              console.error(err);
-                                              handleTunnelError(err);
-                                              addLog(`Failed to start VNC tunnel: ${err.message}`, 'error');
-                                            } finally {
-                                              setTunnelLoading(null);
-                                              setGlobalStatus(null);
-                                            }
-                                          }}
-                                          style={{
-                                            padding: '10px 14px',
-                                            cursor: 'pointer',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: '8px',
-                                            borderBottom: '1px solid #333'
-                                          }}
-                                        >
-                                          <Monitor size={16} />
-                                          <span>Open in Built-in Viewer</span>
-                                        </div>
-                                        <div
-                                          className="dropdown-item"
-                                          onClick={async () => {
-                                            setShowVncMenu(false);
-                                            setVncMenuAppId(null);
-                                            try {
-                                              setTunnelLoading('vnc');
-                                              setGlobalStatus({ type: 'loading', message: `Starting VNC tunnel to localhost:${app.vncPort}...` });
-                                              const vncTarget = 'localhost';
-                                              addLog(`Starting VNC tunnel to ${vncTarget}:${app.vncPort}...`, 'info');
-                                              const result = await StartTunnel(selectedNode.id, vncTarget, app.vncPort, 'vnc-tcp');
-                                              const port = result.port || result;
-                                              const tunnelId = result.tunnelId;
-                                              addLog(`VNC tunnel active on localhost:${port}`, 'success');
-                                              addTunnel('VNC', vncTarget, app.vncPort, port, tunnelId);
-                                              setHighlightTunnels(true);
-                                              setTimeout(() => setHighlightTunnels(false), 2000);
-                                              addLog(
-                                                `Connect your VNC client to localhost:${port}`,
-                                                'info'
-                                              );
-                                              setExpandedServiceId(null);
-                                            } catch (err) {
-                                              console.error(err);
-                                              handleTunnelError(err);
-                                              addLog(`Failed to start VNC tunnel: ${err.message}`, 'error');
-                                            } finally {
-                                              setTunnelLoading(null);
-                                              setGlobalStatus(null);
-                                            }
-                                          }}
-                                          style={{
-                                            padding: '10px 14px',
-                                            cursor: 'pointer',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: '8px'
-                                          }}
-                                        >
-                                          <ExternalLink size={16} />
-                                          <span>Use External Client</span>
-                                        </div>
+                                                  }}
+                                                >
+                                                  Connect
+                                                </button>
+                                              </div>
+                                            )}
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
+                              {expandedServiceId === idx && (
+                                <div className="service-options">
+                                  {app.vncPort && (
+                                    <div className="option-btn-container" style={{ position: 'relative' }}>
+                                      <div
+                                        className={`option-btn ${tunnelLoading === 'vnc' ? 'loading' : ''} ${sessionExpired ? 'disabled' : ''}`}
+                                        onClick={() => {
+                                          if (sessionExpired || tunnelLoading) return;
+                                          setVncMenuAppId(vncMenuAppId === app.id ? null : app.id);
+                                          setShowVncMenu(vncMenuAppId !== app.id);
+                                        }}
+                                      >
+                                        {tunnelLoading === 'vnc' ? <Activity size={20} className="option-icon animate-spin" /> : <Monitor size={20} className="option-icon" />}
+                                        <span className="option-label">Launch VNC</span>
+                                        <ChevronDown size={16} style={{ marginLeft: '4px' }} />
                                       </div>
-                                    )}
+                                      {showVncMenu && vncMenuAppId === app.id && (
+                                        <div ref={dropdownRef} className="dropdown-menu" style={{
+                                          position: 'absolute',
+                                          top: '100%',
+                                          left: 0,
+                                          marginTop: '4px',
+                                          backgroundColor: 'var(--bg-panel)',
+                                          border: '1px solid var(--border-subtle)',
+                                          borderRadius: '6px',
+                                          boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+                                          zIndex: 1000,
+                                          minWidth: '200px'
+                                        }}>
+                                          <div
+                                            className="dropdown-item"
+                                            onClick={async () => {
+                                              setShowVncMenu(false);
+                                              setVncMenuAppId(null);
+                                              try {
+                                                setTunnelLoading('vnc');
+                                                setGlobalStatus({ type: 'loading', message: `Starting VNC tunnel to localhost:${app.vncPort}...` });
+                                                const vncTarget = 'localhost';
+                                                addLog(`Starting VNC tunnel to ${vncTarget}:${app.vncPort}...`, 'info');
+                                                const result = await StartTunnel(selectedNode.id, vncTarget, app.vncPort, 'vnc');
+                                                const port = result.port || result;
+                                                const tunnelId = result.tunnelId;
+                                                addLog(`VNC tunnel active on localhost:${port}`, 'success');
+                                                addTunnel('VNC', vncTarget, app.vncPort, port, tunnelId);
+
+                                                // Open VNC in new window
+                                                await window.electronAPI.openVncWindow({
+                                                  port: port,
+                                                  nodeName: selectedNode.name,
+                                                  appName: app.name,
+                                                  tunnelId: tunnelId,
+                                                  theme
+                                                });
+                                                addLog(`VNC viewer opened in new window`, 'info');
+                                                setExpandedServiceId(null);
+                                              } catch (err) {
+                                                console.error(err);
+                                                handleTunnelError(err);
+                                                addLog(`Failed to start VNC tunnel: ${err.message}`, 'error');
+                                              } finally {
+                                                setTunnelLoading(null);
+                                                setGlobalStatus(null);
+                                              }
+                                            }}
+                                            style={{
+                                              padding: '10px 14px',
+                                              cursor: 'pointer',
+                                              display: 'flex',
+                                              alignItems: 'center',
+                                              gap: '8px',
+                                              borderBottom: '1px solid #333'
+                                            }}
+                                          >
+                                            <Monitor size={16} />
+                                            <span>Open in Built-in Viewer</span>
+                                          </div>
+                                          <div
+                                            className="dropdown-item"
+                                            onClick={async () => {
+                                              setShowVncMenu(false);
+                                              setVncMenuAppId(null);
+                                              try {
+                                                setTunnelLoading('vnc');
+                                                setGlobalStatus({ type: 'loading', message: `Starting VNC tunnel to localhost:${app.vncPort}...` });
+                                                const vncTarget = 'localhost';
+                                                addLog(`Starting VNC tunnel to ${vncTarget}:${app.vncPort}...`, 'info');
+                                                const result = await StartTunnel(selectedNode.id, vncTarget, app.vncPort, 'vnc-tcp');
+                                                const port = result.port || result;
+                                                const tunnelId = result.tunnelId;
+                                                addLog(`VNC tunnel active on localhost:${port}`, 'success');
+                                                addTunnel('VNC', vncTarget, app.vncPort, port, tunnelId);
+                                                setHighlightTunnels(true);
+                                                setTimeout(() => setHighlightTunnels(false), 2000);
+                                                addLog(
+                                                  `Connect your VNC client to localhost:${port}`,
+                                                  'info'
+                                                );
+                                                setExpandedServiceId(null);
+                                              } catch (err) {
+                                                console.error(err);
+                                                handleTunnelError(err);
+                                                addLog(`Failed to start VNC tunnel: ${err.message}`, 'error');
+                                              } finally {
+                                                setTunnelLoading(null);
+                                                setGlobalStatus(null);
+                                              }
+                                            }}
+                                            style={{
+                                              padding: '10px 14px',
+                                              cursor: 'pointer',
+                                              display: 'flex',
+                                              alignItems: 'center',
+                                              gap: '8px'
+                                            }}
+                                          >
+                                            <ExternalLink size={16} />
+                                            <span>Use External Client</span>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                  <div
+                                    className={`option-btn ${tunnelLoading === 'ssh' ? 'loading' : ''} ${sessionExpired ? 'disabled' : ''}`}
+                                    onClick={() => {
+                                      if (sessionExpired) {
+                                        addLog('Cannot start SSH tunnel: EdgeView session has expired. Restart the session first.', 'warning');
+                                        return;
+                                      }
+                                      if (tunnelLoading) return;
+                                      const ip = app.ips && app.ips.length > 0 ? app.ips[0] : '10.2.255.254';
+                                      const savedUser = getSavedSshUsername(app.name);
+                                      setSshUser(savedUser);
+                                      setSshTunnelConfig({ ip, appName: app.name });
+                                    }}
+                                  >
+                                    {tunnelLoading === 'ssh' ? <Activity size={20} className="option-icon animate-spin" /> : <Terminal size={20} className="option-icon" />}
+                                    <span className="option-label">Launch SSH</span>
                                   </div>
-                                )}
-                                <div
-                                  className={`option-btn ${tunnelLoading === 'ssh' ? 'loading' : ''} ${sessionExpired ? 'disabled' : ''}`}
-                                  onClick={() => {
-                                    if (sessionExpired) {
-                                      addLog('Cannot start SSH tunnel: EdgeView session has expired. Restart the session first.', 'warning');
-                                      return;
-                                    }
-                                    if (tunnelLoading) return;
-                                    const ip = app.ips && app.ips.length > 0 ? app.ips[0] : '10.2.255.254';
-                                    const savedUser = getSavedSshUsername(app.name);
-                                    setSshUser(savedUser);
-                                    setSshTunnelConfig({ ip, appName: app.name });
-                                  }}
-                                >
-                                  {tunnelLoading === 'ssh' ? <Activity size={20} className="option-icon animate-spin" /> : <Terminal size={20} className="option-icon" />}
-                                  <span className="option-label">Launch SSH</span>
+                                  <div
+                                    className={`option-btn ${tunnelLoading ? 'loading' : ''} ${sessionExpired ? 'disabled' : ''}`}
+                                    onClick={() => {
+                                      if (sessionExpired) {
+                                        addLog('Cannot start TCP tunnel: EdgeView session has expired. Restart the session first.', 'warning');
+                                        return;
+                                      }
+                                      if (tunnelLoading) return;
+                                      const ip = app.ips && app.ips.length > 0 ? app.ips[0] : '127.0.0.1';
+                                      setTcpTunnelConfig({ ip, appName: app.name, containers: app.containers });
+                                      setTcpIpInput(ip);
+                                      setTcpPortInput('80');
+                                      setTcpError('');
+                                    }}>
+                                    <Activity size={20} className="option-icon" />
+                                    <span className="option-label">TCP Tunnel</span>
+                                  </div>
                                 </div>
-                                <div
-                                  className={`option-btn ${tunnelLoading ? 'loading' : ''} ${sessionExpired ? 'disabled' : ''}`}
-                                  onClick={() => {
-                                    if (sessionExpired) {
-                                      addLog('Cannot start TCP tunnel: EdgeView session has expired. Restart the session first.', 'warning');
-                                      return;
-                                    }
-                                    if (tunnelLoading) return;
-                                    const ip = app.ips && app.ips.length > 0 ? app.ips[0] : '127.0.0.1';
-                                    setTcpTunnelConfig({ ip, appName: app.name, containers: app.containers });
-                                    setTcpIpInput(ip);
-                                    setTcpPortInput('80');
-                                    setTcpError('');
-                                  }}>
-                                  <Activity size={20} className="option-icon" />
-                                  <span className="option-label">TCP Tunnel</span>
-                                </div>
-                              </div>
-                            )}
+                              )}
+                            </div>
+                          ))
+                        ) : (
+                          <div className="empty-state">No apps found</div>
+                        )}
+                        {globalError && (
+                          <div className="error-message">
+                            {globalError.includes("can't have more than 2 peers")
+                              ? "All EdgeView sessions are occupied (max 2 concurrent sessions). Please reset the connection to free up a session slot."
+                              : globalError.includes("no device online")
+                                ? "Device is not connected to EdgeView. Real-time status and connections unavailable."
+                                : `Warning: ${globalError}`}
                           </div>
-                        ))
-                      ) : (
-                        <div className="empty-state">No apps found</div>
-                      )}
-                      {globalError && (
-                        <div className="error-message">
-                          {globalError.includes("can't have more than 2 peers")
-                            ? "All EdgeView sessions are occupied (max 2 concurrent sessions). Please reset the connection to free up a session slot."
-                            : globalError.includes("no device online")
-                              ? "Device is not connected to EdgeView. Real-time status and connections unavailable."
-                              : `Warning: ${globalError}`}
-                        </div>
-                      )}
-                    </>
-                  );
-                })()}
-              </div >
-            ) : null}
+                        )}
+                      </>
+                    );
+                  })()}
+                </div >
+              ) : null
+            }
 
             {selectedNode && <ActivityLog logs={logs} />}
 
-            {tcpTunnelConfig && (
-              <Modal
-                title="Start TCP Tunnel"
-                isOpen={!!tcpTunnelConfig}
-                onDismiss={() => setTcpTunnelConfig(null)}
-                size="small"
-                footer={
-                  <>
-                    <Button
-                      variant="secondary"
-                      onClick={() => setTcpTunnelConfig(null)}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      variant="primary"
-                      onClick={startCustomTunnel}
-                      disabled={!tcpIpInput || !tcpPortInput || !!tunnelLoading}
-                      isLoading={tunnelLoading === 'tcp'}
-                    >
-                      Start Tunnel
-                    </Button>
-                  </>
-                }
-              >
-                <div className="form-group">
-                  <label>Target IP</label>
-                  <input
-                    type="text"
-                    value={tcpIpInput}
-                    onChange={(e) => setTcpIpInput(e.target.value)}
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label>Target Port</label>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <input
-                      type="number"
-                      value={tcpPortInput}
-                      onChange={(e) => setTcpPortInput(e.target.value)}
-                      placeholder="e.g. 8080"
-                      style={{ width: '100px' }}
-                    />
-
-                    {tcpTunnelConfig && tcpTunnelConfig.containers && tcpTunnelConfig.containers.length > 0 && (() => {
-                      // Flatten all exposed ports
-                      const exposedPorts = tcpTunnelConfig.containers.flatMap(c =>
-                        (c.portMaps || [])
-                          .filter(pm => pm.publicPort > 0)
-                          .map(pm => ({ ...pm, containerName: c.containerName }))
-                      );
-
-                      if (exposedPorts.length > 0) {
-                        return (
-                          <PortSelect
-                            ports={exposedPorts}
-                            selectedValue={tcpPortInput}
-                            onChange={setTcpPortInput}
-                            placeholder="Select exposed port..."
-                          />
-                        );
-                      }
-                      return null;
-                    })()}
-                  </div>
-                </div>
-
-                {tcpError && (
-                  <div style={{ color: 'var(--color-danger)', fontSize: '13px', marginBottom: '16px' }}>
-                    {tcpError}
-                  </div>
-                )}
-              </Modal>
-            )}
-
-            {sshTunnelConfig && (
-              <Modal
-                title="Start SSH Session"
-                isOpen={!!sshTunnelConfig}
-                onDismiss={() => {
-                  setSshTunnelConfig(null);
-                  setSshError(null);
-                }}
-                size="small"
-              >
-                <div style={{ fontSize: '13px', marginBottom: '20px', color: 'var(--text-secondary)', textAlign: 'center' }}>
-                  {selectedNode?.name} • <span className="data-value-code">{sshTunnelConfig.ip}</span>
-                </div>
-
-                {sshError && (
-                  <div className="error-banner-inline" style={{
-                    backgroundColor: 'rgba(231, 76, 60, 0.1)',
-                    border: '1px solid rgba(231, 76, 60, 0.3)',
-                    color: 'var(--color-danger)',
-                    padding: '8px 12px',
-                    borderRadius: '4px',
-                    fontSize: '12px',
-                    marginBottom: '16px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px'
-                  }}>
-                    <AlertCircle size={14} />
-                    <span>{sshError}</span>
-                  </div>
-                )}
-
-                <div style={{ display: 'flex', gap: '12px', marginBottom: '4px' }}>
-                  <div className="form-group" style={{ flex: '3' }}>
-                    <label>Username</label>
+            {
+              tcpTunnelConfig && (
+                <Modal
+                  title="Start TCP Tunnel"
+                  isOpen={!!tcpTunnelConfig}
+                  onDismiss={() => setTcpTunnelConfig(null)}
+                  size="small"
+                  footer={
+                    <>
+                      <Button
+                        variant="secondary"
+                        onClick={() => setTcpTunnelConfig(null)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        variant="primary"
+                        onClick={startCustomTunnel}
+                        disabled={!tcpIpInput || !tcpPortInput || !!tunnelLoading}
+                        isLoading={tunnelLoading === 'tcp'}
+                      >
+                        Start Tunnel
+                      </Button>
+                    </>
+                  }
+                >
+                  <div className="form-group">
+                    <label>Target IP</label>
                     <input
                       type="text"
-                      value={sshUser}
-                      onChange={(e) => setSshUser(e.target.value)}
-                      placeholder="root"
+                      value={tcpIpInput}
+                      onChange={(e) => setTcpIpInput(e.target.value)}
                     />
                   </div>
-                  <div className="form-group" style={{ flex: '1' }}>
-                    <label>Port</label>
+
+                  <div className="form-group">
+                    <label>Target Port</label>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <input
+                        type="number"
+                        value={tcpPortInput}
+                        onChange={(e) => setTcpPortInput(e.target.value)}
+                        placeholder="e.g. 8080"
+                        style={{ width: '100px' }}
+                      />
+
+                      {tcpTunnelConfig && tcpTunnelConfig.containers && tcpTunnelConfig.containers.length > 0 && (() => {
+                        // Flatten all exposed ports
+                        const exposedPorts = tcpTunnelConfig.containers.flatMap(c =>
+                          (c.portMaps || [])
+                            .filter(pm => pm.publicPort > 0)
+                            .map(pm => ({ ...pm, containerName: c.containerName }))
+                        );
+
+                        if (exposedPorts.length > 0) {
+                          return (
+                            <PortSelect
+                              ports={exposedPorts}
+                              selectedValue={tcpPortInput}
+                              onChange={setTcpPortInput}
+                              placeholder="Select exposed port..."
+                            />
+                          );
+                        }
+                        return null;
+                      })()}
+                    </div>
+                  </div>
+
+                  {tcpError && (
+                    <div style={{ color: 'var(--color-danger)', fontSize: '13px', marginBottom: '16px' }}>
+                      {tcpError}
+                    </div>
+                  )}
+                </Modal>
+              )
+            }
+
+            {
+              sshTunnelConfig && (
+                <Modal
+                  title="Start SSH Session"
+                  isOpen={!!sshTunnelConfig}
+                  onDismiss={() => {
+                    setSshTunnelConfig(null);
+                    setSshError(null);
+                  }}
+                  size="small"
+                >
+                  <div style={{ fontSize: '13px', marginBottom: '20px', color: 'var(--text-secondary)', textAlign: 'center' }}>
+                    {selectedNode?.name} • <span className="data-value-code">{sshTunnelConfig.ip}</span>
+                  </div>
+
+                  {sshError && (
+                    <div className="error-banner-inline" style={{
+                      backgroundColor: 'rgba(231, 76, 60, 0.1)',
+                      border: '1px solid rgba(231, 76, 60, 0.3)',
+                      color: 'var(--color-danger)',
+                      padding: '8px 12px',
+                      borderRadius: '4px',
+                      fontSize: '12px',
+                      marginBottom: '16px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}>
+                      <AlertCircle size={14} />
+                      <span>{sshError}</span>
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', gap: '12px', marginBottom: '4px' }}>
+                    <div className="form-group" style={{ flex: '3' }}>
+                      <label>Username</label>
+                      <input
+                        type="text"
+                        value={sshUser}
+                        onChange={(e) => setSshUser(e.target.value)}
+                        placeholder="root"
+                      />
+                    </div>
+                    <div className="form-group" style={{ flex: '1' }}>
+                      <label>Port</label>
+                      <input
+                        type="number"
+                        value={sshPort}
+                        onChange={(e) => setSshPort(e.target.value)}
+                        placeholder="22"
+                        min="1"
+                        max="65535"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <label>Password (Optional)</label>
                     <input
-                      type="number"
-                      value={sshPort}
-                      onChange={(e) => setSshPort(e.target.value)}
-                      placeholder="22"
-                      min="1"
-                      max="65535"
+                      type="password"
+                      value={sshPassword}
+                      onChange={(e) => setSshPassword(e.target.value)}
+                      placeholder="Leave empty if using key-based auth"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') startSshModalTunnel('builtin');
+                        if (e.key === 'Escape') setSshTunnelConfig(null);
+                      }}
                     />
                   </div>
-                </div>
 
-                <div className="form-group">
-                  <label>Password (Optional)</label>
-                  <input
-                    type="password"
-                    value={sshPassword}
-                    onChange={(e) => setSshPassword(e.target.value)}
-                    placeholder="Leave empty if using key-based auth"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') startSshModalTunnel('builtin');
-                      if (e.key === 'Escape') setSshTunnelConfig(null);
-                    }}
-                  />
-                </div>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '20px' }}>
-                  <Button
-                    variant="primary"
-                    onClick={() => startSshModalTunnel('builtin')}
-                    isLoading={tunnelLoading === 'ssh'}
-                    icon={!tunnelLoading && <Terminal size={14} />}
-                    style={{ width: '100%', justifyContent: 'center' }}
-                  >
-                    Open Built-in Terminal
-                  </Button>
-
-                  <div style={{ display: 'flex', gap: '8px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '20px' }}>
                     <Button
-                      variant="secondary"
-                      onClick={() => startSshModalTunnel('native')}
-                      disabled={tunnelLoading}
-                      style={{ flex: 1, justifyContent: 'center' }}
-                      icon={<ExternalLink size={14} />}
+                      variant="primary"
+                      onClick={() => startSshModalTunnel('builtin')}
+                      isLoading={tunnelLoading === 'ssh'}
+                      icon={!tunnelLoading && <Terminal size={14} />}
+                      style={{ width: '100%', justifyContent: 'center' }}
                     >
-                      Native Terminal
+                      Open Built-in Terminal
                     </Button>
-                    <Button
-                      variant="secondary"
-                      onClick={() => startSshModalTunnel('tunnel-only')}
-                      disabled={tunnelLoading}
-                      style={{ flex: 1, justifyContent: 'center' }}
-                      icon={<Activity size={14} />}
-                    >
-                      Tunnel Only
-                    </Button>
-                  </div>
-                </div>
-              </Modal>
-            )}
 
-            {!selectedNode && (
-              <div className="results-list">
-                {loading && (
-                  <div className="loading-state">
-                    <Activity className="loading-icon animate-spin" size={24} />
-                    <p>Loading nodes...</p>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <Button
+                        variant="secondary"
+                        onClick={() => startSshModalTunnel('native')}
+                        disabled={tunnelLoading}
+                        style={{ flex: 1, justifyContent: 'center' }}
+                        icon={<ExternalLink size={14} />}
+                      >
+                        Native Terminal
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={() => startSshModalTunnel('tunnel-only')}
+                        disabled={tunnelLoading}
+                        style={{ flex: 1, justifyContent: 'center' }}
+                        icon={<Activity size={14} />}
+                      >
+                        Tunnel Only
+                      </Button>
+                    </div>
                   </div>
-                )}
-                {displayNodes.length === 0 && !loading && (
-                  <div className="empty-state">No results found</div>
-                )}
-                {recentNodes.length > 0 && (
-                  <div className="section-header">Recent Devices</div>
-                )}
-                {recentNodes.map((node, index) => (
-                  <div
-                    key={node.id}
-                    className={`result-item ${index === selectedIndex ? 'selected' : ''} ${node.status !== 'online' ? 'disabled' : ''}`}
-                    onClick={() => handleConnect(node)}
-                    onMouseEnter={() => setSelectedIndex(index)}
-                  >
-                    <div className="node-icon">
-                      {node.edgeView ? <Server size={18} /> : <Server size={18} />}
+                </Modal>
+              )
+            }
+
+            {
+              !selectedNode && (
+                <div className="results-list">
+                  {loading && (
+                    <div className="loading-state">
+                      <Activity className="loading-icon animate-spin" size={24} />
+                      <p>Loading nodes...</p>
                     </div>
-                    <div className="node-info">
-                      <div className="node-name">
-                        {node.name}
-                        <span className="node-project" title={node.project}>
-                          {' '}• {projects[node.project] || node.project}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="node-status">
-                      <span className={`status-dot ${node.status}`}></span>
-                      {node.status}
-                    </div>
-                    {index === selectedIndex && node.status === 'online' && (
-                      <div className="node-actions">
-                        <span className="shortcut">↵ Details</span>
-                      </div>
-                    )}
-                  </div>
-                ))}
-                {(recentNodes.length > 0 && otherNodes.length > 0) && (
-                  <div className="section-header">All Devices</div>
-                )}
-                {otherNodes.map((node, index) => {
-                  const globalIndex = index + recentNodes.length;
-                  return (
+                  )}
+                  {displayNodes.length === 0 && !loading && (
+                    <div className="empty-state">No results found</div>
+                  )}
+                  {recentNodes.length > 0 && (
+                    <div className="section-header">Recent Devices</div>
+                  )}
+                  {recentNodes.map((node, index) => (
                     <div
                       key={node.id}
-                      className={`result-item ${globalIndex === selectedIndex ? 'selected' : ''} ${node.status !== 'online' ? 'disabled' : ''}`}
+                      className={`result-item ${index === selectedIndex ? 'selected' : ''} ${node.status !== 'online' ? 'disabled' : ''}`}
                       onClick={() => handleConnect(node)}
-                      onMouseEnter={() => setSelectedIndex(globalIndex)}
+                      onMouseEnter={() => setSelectedIndex(index)}
                     >
                       <div className="node-icon">
                         {node.edgeView ? <Server size={18} /> : <Server size={18} />}
@@ -3877,17 +3892,52 @@ Do you want to try connecting anyway?`)) {
                         <span className={`status-dot ${node.status}`}></span>
                         {node.status}
                       </div>
-                      {globalIndex === selectedIndex && node.status === 'online' && (
+                      {index === selectedIndex && node.status === 'online' && (
                         <div className="node-actions">
                           <span className="shortcut">↵ Details</span>
                         </div>
                       )}
                     </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
+                  ))}
+                  {(recentNodes.length > 0 && otherNodes.length > 0) && (
+                    <div className="section-header">All Devices</div>
+                  )}
+                  {otherNodes.map((node, index) => {
+                    const globalIndex = index + recentNodes.length;
+                    return (
+                      <div
+                        key={node.id}
+                        className={`result-item ${globalIndex === selectedIndex ? 'selected' : ''} ${node.status !== 'online' ? 'disabled' : ''}`}
+                        onClick={() => handleConnect(node)}
+                        onMouseEnter={() => setSelectedIndex(globalIndex)}
+                      >
+                        <div className="node-icon">
+                          {node.edgeView ? <Server size={18} /> : <Server size={18} />}
+                        </div>
+                        <div className="node-info">
+                          <div className="node-name">
+                            {node.name}
+                            <span className="node-project" title={node.project}>
+                              {' '}• {projects[node.project] || node.project}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="node-status">
+                          <span className={`status-dot ${node.status}`}></span>
+                          {node.status}
+                        </div>
+                        {globalIndex === selectedIndex && node.status === 'online' && (
+                          <div className="node-actions">
+                            <span className="shortcut">↵ Details</span>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            }
+          </div >
         )}
         <div className="status-bar">
           <div className="status-item">
@@ -3908,8 +3958,8 @@ Do you want to try connecting anyway?`)) {
             <span>{showSettings ? "Configuration" : selectedNode ? "Device Details" : `${nodes.length} results`}</span>
           </div>
         </div>
-      </div>
-    </div>
+      </div >
+    </div >
   );
 }
 

@@ -1,10 +1,11 @@
 {
   "name": "edgeview-launcher",
-  "version": "0.1.17",
+  "version": "0.1.19",
   "description": "EdgeView Launcher - Electron Edition",
   "main": "electron-main.js",
   "scripts": {
     "start": "electron .",
+    "dev": "cross-env NODE_ENV=development electron .",
     "prebuild": "node scripts/generate-build-info.js",
     "build": "npm run build:mac",
     "build:mac": "npm run build:frontend && npm run build:backend:mac && electron-builder --mac --arm64 && rm -f dist-electron/builder-debug.yml",
@@ -24,12 +25,13 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/sergey-zededa/edgeViewLauncher.git"
+    "url": "https://github.com/sergio-zededa/edgeViewLauncher.git"
   },
   "dependencies": {
     "electron-updater": "^6.7.3"
   },
   "devDependencies": {
+    "cross-env": "^10.1.0",
     "electron": "^40.1.0",
     "electron-builder": "^26.7.0"
   },
@@ -38,7 +40,7 @@
     "productName": "EdgeView Launcher",
     "publish": {
       "provider": "github",
-      "owner": "sergey-zededa",
+      "owner": "sergio-zededa",
       "repo": "edgeViewLauncher",
       "private": true
     },

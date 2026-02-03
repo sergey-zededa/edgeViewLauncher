@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setVGAEnabled: (nodeId, enabled) => ipcRenderer.invoke('api-call', '/api/set-vga', 'POST', { nodeId, enabled }),
     setUSBEnabled: (nodeId, enabled) => ipcRenderer.invoke('api-call', '/api/set-usb', 'POST', { nodeId, enabled }),
     setConsoleEnabled: (nodeId, enabled) => ipcRenderer.invoke('api-call', '/api/set-console', 'POST', { nodeId, enabled }),
+    enableExternalPolicy: (nodeId, enable) => ipcRenderer.invoke('api-call', '/api/enable-external-policy', 'POST', { nodeId, enable }),
     openTerminalWindow: (port) => ipcRenderer.invoke('open-terminal-window', port),
     openVncWindow: (options) => ipcRenderer.invoke('open-vnc-window', options),
     resizeWindow: (width, height) => ipcRenderer.invoke('resize-window', { width, height }),

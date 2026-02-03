@@ -37,6 +37,7 @@ type zededaAPI interface {
 	GetDevice(nodeID string) (map[string]interface{}, error)
 	GetDeviceStatus(nodeID string) (*zededa.DeviceStatus, error)
 	VerifyToken(token string) (*zededa.TokenInfo, error)
+	UpdateEdgeViewExternalPolicy(nodeID string, enable bool) error
 }
 
 // sessionAPI defines the subset of session.Manager used by App.
@@ -892,6 +893,11 @@ func (a *App) SetupSSH(nodeID string) error {
 
 	fmt.Printf("DEBUG: SetupSSH completed successfully\n")
 	return nil
+}
+
+// EnableExternalPolicy enables/disables external policy on a device
+func (a *App) EnableExternalPolicy(nodeID string, enable bool) error {
+	return a.zededaClient.UpdateEdgeViewExternalPolicy(nodeID, enable)
 }
 
 // SetVGAEnabled enables or disables VGA access on a device

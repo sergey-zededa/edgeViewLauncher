@@ -17,6 +17,11 @@ const TerminalView = ({ port }) => {
         targetInfo: 'EVE-OS SSH'
     });
 
+    const [theme, setTheme] = useState(() => {
+        const params = new URLSearchParams(window.location.search);
+        return params.get('theme') || localStorage.getItem('theme') || 'dark';
+    });
+
     useEffect(() => {
         // Read connection info from URL parameters
         const params = new URLSearchParams(window.location.search);
@@ -24,7 +29,45 @@ const TerminalView = ({ port }) => {
             nodeName: params.get('nodeName') || 'Unknown Device',
             targetInfo: params.get('targetInfo') || 'EVE-OS SSH'
         });
+
+        // Listen for theme changes in other windows
+        const handleStorageChange = (e) => {
+            if (e.key === 'theme' && e.newValue) {
+                setTheme(e.newValue);
+            }
+        };
+        window.addEventListener('storage', handleStorageChange);
+
+        return () => window.removeEventListener('storage', handleStorageChange);
     }, []);
+
+    useEffect(() => {
+        // Apply theme to document
+        document.documentElement.setAttribute('data-theme', theme);
+
+        // Update xterm theme if it exists
+        if (xtermRef.current) {
+            xtermRef.current.options.theme = theme === 'light' ? {
+                background: '#ffffff',
+                foreground: '#1d1d1f',
+                cursor: '#007aff',
+                selection: 'rgba(0, 122, 255, 0.3)',
+                black: '#1d1d1f',
+                red: '#ff3b30',
+                green: '#34c759',
+                yellow: '#ff9500',
+                blue: '#007aff',
+                magenta: '#af52de',
+                cyan: '#5ac8fa',
+                white: '#8e8e93',
+            } : {
+                background: '#1e1e1e',
+                foreground: '#ffffff',
+                cursor: '#58a6ff',
+                selection: 'rgba(88, 166, 255, 0.3)',
+            };
+        }
+    }, [theme]);
 
     useEffect(() => {
         if (!port) return;
@@ -34,9 +77,24 @@ const TerminalView = ({ port }) => {
             cursorBlink: true,
             fontSize: 14,
             fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-            theme: {
+            theme: theme === 'light' ? {
+                background: '#ffffff',
+                foreground: '#1d1d1f',
+                cursor: '#007aff',
+                selection: 'rgba(0, 122, 255, 0.3)',
+                black: '#1d1d1f',
+                red: '#ff3b30',
+                green: '#34c759',
+                yellow: '#ff9500',
+                blue: '#007aff',
+                magenta: '#af52de',
+                cyan: '#5ac8fa',
+                white: '#8e8e93',
+            } : {
                 background: '#1e1e1e',
                 foreground: '#ffffff',
+                cursor: '#58a6ff',
+                selection: 'rgba(88, 166, 255, 0.3)',
             },
         });
 
@@ -62,8 +120,8 @@ const TerminalView = ({ port }) => {
             if (ctrlOrCmd && key === 'v') {
                 // Paste
                 navigator.clipboard.readText().then(text => {
-                    if (ws.readyState === WebSocket.OPEN) {
-                        ws.send(JSON.stringify({ type: 'input', data: text }));
+                    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                        wsRef.current.send(JSON.stringify({ type: 'input', data: text }));
                     }
                 }).catch(err => {
                     console.error('Failed to read clipboard:', err);
@@ -216,7 +274,6 @@ const TerminalView = ({ port }) => {
                 wsRef.current.close();
             }
             term.dispose();
-            clearInterval(resizePoller);
         };
     }, [port]);
 
@@ -233,7 +290,7 @@ const TerminalView = ({ port }) => {
             style={{
                 height: '100vh',
                 width: '100vw',
-                backgroundColor: '#1e1e1e',
+                backgroundColor: 'var(--bg-app)',
                 padding: '0',
                 margin: '0',
                 boxSizing: 'border-box',
@@ -246,8 +303,8 @@ const TerminalView = ({ port }) => {
             <div className="terminal-toolbar" style={{
                 padding: '10px',
                 paddingLeft: window.electronAPI?.platform === 'darwin' ? '80px' : '10px',
-                backgroundColor: '#1a1a1a',
-                borderBottom: '1px solid #333',
+                backgroundColor: 'var(--bg-panel)',
+                borderBottom: '1px solid var(--border-subtle)',
                 WebkitAppRegion: 'drag',
                 position: 'relative',
                 height: '40px',
@@ -265,12 +322,12 @@ const TerminalView = ({ port }) => {
                     whiteSpace: 'nowrap',
                     pointerEvents: 'none'
                 }}>
-                    <span style={{ color: '#999' }}>
+                    <span style={{ color: 'var(--text-secondary)' }}>
                         {connectionInfo.nodeName} • {connectionInfo.targetInfo}
                     </span>
                     <span style={{
-                        color: status === 'Connected' ? '#4caf50' :
-                            status === 'Connecting...' ? '#ff9800' : '#f44336',
+                        color: status === 'Connected' ? 'var(--color-success)' :
+                            status === 'Connecting...' ? 'var(--color-warning)' : 'var(--color-danger)',
                         display: 'flex',
                         alignItems: 'center',
                         gap: '6px'
@@ -292,7 +349,7 @@ const TerminalView = ({ port }) => {
                         onClick={handleClose}
                         className="icon-btn"
                         title="Close Terminal"
-                        style={{ color: '#fff' }}
+                        style={{ color: 'var(--text-primary)' }}
                     >
                         <X size={20} />
                     </button>

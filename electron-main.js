@@ -400,7 +400,7 @@ function createWindow() {
 
 
 function createVncWindow(options) {
-    const { port, nodeName, appName, tunnelId } = options;
+    const { port, nodeName, appName, tunnelId, theme } = options;
 
     const vncWindow = new BrowserWindow({
         width: 1024,
@@ -412,6 +412,7 @@ function createVncWindow(options) {
             contextIsolation: true,
             nodeIntegration: false
         },
+        backgroundColor: theme === 'light' ? '#f5f5f7' : '#000000',
         frame: false,
         ...(process.platform === 'darwin' ? {
             titleBarStyle: 'hiddenInset'
@@ -423,7 +424,8 @@ function createVncWindow(options) {
         port,
         nodeName: nodeName || 'Unknown Device',
         appName: appName || 'VNC',
-        tunnelId: tunnelId || ''
+        tunnelId: tunnelId || '',
+        theme: theme || 'dark'
     });
 
     if (process.env.NODE_ENV === 'development') {
@@ -439,6 +441,11 @@ function createVncWindow(options) {
 
     vncWindow.once('ready-to-show', () => {
         vncWindow.show();
+    });
+
+    // Forward renderer logs to terminal
+    vncWindow.webContents.on('console-message', (event, level, message) => {
+        console.log(`VNC Renderer [${nodeName}]:`, message);
     });
 
     vncWindow.on('closed', () => {
@@ -730,6 +737,18 @@ ipcMain.handle('open-terminal-window', async (event, options) => {
     const tunnelId = typeof options === 'object' ? options.tunnelId : '';
     const username = (typeof options === 'object' && options.username) ? options.username : '';
 
+    // Build URL with connection parameters
+    const params = new URLSearchParams({
+        mode: 'terminal',
+        port,
+        nodeName,
+        targetInfo,
+        tunnelId: tunnelId || '',
+        username: username || '',
+        password: options.password || '', // Pass password to frontend
+        theme: options.theme || 'dark'
+    });
+
     const termWindow = new BrowserWindow({
         width: 1024, // Approx 120 cols
         height: 768, // Approx 40 rows + padding
@@ -739,22 +758,11 @@ ipcMain.handle('open-terminal-window', async (event, options) => {
             nodeIntegration: false
         },
         title: `SSH - ${nodeName}`,
-        backgroundColor: '#1e1e1e',
+        backgroundColor: (options.theme === 'light') ? '#f5f5f7' : '#1e1e1e',
         frame: false,
         ...(process.platform === 'darwin' ? {
             titleBarStyle: 'hiddenInset'
         } : {})
-    });
-
-    // Build URL with connection parameters
-    const params = new URLSearchParams({
-        mode: 'terminal',
-        port,
-        nodeName,
-        targetInfo,
-        tunnelId: tunnelId || '',
-        username: username || '',
-        password: options.password || '' // Pass password to frontend
     });
 
     if (process.env.NODE_ENV === 'development') {
