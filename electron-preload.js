@@ -32,7 +32,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getConnectionProgress: (nodeId) => ipcRenderer.invoke('api-call', `/api/connection-progress?nodeId=${nodeId}`, 'GET'),
     setVGAEnabled: (nodeId, enabled) => ipcRenderer.invoke('api-call', '/api/set-vga', 'POST', { nodeId, enabled }),
     setUSBEnabled: (nodeId, enabled) => ipcRenderer.invoke('api-call', '/api/set-usb', 'POST', { nodeId, enabled }),
-    setUSBEnabled: (nodeId, enabled) => ipcRenderer.invoke('api-call', '/api/set-usb', 'POST', { nodeId, enabled }),
     setConsoleEnabled: (nodeId, enabled) => ipcRenderer.invoke('api-call', '/api/set-console', 'POST', { nodeId, enabled }),
     enableExternalPolicy: (nodeId, enable) => ipcRenderer.invoke('api-call', '/api/enable-external-policy', 'POST', { nodeId, enable }),
     openTerminalWindow: (port) => ipcRenderer.invoke('open-terminal-window', port),
