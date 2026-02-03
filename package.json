@@ -1,6 +1,6 @@
 {
   "name": "edgeview-launcher",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "description": "EdgeView Launcher - Electron Edition",
   "main": "electron-main.js",
   "scripts": {
@@ -40,7 +40,7 @@
     "productName": "EdgeView Launcher",
     "publish": {
       "provider": "github",
-      "owner": "sergio-zededa",
+      "owner": "sergey-zededa",
       "repo": "edgeViewLauncher",
       "private": true
     },
