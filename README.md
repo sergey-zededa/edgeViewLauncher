@@ -42,7 +42,7 @@ For a more detailed architectural overview, see `WARP.md` and the source code in
 ## Development Prerequisites
 
 - Go toolchain (for the backend)
-- Node.js + npm (for the frontend and Electron shell)
+- Node.js (v20+ recommended) + npm (for the frontend and Electron shell)
 
 ## Development
 
