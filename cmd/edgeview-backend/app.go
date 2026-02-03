@@ -925,6 +925,7 @@ type SSHStatus struct {
 	USBEnabled     bool   `json:"usbEnabled"`
 	ConsoleEnabled bool     `json:"consoleEnabled"`
 	IsEncrypted    bool     `json:"isEncrypted"`
+	ExternalPolicy bool     `json:"externalPolicy"`
 	ManagementIPs  []string `json:"managementIPs"`
 }
 
@@ -971,6 +972,7 @@ func (a *App) GetSSHStatus(nodeID string) *SSHStatus {
 		USBEnabled:     evStatus.USBEnabled,
 		ConsoleEnabled: evStatus.ConsoleEnabled,
 		IsEncrypted:    evStatus.IsEncrypted,
+		ExternalPolicy: evStatus.ExternalPolicy,
 	}
 
 	// Fetch management IPs for display

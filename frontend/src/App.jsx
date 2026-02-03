@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { SearchNodes, ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, EnableExternalPolicy, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo } from './electronAPI';
+import { SearchNodes, ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, EnableExternalPolicy, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo, CheckForUpdates } from './electronAPI';
 import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers, Shield, Moon, Sun } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
 import Tooltip from './components/Tooltip';
@@ -224,15 +224,37 @@ function App() {
   const [projects, setProjects] = useState([]);
 
   // Theme State
-  const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
+  // Default to 'auto' if no theme is set
+  const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'auto');
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
+    const applyTheme = (targetTheme) => {
+      let activeTheme = targetTheme;
+      if (targetTheme === 'auto') {
+        activeTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      }
+      document.documentElement.setAttribute('data-theme', activeTheme);
+    };
+
+    applyTheme(theme);
     localStorage.setItem('theme', theme);
+
+    // Listener for system theme changes when in auto mode
+    if (theme === 'auto') {
+      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+      const handleChange = () => applyTheme('auto');
+      mediaQuery.addEventListener('change', handleChange);
+      return () => mediaQuery.removeEventListener('change', handleChange);
+    }
   }, [theme]);
 
   const toggleTheme = () => {
-    setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+    // Cycle: dark -> light -> auto -> dark
+    setTheme(prev => {
+      if (prev === 'dark') return 'light';
+      if (prev === 'light') return 'auto';
+      return 'dark';
+    });
   };
 
   // Device Details State
@@ -1788,10 +1810,6 @@ Do you want to try connecting anyway?`)) {
     const action = currentStatus ? "disable" : "enable";
     const newState = !currentStatus;
 
-    if (!confirm(`Are you sure you want to ${action} external policy for this device? This will update the device configuration.`)) {
-      return;
-    }
-
     setGlobalStatus({ type: 'loading', message: `${action === "enable" ? "Enabling" : "Disabling"} external policy...` });
 
     try {
@@ -2576,9 +2594,9 @@ Do you want to try connecting anyway?`)) {
                     onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; }}
                     onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'; }}
                   >
-                    {theme === 'dark' ? <Moon size={16} /> : <Sun size={16} />}
+                    {theme === 'dark' ? <Moon size={16} /> : theme === 'light' ? <Sun size={16} /> : <Monitor size={16} />}
                     <span style={{ flex: 1, color: 'var(--text-primary)' }}>
-                      {theme === 'dark' ? 'Dark Theme' : 'Light Theme'}
+                      {theme === 'dark' ? 'Dark Theme' : theme === 'light' ? 'Light Theme' : 'System (Auto)'}
                     </span>
                     <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Click to toggle</span>
                   </div>
@@ -2627,7 +2645,6 @@ Do you want to try connecting anyway?`)) {
                       className="check-updates-btn"
                       onClick={async () => {
                         try {
-                          const { CheckForUpdates } = await import('./electronAPI');
                           await CheckForUpdates();
                         } catch (err) {
                           console.error('Failed to check for updates:', err);
@@ -2959,7 +2976,7 @@ Do you want to try connecting anyway?`)) {
                             <div
                               className={`config-chip ${sshStatus.externalPolicy ? 'enabled' : 'disabled'}`}
                               onClick={handleEnableExternalPolicy}
-                              title={sshStatus.externalPolicy ? "External Policy Enabled - Click to Disable" : "Enable External Policy (allowExt: true)"}
+                              title={sshStatus.externalPolicy ? "External Policy Enabled - Click to Disable" : "External Policy Disabled - Click to Enable"}
                               style={{
                                 display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
                                 fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
