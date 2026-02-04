@@ -101,7 +101,7 @@ The application supports automatic updates via GitHub Releases:
 - One-click download and installation
 - Manual update check available in Settings
 
-For detailed information about the auto-update system, see `AUTO_UPDATE.md`.
+For detailed information about the auto-update system, see `docs/AUTO_UPDATE.md`.
 
 ## Contributing
 
@@ -121,7 +121,7 @@ Before contributing, please:
 ## Additional Documentation
 
 - `WARP.md` – repository-specific development guidance, architecture notes, and testing instructions
-- `AUTO_UPDATE.md` – detailed auto-update implementation and release process
+- `docs/AUTO_UPDATE.md` – detailed auto-update implementation and release process
 - Source code (especially `internal/` and `frontend/`) for the authoritative behaviour of sessions, tunnels, and UI flows
 
 ## License
