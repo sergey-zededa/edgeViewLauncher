@@ -246,6 +246,14 @@ func (m *Manager) runCollectInfo(ctx context.Context, job *CollectInfoJob, confi
 				} else if strings.Contains(payloadStr, closeMessage) {
 					// Done
 					fmt.Println("DEBUG: Transfer completed")
+					
+					if !gotFileInfo {
+						// Received close message but never got file info
+						fmt.Println("DEBUG: Close message received but no file info")
+						m.updateJobError(job, "Remote side finished without sending file info")
+						return
+					}
+
 					m.collectMu.Lock()
 					job.Status = "completed"
 					if job.Progress == 0 && serverSentSize > 0 {

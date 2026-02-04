@@ -1143,7 +1143,8 @@ ipcMain.handle('save-collected-file', async (event, { jobId, filename }) => {
         const response = await fetch(url);
 
         if (!response.ok) {
-            throw new Error(`Server returned ${response.status} ${response.statusText}`);
+            const errText = await response.text().catch(() => '');
+            throw new Error(`Download failed: ${errText || response.statusText} (${response.status})`);
         }
 
         const fileStream = fs.createWriteStream(filePath);
@@ -1152,6 +1153,12 @@ ipcMain.handle('save-collected-file', async (event, { jobId, filename }) => {
         return { success: true, filePath };
     } catch (error) {
         console.error('Failed to save collected file:', error);
-        return { success: false, error: error.message };
+        
+        let userMsg = error.message;
+        if (userMsg.includes('404') || userMsg.includes('not found')) {
+            userMsg = "The collected information bundle could not be found. The collection process may have failed to receive the file. Please try again.";
+        }
+        
+        return { success: false, error: userMsg };
     }
 });
