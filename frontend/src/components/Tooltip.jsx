@@ -1,11 +1,47 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { Copy, Check } from 'lucide-react';
 
 const Tooltip = ({ text, children, position = 'top' }) => {
     const [isVisible, setIsVisible] = useState(false);
     const [adjustedPosition, setAdjustedPosition] = useState(position);
     const [offset, setOffset] = useState({ left: '50%', transform: 'translateX(-50%)' });
+    const [copied, setCopied] = useState(false);
     const tooltipRef = useRef(null);
     const containerRef = useRef(null);
+    const timeoutRef = useRef(null);
+
+    // Determine if we should show copy button (if text length > 50 chars)
+    const showCopy = typeof text === 'string' && text.length > 50;
+
+    const handleCopy = (e) => {
+        e.stopPropagation(); // Prevent closing if logic relies on click
+        if (typeof text === 'string') {
+            navigator.clipboard.writeText(text);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        }
+    };
+
+    const handleMouseEnter = () => {
+        if (timeoutRef.current) {
+            clearTimeout(timeoutRef.current);
+            timeoutRef.current = null;
+        }
+        setIsVisible(true);
+    };
+
+    const handleMouseLeave = () => {
+        timeoutRef.current = setTimeout(() => {
+            setIsVisible(false);
+            if (copied) setTimeout(() => setCopied(false), 300);
+        }, 300);
+    };
+
+    useEffect(() => {
+        return () => {
+            if (timeoutRef.current) clearTimeout(timeoutRef.current);
+        };
+    }, []);
 
     useEffect(() => {
         if (isVisible && tooltipRef.current && containerRef.current) {
@@ -51,14 +87,14 @@ const Tooltip = ({ text, children, position = 'top' }) => {
             setAdjustedPosition(newPosition);
             setOffset(newOffset);
         }
-    }, [isVisible, position]);
+    }, [isVisible, position, text]);
 
     return (
         <div
             ref={containerRef}
             className="tooltip-container"
-            onMouseEnter={() => setIsVisible(true)}
-            onMouseLeave={() => setIsVisible(false)}
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
         >
             {children}
             {isVisible && (
@@ -66,8 +102,20 @@ const Tooltip = ({ text, children, position = 'top' }) => {
                     ref={tooltipRef}
                     className={`tooltip-content tooltip-${adjustedPosition}`}
                     style={offset}
+                    onMouseEnter={handleMouseEnter}
+                    onMouseLeave={handleMouseLeave}
                 >
-                    {text}
+                    {showCopy && (
+                        <div className="tooltip-header">
+                            <button className="tooltip-copy-btn" onClick={handleCopy} title="Copy full message">
+                                {copied ? <Check size={12} /> : <Copy size={12} />}
+                                {copied ? 'Copied' : 'Copy'}
+                            </button>
+                        </div>
+                    )}
+                    <div className="tooltip-body">
+                        {text}
+                    </div>
                 </div>
             )}
         </div>
