@@ -1,6 +1,6 @@
 {
   "name": "edgeview-launcher",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "description": "EdgeView Launcher - Electron Edition",
   "main": "electron-main.js",
   "scripts": {

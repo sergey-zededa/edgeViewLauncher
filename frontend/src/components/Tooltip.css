@@ -29,6 +29,20 @@
     gap: 8px;
 }
 
+/* Simple variant for short, non-interactive tooltips */
+.tooltip-simple {
+    white-space: nowrap;
+    max-width: none;
+    max-height: none;
+    overflow: visible;
+    pointer-events: none;
+    padding: 6px 10px;
+    background-color: var(--bg-surface);
+    border-color: var(--border-subtle);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+    gap: 0;
+}
+
 /* Custom scrollbar for tooltip */
 .tooltip-content::-webkit-scrollbar {
     width: 6px;
