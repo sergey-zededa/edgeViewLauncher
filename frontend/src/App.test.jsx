@@ -352,6 +352,7 @@ describe('App configuration and tunnels', () => {
         vncPort: 5900,
         ips: ['10.0.0.1'],
         pid: 1234,
+        status: 'RUN_STATE_ONLINE',
       },
     ];
     electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify(servicesPayload));
@@ -520,7 +521,7 @@ describe('App configuration and tunnels', () => {
     electronAPI.SearchNodes.mockResolvedValue([node]);
     
     // Services with one app having SSH option
-    const services = [{ name: 'App 1', ips: ['10.0.0.1'] }];
+    const services = [{ name: 'App 1', ips: ['10.0.0.1'], status: 'RUN_STATE_ONLINE' }];
     electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify(services));
     
     // Mock session active so we can click buttons

@@ -2253,7 +2253,7 @@ Do you want to try connecting anyway?`)) {
               <>
                 <span>{entName} • {url}</span>
                 {tokenOwner && (
-                  <Tooltip content={expiryText || 'Token expiry unknown'}>
+                  <Tooltip text={expiryText || 'Token expiry unknown'}>
                     <span className={`user-email ${isExpiringSoon ? 'expiring-soon' : ''}`}>
                       {tokenOwner}
                     </span>
@@ -3145,6 +3145,32 @@ Do you want to try connecting anyway?`)) {
                                     <Copyable text={app.name}>
                                       {app.name}
                                     </Copyable>
+                                    {app.status && (
+                                      <div style={{ display: 'flex', alignItems: 'center', marginLeft: '12px', gap: '6px' }}>
+                                        <div 
+                                          className={`status-dot ${app.status === 'RUN_STATE_ONLINE' || app.status === 'ONLINE' ? 'online' : 'offline'}`}
+                                          title={app.status}
+                                        />
+                                        <span style={{ 
+                                          fontSize: '0.85em', 
+                                          color: app.status === 'RUN_STATE_ONLINE' || app.status === 'ONLINE' ? 'var(--color-success)' : 'var(--text-secondary)',
+                                          textTransform: 'capitalize'
+                                        }}>
+                                          {app.status.replace('RUN_STATE_', '').toLowerCase()}
+                                        </span>
+                                        {/* Error Display */}
+                                        {app.error && (
+                                            <Tooltip text={app.error}>
+                                                <span style={{ display: 'flex', alignItems: 'center', color: 'var(--color-danger)', marginLeft: '8px', cursor: 'help' }}>
+                                                    <AlertCircle size={12} style={{ marginRight: '4px' }} />
+                                                    <span style={{ fontSize: '0.85em', maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                        {app.error}
+                                                    </span>
+                                                </span>
+                                            </Tooltip>
+                                        )}
+                                      </div>
+                                    )}
                                     {app.pid && <span style={{ marginLeft: '8px', color: '#666', fontSize: '0.9em', fontWeight: 'normal' }}>(PID: {app.pid})</span>}
                                   </span>
                                   {app.isRuntime && (
@@ -3176,8 +3202,12 @@ Do you want to try connecting anyway?`)) {
                                                   username: savedUser
                                                 });
                                               }}
-                                              disabled={!!tunnelLoading || !isSessionConnected}
-                                              title={`SSH as ${savedUser}@${ip} — click to connect`}
+                                              disabled={!!tunnelLoading || !isSessionConnected || (app.status !== 'RUN_STATE_ONLINE' && app.status !== 'ONLINE')}
+                                              title={(!isSessionConnected) 
+                                                ? "EdgeView session not active"
+                                                : (app.status !== 'RUN_STATE_ONLINE' && app.status !== 'ONLINE')
+                                                  ? `App is not online (${app.status?.replace('RUN_STATE_', '') || 'Unknown'})`
+                                                  : `SSH as ${savedUser}@${ip} — click to connect`}
                                               style={{
                                                 backgroundColor: 'rgba(255, 255, 255, 0.05)',
                                                 border: '1px solid rgba(255, 255, 255, 0.1)',
@@ -3278,8 +3308,12 @@ Do you want to try connecting anyway?`)) {
                                               // Docker Compose apps require localhost for eve-os guacd
                                               startQuickVnc('localhost', app.vncPort, app.name);
                                             }}
-                                            disabled={!!tunnelLoading || !isSessionConnected}
-                                            title={`Click to start VNC on port ${app.vncPort}`}
+                                            disabled={!!tunnelLoading || !isSessionConnected || (app.status !== 'RUN_STATE_ONLINE' && app.status !== 'ONLINE')}
+                                            title={(!isSessionConnected)
+                                              ? "EdgeView session not active"
+                                              : (app.status !== 'RUN_STATE_ONLINE' && app.status !== 'ONLINE')
+                                                ? `App is not online (${app.status?.replace('RUN_STATE_', '') || 'Unknown'})`
+                                                : `Click to start VNC on port ${app.vncPort}`}
                                             style={{
                                               backgroundColor: 'rgba(255, 255, 255, 0.05)',
                                               border: '1px solid rgba(255, 255, 255, 0.1)',
@@ -3316,8 +3350,12 @@ Do you want to try connecting anyway?`)) {
                                 <button
                                   className={`connect-btn ${expandedServiceId === idx ? 'active' : 'secondary'}`}
                                   onClick={() => setExpandedServiceId(expandedServiceId === idx ? null : idx)}
-                                  title={!isSessionConnected ? "EdgeView session not active" : "Connect to service"}
-                                  disabled={!isSessionConnected}
+                                  title={!isSessionConnected 
+                                    ? "EdgeView session not active" 
+                                    : (app.status !== 'RUN_STATE_ONLINE' && app.status !== 'ONLINE')
+                                      ? `App is not online (${app.status?.replace('RUN_STATE_', '') || 'Unknown'})`
+                                      : "Connect to service"}
+                                  disabled={!isSessionConnected || (app.status !== 'RUN_STATE_ONLINE' && app.status !== 'ONLINE')}
                                 >
                                   <Globe size={14} /> {expandedServiceId === idx ? 'Close' : 'Connect'}
                                 </button>

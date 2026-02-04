@@ -7,22 +7,52 @@
 
 .tooltip-content {
     position: absolute;
-    background-color: var(--tooltip-bg);
-    /* Dark background matching app theme */
-    color: var(--text-color);
-    border: 1px solid var(--tooltip-border);
+    background-color: var(--bg-surface);
+    color: var(--text-primary);
+    border: 1px solid var(--border-subtle);
     padding: 8px 12px;
     border-radius: 6px;
     font-size: 12px;
-    white-space: nowrap;
+    white-space: pre-wrap;
+    word-break: break-word;
     max-width: 400px;
-    /* Prevent overly wide tooltips */
+    max-height: 300px; /* Limit height */
+    overflow-y: auto; /* Enable scrolling */
     z-index: 10000;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
-    pointer-events: none;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+    pointer-events: auto; /* Enable interaction */
     animation: tooltipFadeIn 0.15s ease-out;
     font-weight: 500;
     line-height: 1.4;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+/* Custom scrollbar for tooltip */
+.tooltip-content::-webkit-scrollbar {
+    width: 6px;
+}
+
+.tooltip-content::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.tooltip-content::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 3px;
+}
+
+.tooltip-content::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-thumb-hover);
+}
+
+/* Bridge to prevent tooltip closing when moving mouse over gap */
+.tooltip-content::before {
+    content: "";
+    position: absolute;
+    display: block;
+    z-index: -1;
 }
 
 /* Top Position (Default) */
@@ -31,8 +61,15 @@
     left: 50%;
     transform: translateX(-50%);
     margin-bottom: 10px;
-    /* Prevent tooltip from going off-screen */
     max-width: calc(100vw - 20px);
+}
+
+/* Bridge for Top position */
+.tooltip-top::before {
+    top: 100%;
+    left: 0;
+    width: 100%;
+    height: 12px; /* Covers margin-bottom + buffer */
 }
 
 .tooltip-top::after {
@@ -40,10 +77,11 @@
     position: absolute;
     top: 100%;
     left: 50%;
-    margin-left: -5px;
-    border-width: 5px;
+    margin-left: -6px;
+    border-width: 6px;
     border-style: solid;
-    border-color: var(--tooltip-bg) transparent transparent transparent;
+    border-color: var(--bg-surface) transparent transparent transparent;
+    z-index: 1; /* Ensure arrow is above bridge but below content if needed, though content bg covers it */
 }
 
 /* Bottom Position */
@@ -54,25 +92,53 @@
     margin-top: 10px;
 }
 
+/* Bridge for Bottom position */
+.tooltip-bottom::before {
+    bottom: 100%;
+    left: 0;
+    width: 100%;
+    height: 12px;
+}
+
 .tooltip-bottom::after {
     content: "";
     position: absolute;
     bottom: 100%;
     left: 50%;
-    margin-left: -5px;
-    border-width: 5px;
+    margin-left: -6px;
+    border-width: 6px;
     border-style: solid;
-    border-color: transparent transparent var(--tooltip-bg) transparent;
+    border-color: transparent transparent var(--bg-surface) transparent;
 }
 
-@keyframes tooltipFadeIn {
-    from {
-        opacity: 0;
-        transform: translateX(-50%) scale(0.95);
-    }
+.tooltip-header {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 4px;
+    border-bottom: 1px solid var(--border-subtle);
+    padding-bottom: 4px;
+}
 
-    to {
-        opacity: 1;
-        transform: translateX(-50%) scale(1);
-    }
+.tooltip-copy-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 2px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    text-transform: uppercase;
+    transition: color 0.2s;
+}
+
+.tooltip-copy-btn:hover {
+    color: var(--text-primary);
+}
+
+.tooltip-body {
+    overflow-y: auto;
+    max-height: 250px;
+    padding-right: 4px; /* Space for scrollbar */
 }
