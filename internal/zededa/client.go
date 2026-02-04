@@ -253,6 +253,12 @@ type AppInstanceConfig struct {
 	DockerCompose string                   `json:"dockerComposeYamlText,omitempty"`
 }
 
+type DeviceError struct {
+	Description string `json:"description"`
+	Severity    string `json:"severity"`
+	// Timestamp might be an object or string depending on API version, ignoring for now or mapping to interface{}
+}
+
 // AppInstanceStatus matches the AppInstStatusMsg schema for an edge app instance
 type AppInstanceStatus struct {
 	ID             string          `json:"id"`
@@ -263,6 +269,7 @@ type AppInstanceStatus struct {
 	AppType        string          `json:"appType"`
 	DeploymentType string          `json:"deploymentType"`
 	Containers     []ContainerInfo `json:"containerStatusList,omitempty"`
+	ErrInfo        []DeviceError   `json:"errInfo,omitempty"`
 }
 
 // AppInstanceDetails is kept for compatibility and represents the status message

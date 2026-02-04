@@ -1048,6 +1048,7 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 		AppType       string                 `json:"appType,omitempty"`
 		DockerCompose string                 `json:"dockerCompose,omitempty"`
 		InternalIPs   []string               `json:"internalIps,omitempty"`
+		Error         string                 `json:"error,omitempty"`
 	}
 
 	type ServicesResponse struct {
@@ -1178,7 +1179,7 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 				svc.VNCPort = 5900 + config.VMInfo.VNCDisplay
 				fmt.Printf("DEBUG: Found VNC port %d for app %s (from Cloud API)\n", svc.VNCPort, app.Name)
 			} else {
-				// Fallback: Check containers
+			// Fallback: Check containers
 				for _, c := range status.Containers {
 					for _, pm := range c.PortMaps {
 						if (pm.PublicPort >= 5900 && pm.PublicPort <= 5999) || (pm.PrivatePort >= 5900 && pm.PrivatePort <= 5999) {
@@ -1194,6 +1195,19 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 					if svc.VNCPort > 0 {
 						break
 					}
+				}
+			}
+
+			// Extract Error Info
+			if len(status.ErrInfo) > 0 {
+				var errs []string
+				for _, e := range status.ErrInfo {
+					if e.Description != "" {
+						errs = append(errs, e.Description)
+					}
+				}
+				if len(errs) > 0 {
+					svc.Error = strings.Join(errs, "; ")
 				}
 			}
 		}

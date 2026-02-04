@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Copy, Check } from 'lucide-react';
 
-const Tooltip = ({ text, children, position = 'top' }) => {
+const Tooltip = ({ text, children, position = 'top', simple = false }) => {
     const [isVisible, setIsVisible] = useState(false);
     const [adjustedPosition, setAdjustedPosition] = useState(position);
     const [offset, setOffset] = useState({ left: '50%', transform: 'translateX(-50%)' });
@@ -10,8 +10,8 @@ const Tooltip = ({ text, children, position = 'top' }) => {
     const containerRef = useRef(null);
     const timeoutRef = useRef(null);
 
-    // Determine if we should show copy button (if text length > 50 chars)
-    const showCopy = typeof text === 'string' && text.length > 50;
+    // Determine if we should show copy button (if text length > 50 chars and not simple mode)
+    const showCopy = !simple && typeof text === 'string' && text.length > 50;
 
     const handleCopy = (e) => {
         e.stopPropagation(); // Prevent closing if logic relies on click
@@ -31,10 +31,12 @@ const Tooltip = ({ text, children, position = 'top' }) => {
     };
 
     const handleMouseLeave = () => {
+        // Simple tooltips close immediately
+        const delay = simple ? 0 : 300;
         timeoutRef.current = setTimeout(() => {
             setIsVisible(false);
             if (copied) setTimeout(() => setCopied(false), 300);
-        }, 300);
+        }, delay);
     };
 
     useEffect(() => {
@@ -100,7 +102,7 @@ const Tooltip = ({ text, children, position = 'top' }) => {
             {isVisible && (
                 <div
                     ref={tooltipRef}
-                    className={`tooltip-content tooltip-${adjustedPosition}`}
+                    className={`tooltip-content tooltip-${adjustedPosition} ${simple ? 'tooltip-simple' : ''}`}
                     style={offset}
                     onMouseEnter={handleMouseEnter}
                     onMouseLeave={handleMouseLeave}

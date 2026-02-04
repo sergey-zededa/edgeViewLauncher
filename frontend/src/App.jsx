@@ -2253,7 +2253,7 @@ Do you want to try connecting anyway?`)) {
               <>
                 <span>{entName} • {url}</span>
                 {tokenOwner && (
-                  <Tooltip text={expiryText || 'Token expiry unknown'}>
+                  <Tooltip text={expiryText || 'Token expiry unknown'} simple={true}>
                     <span className={`user-email ${isExpiringSoon ? 'expiring-soon' : ''}`}>
                       {tokenOwner}
                     </span>
@@ -4000,7 +4000,7 @@ Do you want to try connecting anyway?`)) {
             <span>{config.apiToken || (config.clusters && config.clusters.some(c => c.name === config.activeCluster && c.apiToken)) ? "Ready" : "Setup Required"}</span>
           </div>
           <div className="status-item center">
-            <Tooltip text="Shows all tunnels currently open across all connected devices" position="top">
+            <Tooltip text="Shows all tunnels currently open across all connected devices" position="top" simple={true}>
               <button
                 className="link-button"
                 onClick={() => setShowGlobalTunnels(prev => !prev)}
