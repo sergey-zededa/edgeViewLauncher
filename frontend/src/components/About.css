@@ -83,13 +83,25 @@
     width: 100%;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 12px;
 }
 
 .copyright-section p {
     margin: 0;
     color: var(--text-secondary);
     font-size: 13px;
+}
+
+.about-links {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+}
+
+.link-separator {
+    color: var(--text-muted);
+    font-size: 12px;
 }
 
 .website-link {
