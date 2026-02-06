@@ -36,11 +36,32 @@ function VersionDisplay() {
 }
 
 // Custom Select Component for Port Selection
-// Custom Select Component for Port Selection
-const PortSelect = ({ ports, selectedValue, onChange, placeholder }) => {
+const WELL_KNOWN_PORTS = [
+  { port: 21, label: 'FTP', description: 'File Transfer Protocol' },
+  { port: 22, label: 'SSH', description: 'Secure Shell' },
+  { port: 23, label: 'Telnet', description: 'Unencrypted Text Communications' },
+  { port: 25, label: 'SMTP', description: 'Simple Mail Transfer Protocol' },
+  { port: 53, label: 'DNS', description: 'Domain Name System' },
+  { port: 80, label: 'HTTP', description: 'Web Server' },
+  { port: 110, label: 'POP3', description: 'Post Office Protocol v3' },
+  { port: 143, label: 'IMAP', description: 'Internet Message Access Protocol' },
+  { port: 443, label: 'HTTPS', description: 'Secure Web Server' },
+  { port: 3306, label: 'MySQL', description: 'MySQL Database' },
+  { port: 3389, label: 'RDP', description: 'Remote Desktop' },
+  { port: 5432, label: 'PostgreSQL', description: 'PostgreSQL Database' },
+  { port: 5900, label: 'VNC', description: 'Virtual Network Computing' },
+  { port: 6379, label: 'Redis', description: 'Redis Key-Value Store' },
+  { port: 8000, label: 'HTTP-Alt', description: 'Alternative Web Port' },
+  { port: 8080, label: 'HTTP-Alt', description: 'Alternative Web Port' },
+  { port: 27017, label: 'MongoDB', description: 'MongoDB Database' },
+];
+
+const PortSelect = ({ exposedPorts = [], selectedValue, onChange, placeholder, showCommonPorts = true }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [coords, setCoords] = useState({ top: 0, left: 0, width: 0 });
+  const [searchTerm, setSearchTerm] = useState('');
   const dropdownRef = useRef(null);
+  const searchInputRef = useRef(null);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -56,6 +77,16 @@ const PortSelect = ({ ports, selectedValue, onChange, placeholder }) => {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // Reset search and focus when opening
+  useEffect(() => {
+    if (isOpen) {
+      setSearchTerm('');
+      setTimeout(() => {
+        if (searchInputRef.current) searchInputRef.current.focus();
+      }, 50);
+    }
+  }, [isOpen]);
+
   const toggleDropdown = () => {
     if (!isOpen && dropdownRef.current) {
       const rect = dropdownRef.current.getBoundingClientRect();
@@ -68,7 +99,40 @@ const PortSelect = ({ ports, selectedValue, onChange, placeholder }) => {
     setIsOpen(!isOpen);
   };
 
-  const selectedPort = ports.find(p => p.publicPort.toString() === selectedValue.toString());
+  const getSelectedLabel = () => {
+    const exposed = exposedPorts.find(p => p.publicPort.toString() === selectedValue.toString());
+    if (exposed) {
+      return `${exposed.publicPort} (Ext) → ${exposed.privatePort} (${exposed.containerName})`;
+    }
+    const common = WELL_KNOWN_PORTS.find(p => p.port.toString() === selectedValue.toString());
+    if (common && showCommonPorts) {
+      return `${common.port} (${common.label})`;
+    }
+    return placeholder || 'Select Port...';
+  };
+
+  // Filter ports based on search term
+  const filteredExposed = exposedPorts.filter(p => {
+    if (!searchTerm) return true;
+    const term = searchTerm.toLowerCase();
+    return (
+      p.publicPort.toString().includes(term) ||
+      p.privatePort.toString().includes(term) ||
+      (p.containerName && p.containerName.toLowerCase().includes(term))
+    );
+  });
+
+  const filteredCommon = showCommonPorts ? WELL_KNOWN_PORTS.filter(p => {
+    if (!searchTerm) return true;
+    const term = searchTerm.toLowerCase();
+    return (
+      p.port.toString().includes(term) ||
+      p.label.toLowerCase().includes(term) ||
+      p.description.toLowerCase().includes(term)
+    );
+  }) : [];
+
+  const hasResults = filteredExposed.length > 0 || filteredCommon.length > 0;
 
   return (
     <div className="custom-select-container" ref={dropdownRef} style={{ position: 'relative', flex: 1 }}>
@@ -80,21 +144,21 @@ const PortSelect = ({ ports, selectedValue, onChange, placeholder }) => {
           backgroundColor: 'var(--bg-surface)',
           border: '1px solid var(--border-subtle)',
           borderRadius: '4px',
-          color: 'var(--text-primary)',
+          color: selectedValue ? 'var(--text-primary)' : 'var(--text-muted)',
           cursor: 'pointer',
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
           fontSize: '13px',
-          userSelect: 'none'
+          userSelect: 'none',
+          height: '34px', // Fixed height to match inputs
+          boxSizing: 'border-box'
         }}
       >
-        <span style={{ color: selectedValue ? '#fff' : '#888', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {selectedPort
-            ? `${selectedPort.publicPort} (Ext) → ${selectedPort.privatePort} (${selectedPort.containerName})`
-            : placeholder}
+        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {getSelectedLabel()}
         </span>
-        <ChevronDown size={14} style={{ color: '#888', transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
+        <ChevronDown size={14} style={{ color: 'var(--text-secondary)', transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
       </div>
 
       {isOpen && createPortal(
@@ -113,42 +177,118 @@ const PortSelect = ({ ports, selectedValue, onChange, placeholder }) => {
             borderRadius: '4px',
             boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
             zIndex: 9999,
-            maxHeight: '300px', // Increased height since it breaks out of modal
-            overflowY: 'auto'
+            maxHeight: '300px',
+            overflowY: 'auto',
+            display: 'flex',
+            flexDirection: 'column'
           }}>
-            {ports.length === 0 ? (
-              <div style={{ padding: '8px 12px', color: 'var(--text-secondary)', fontSize: '12px' }}>No exposed ports</div>
-            ) : (
-              ports.map((pm, idx) => (
-                <div
-                  key={idx}
-                  className="custom-option"
-                  onClick={() => {
-                    onChange(pm.publicPort);
-                    setIsOpen(false);
-                  }}
-                  style={{
-                    padding: '8px 12px',
-                    cursor: 'pointer',
-                    fontSize: '13px',
-                    color: 'var(--text-primary)',
-                    borderBottom: idx < ports.length - 1 ? '1px solid var(--border-subtle)' : 'none',
-                    transition: 'background 0.1s'
-                  }}
-                  onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--bg-hover)'}
-                  onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      <span style={{ color: '#fff', fontWeight: '500' }}>{pm.publicPort}</span>
-                      <span style={{ color: '#666' }}>→</span>
-                      <span style={{ color: '#999' }}>{pm.privatePort}</span>
-                    </div>
-                    {/* Consistent coloring: Container name in Blue to match main list logic */}
-                    <div style={{ fontSize: '11px', color: 'var(--color-accent)', marginLeft: '12px' }}>{pm.containerName}</div>
-                  </div>
+            {/* Search Input */}
+            <div style={{ padding: '8px', borderBottom: '1px solid var(--border-subtle)', position: 'sticky', top: 0, backgroundColor: 'var(--bg-panel)', zIndex: 2 }}>
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Search port or name..."
+                style={{
+                  width: '100%',
+                  padding: '6px 8px',
+                  fontSize: '13px',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: '4px',
+                  backgroundColor: 'var(--bg-surface)',
+                  color: 'var(--text-primary)',
+                  outline: 'none',
+                  boxSizing: 'border-box'
+                }}
+                onClick={(e) => e.stopPropagation()}
+              />
+            </div>
+
+            {!hasResults && (
+              <div style={{ padding: '12px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '12px' }}>
+                No matching ports found
+              </div>
+            )}
+
+            {filteredExposed.length > 0 && (
+              <>
+                <div style={{ padding: '6px 12px', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', backgroundColor: 'var(--bg-hover)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Exposed Ports
                 </div>
-              ))
+                {filteredExposed.map((pm, idx) => (
+                  <div
+                    key={`exposed-${idx}`}
+                    className="custom-option"
+                    onClick={() => {
+                      onChange(pm.publicPort);
+                      setIsOpen(false);
+                    }}
+                    style={{
+                      padding: '8px 12px',
+                      cursor: 'pointer',
+                      fontSize: '13px',
+                      color: 'var(--text-primary)',
+                      borderBottom: '1px solid var(--border-subtle)',
+                      transition: 'background 0.1s'
+                    }}
+                    onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--bg-hover)'}
+                    onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', pointerEvents: 'none' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <span style={{ color: 'var(--text-primary)', fontWeight: '500' }}>{pm.publicPort}</span>
+                        <span style={{ color: 'var(--text-secondary)' }}>→</span>
+                        <span style={{ color: 'var(--text-secondary)' }}>{pm.privatePort}</span>
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--color-accent)', marginLeft: '12px' }}>{pm.containerName}</div>
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
+
+            {filteredCommon.length > 0 && (
+              <>
+                <div style={{ padding: '6px 12px', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', backgroundColor: 'var(--bg-hover)', textTransform: 'uppercase', letterSpacing: '0.5px', borderTop: filteredExposed.length > 0 ? '1px solid var(--border-subtle)' : 'none' }}>
+                  Common Ports
+                </div>
+                {filteredCommon.map((p, idx) => (
+                  <div
+                    key={`common-${idx}`}
+                    className="custom-option"
+                    onClick={() => {
+                      onChange(p.port);
+                      setIsOpen(false);
+                    }}
+                    style={{
+                      padding: '8px 12px',
+                      cursor: 'pointer',
+                      fontSize: '13px',
+                      color: 'var(--text-primary)',
+                      borderBottom: idx < filteredCommon.length - 1 ? '1px solid var(--border-subtle)' : 'none',
+                      transition: 'background 0.1s'
+                    }}
+                    onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--bg-hover)'}
+                    onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
+                  >
+                    <div
+                      style={{ display: 'flex', alignItems: 'center', width: '100%' }}
+                      title={`${p.label} - ${p.description}`}
+                    >
+                      <div style={{ width: '45px', textAlign: 'right', marginRight: '12px', flexShrink: 0, fontFamily: 'var(--font-mono)' }}>
+                        <span style={{ color: 'var(--text-primary)', fontWeight: '500' }}>{p.port}</span>
+                      </div>
+                      <div style={{ width: '65px', textAlign: 'left', marginRight: '8px', flexShrink: 0 }}>
+                        <span style={{ color: 'var(--color-accent)', fontSize: '12px', fontWeight: 'bold' }}>{p.label}</span>
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0, textAlign: 'left', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        <span style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>{p.description}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </>
             )}
           </div>
         </>,
@@ -3771,25 +3911,23 @@ Do you want to try connecting anyway?`)) {
                         style={{ width: '100px' }}
                       />
 
-                      {tcpTunnelConfig && tcpTunnelConfig.containers && tcpTunnelConfig.containers.length > 0 && (() => {
+                      {tcpTunnelConfig && (() => {
                         // Flatten all exposed ports
-                        const exposedPorts = tcpTunnelConfig.containers.flatMap(c =>
+                        const exposedPorts = (tcpTunnelConfig.containers || []).flatMap(c =>
                           (c.portMaps || [])
                             .filter(pm => pm.publicPort > 0)
                             .map(pm => ({ ...pm, containerName: c.containerName }))
                         );
 
-                        if (exposedPorts.length > 0) {
-                          return (
-                            <PortSelect
-                              ports={exposedPorts}
-                              selectedValue={tcpPortInput}
-                              onChange={setTcpPortInput}
-                              placeholder="Select exposed port..."
-                            />
-                          );
-                        }
-                        return null;
+                        return (
+                          <PortSelect
+                            exposedPorts={exposedPorts}
+                            selectedValue={tcpPortInput}
+                            onChange={setTcpPortInput}
+                            placeholder={exposedPorts.length > 0 ? "Select exposed port..." : "Common ports..."}
+                            showCommonPorts={true}
+                          />
+                        );
                       })()}
                     </div>
                   </div>
@@ -3848,14 +3986,24 @@ Do you want to try connecting anyway?`)) {
                     </div>
                     <div className="form-group" style={{ flex: '1' }}>
                       <label>Port</label>
-                      <input
-                        type="number"
-                        value={sshPort}
-                        onChange={(e) => setSshPort(e.target.value)}
-                        placeholder="22"
-                        min="1"
-                        max="65535"
-                      />
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <input
+                          type="number"
+                          value={sshPort}
+                          onChange={(e) => setSshPort(e.target.value)}
+                          placeholder="22"
+                          min="1"
+                          max="65535"
+                          style={{ width: '80px' }}
+                        />
+                        <PortSelect
+                          exposedPorts={[]}
+                          selectedValue={sshPort}
+                          onChange={setSshPort}
+                          placeholder="Quick Select"
+                          showCommonPorts={true}
+                        />
+                      </div>
                     </div>
                   </div>
 

@@ -27,9 +27,9 @@
 }
 
 .btn.primary:hover:not(:disabled) {
-    background-color: #79c0ff;
+    background-color: var(--color-accent-hover);
     /* TODO: Add to vars if reused often */
-    border-color: #79c0ff;
+    border-color: var(--color-accent-hover);
 }
 
 /* Variant: Secondary */

@@ -1165,7 +1165,7 @@ body {
 }
 
 .save-btn:hover {
-    background: var(--accent-hover);
+    background: var(--color-accent-hover);
 }
 
 .close-btn {
@@ -1303,7 +1303,7 @@ body {
 
 .link-button:hover {
     background: var(--bg-hover);
-    color: var(--accent-hover);
+    color: var(--color-accent-hover);
 }
 
 /* Version Info Section */
