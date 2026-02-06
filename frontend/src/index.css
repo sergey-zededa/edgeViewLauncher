@@ -38,6 +38,8 @@
   /* Offline, error, delete */
   --color-info: #388bfd;
   /* Info messages */
+  --color-accent-hover: #79c0ff;
+  /* Hover state for accent buttons (Lighten for Dark Mode) */
 
   /* Borders */
   --border-subtle: #30363d;
@@ -88,6 +90,9 @@
   --color-warning: #ff9500;
   --color-danger: #ff3b30;
   --color-info: #5ac8fa;
+
+  --color-accent-hover: #004494;
+  /* Hover state for accent buttons (Darken for Light Mode) */
 
   /* Borders - Clear definition */
   --border-subtle: #d2d2d7;
