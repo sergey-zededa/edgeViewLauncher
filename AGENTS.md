@@ -1,14 +1,20 @@
-# WARP.md
+# AGENTS.md
 
-This file provides guidance to WARP (warp.dev) when working with code in this repository.
+This file provides guidance to AI Agents (including WARP) when working with code in this repository.
 
 ## Critical Rules
 
 **IMPORTANT**: 
 1. **NEVER create git tags** or trigger release builds (CI/CD) unless explicitly instructed by the user.
-2. **NEVER push to remote** (`git push`) unless explicitly asked.
-3. Do not modify `eve/` directory contents as they are reference implementations.
-4. **ALWAYS run tests and build** after modifying code to verify changes:
+2. **ALWAYS work using PR process**:
+   - Create a new branch for every task or set of changes.
+   - **NEVER commit directly to the `main` or `master` branch.**
+   - Push your branch to the remote to facilitate PR creation.
+3. **Write meaningful commit messages**:
+   - Include decent human-readable comments describing the changes.
+   - This ensures GitHub produces meaningful "What's changed" messages for every new release.
+4. Do not modify `eve/` directory contents as they are reference implementations.
+5. **ALWAYS run tests and build** after modifying code to verify changes:
    - **Check your current directory** (`pwd`) before running commands.
    - **If in project root (`edgeViewLauncher/`)**:
      - Frontend: `npm run build:frontend` (or `cd frontend && npm run build`)
