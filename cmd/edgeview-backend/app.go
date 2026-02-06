@@ -1177,7 +1177,6 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 			// Extract VNC info (from Config)
 			if hasConfig && config.VMInfo.VNC {
 				svc.VNCPort = 5900 + config.VMInfo.VNCDisplay
-				fmt.Printf("DEBUG: Found VNC port %d for app %s (from Cloud API)\n", svc.VNCPort, app.Name)
 			} else {
 			// Fallback: Check containers
 				for _, c := range status.Containers {
