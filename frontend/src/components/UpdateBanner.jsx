@@ -16,7 +16,19 @@ function UpdateBanner({ updateState, onDownload, onInstall, onDismiss }) {
                     <>
                         <div className="update-banner-message">
                             <AlertCircle size={18} />
-                            <span>New version <strong>{version}</strong> is available</span>
+                            <div className="update-text-container">
+                                <span>New version <strong>{version}</strong> is available</span>
+                                <a 
+                                    href="#" 
+                                    className="update-whats-new-link"
+                                    onClick={(e) => {
+                                        e.preventDefault();
+                                        window.electronAPI.openExternal('https://github.com/sergey-zededa/edgeViewLauncher/releases');
+                                    }}
+                                >
+                                    (What's new?)
+                                </a>
+                            </div>
                         </div>
                         <div className="update-banner-actions">
                             <button 

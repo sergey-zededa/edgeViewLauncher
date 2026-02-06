@@ -36,17 +36,30 @@ const About = ({ onClose }) => {
                     </div>
 
                     <div className="copyright-section">
-                        <p>&copy; 2025 ZEDEDA. All rights reserved.</p>
-                        <a
-                            href="#"
-                            onClick={(e) => {
-                                e.preventDefault();
-                                window.electronAPI.openExternal('https://zededa.com');
-                            }}
-                            className="website-link"
-                        >
-                            zededa.com <ExternalLink size={12} />
-                        </a>
+                        <p>&copy; 2025-2026 ZEDEDA. All rights reserved.</p>
+                        <div className="about-links">
+                            <a
+                                href="#"
+                                onClick={(e) => {
+                                    e.preventDefault();
+                                    window.electronAPI.openExternal('https://zededa.com');
+                                }}
+                                className="website-link"
+                            >
+                                zededa.com <ExternalLink size={12} />
+                            </a>
+                            <span className="link-separator">•</span>
+                            <a
+                                href="#"
+                                onClick={(e) => {
+                                    e.preventDefault();
+                                    window.electronAPI.openExternal('https://github.com/sergey-zededa/edgeViewLauncher/releases');
+                                }}
+                                className="website-link"
+                            >
+                                What's New <ExternalLink size={12} />
+                            </a>
+                        </div>
                     </div>
                 </div>
             </div>
