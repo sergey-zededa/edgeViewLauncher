@@ -34,6 +34,24 @@
     font-size: 14px;
 }
 
+.update-text-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.update-whats-new-link {
+    color: rgba(255, 255, 255, 0.9);
+    text-decoration: underline;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.update-whats-new-link:hover {
+    color: white;
+}
+
 .update-banner-message.error {
     color: #fff;
 }
