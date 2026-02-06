@@ -374,7 +374,16 @@ function createWindow() {
     }
 
     // Debug
-    mainWindow.webContents.on('console-message', (event, level, message) => {
+    mainWindow.webContents.on('console-message', (event, ...args) => {
+        // Handle Electron deprecation warning for console-message
+        // Old signature: (event, level, message, line, sourceId)
+        // New signature: (event, details) where details = { level, message, source, lineNo }
+        let message;
+        if (typeof args[0] === 'object') {
+            message = args[0].message;
+        } else {
+            message = args[1];
+        }
         console.log('Renderer:', message);
     });
 }
@@ -444,7 +453,13 @@ function createVncWindow(options) {
     });
 
     // Forward renderer logs to terminal
-    vncWindow.webContents.on('console-message', (event, level, message) => {
+    vncWindow.webContents.on('console-message', (event, ...args) => {
+        let message;
+        if (typeof args[0] === 'object') {
+            message = args[0].message;
+        } else {
+            message = args[1];
+        }
         console.log(`VNC Renderer [${nodeName}]:`, message);
     });
 
@@ -533,7 +548,13 @@ function startGoBackend() {
 
     goBackend.stderr.on('data', (data) => {
         const output = data.toString();
-        console.error('[Go Backend Error]', output);
+        
+        // Check for non-error informational messages that Go logs to stderr
+        if (output.includes('EdgeView Backend Version') || output.includes('Found free port') || output.includes('HTTP Server starting')) {
+            console.log('[Go Backend]', output);
+        } else {
+            console.error('[Go Backend Error]', output);
+        }
 
         // Parse the port from stderr too (log.Printf goes to stderr)
         const portMatch = output.match(/HTTP Server starting on :(\d+)/);
