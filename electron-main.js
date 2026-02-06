@@ -74,12 +74,12 @@ autoUpdater.on('update-downloaded', (info) => {
 });
 
 function createTray() {
-    // Prefer tray.png, fallback to icon.png
-    let iconPath = path.join(__dirname, 'assets', 'tray.png');
+    // Prefer trayTemplate.png, fallback to icon.png
+    let iconPath = path.join(__dirname, 'assets', 'trayTemplate.png');
     let trayIcon = nativeImage.createFromPath(iconPath);
 
     if (trayIcon.isEmpty()) {
-        console.log('[Tray] tray.png not found/empty, falling back to icon.png');
+        console.log('[Tray] trayTemplate.png not found/empty, falling back to icon.png');
         iconPath = path.join(__dirname, 'assets', 'icon.png');
         trayIcon = nativeImage.createFromPath(iconPath);
     }
@@ -89,10 +89,24 @@ function createTray() {
         trayIcon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.icns'));
     }
 
-    // Resize to 16x16 (standard for macOS menu bar)
-    trayIcon = trayIcon.resize({ width: 16, height: 16 });
+    // Platform-specific adjustments
+    if (process.platform === 'darwin') {
+        // macOS: Standard size is 22x22.
+        // We use 'Template' in filename to ensure macOS treats it as a template image.
+        // We do NOT resize here to preserve @2x quality (nativeImage handles it).
+        trayIcon.setTemplateImage(true); 
+    } else {
+        // Windows/Linux: 16x16 is standard
+        trayIcon = trayIcon.resize({ width: 16, height: 16 });
+    }
 
     tray = new Tray(trayIcon);
+    
+    // Set empty title on macOS to force proper layout/rendering in some versions
+    if (process.platform === 'darwin') {
+        tray.setTitle('');
+    }
+
     tray.setToolTip('EdgeView Launcher');
 
     // Set initial menu to verify tray creation
