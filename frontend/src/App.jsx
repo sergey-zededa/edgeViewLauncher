@@ -1513,7 +1513,6 @@ function App() {
       addLog(`SSH Status: ${status.status} `);
       try {
         sessStatus = await GetSessionStatus(nodeId);
-        console.log("GetSessionStatus result:", sessStatus);
         setSessionStatus(sessStatus);
         if (sessStatus.active) {
           addLog(`EdgeView session active (expires: ${new Date(sessStatus.expiresAt).toLocaleString(undefined, getTimeFormatOptions())})`, 'success');
