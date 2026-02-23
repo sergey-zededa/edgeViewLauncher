@@ -596,6 +596,14 @@ func (m *Manager) waitForTcpSetupOK(wsConn *websocket.Conn, key string, timeout 
 				setupDone <- nil
 				return
 			}
+			if strings.Contains(payloadStr, "cmd policy check failed") {
+				setupDone <- fmt.Errorf("device rejected tunnel: %s", payloadStr)
+				return
+			}
+			if strings.Contains(payloadStr, "Error:") {
+				setupDone <- fmt.Errorf("device returned error: %s", payloadStr)
+				return
+			}
 			if strings.Contains(payloadStr, "+++Done+++") {
 				setupDone <- fmt.Errorf("device closed connection before tcpSetupOK (Payload: %s)", payloadStr)
 				return

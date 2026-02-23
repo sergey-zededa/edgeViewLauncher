@@ -315,7 +315,7 @@ func (m *Manager) runCollectInfo(ctx context.Context, job *CollectInfoJob, confi
 					// Note: edgeview-client uses addEnvelopeAndWriteWss(..., false, false) which signs/encrypts based on state
 					// We use sendWrappedMessage which handles config.Enc
 					fmt.Println("DEBUG: Sending Start-Copy confirmation")
-					if err := sendWrappedMessage(wsConn, []byte(startCopyMessage), config.Key, websocket.TextMessage, config.Enc); err != nil {
+					if err := sendWrappedMessage(wsConn, []byte(startCopyMessage), config.Key, websocket.BinaryMessage, config.Enc); err != nil {
 						m.updateJobError(job, fmt.Sprintf("Failed to send start confirmation: %v", err))
 						return
 					}

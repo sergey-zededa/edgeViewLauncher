@@ -53,7 +53,7 @@ func (f *fakeZededaClient) GetEnterprise() (*zededa.Enterprise, error) {
 func (f *fakeZededaClient) GetProjects() ([]zededa.Project, error) {
 	return nil, errors.New("not implemented")
 }
-func (f *fakeZededaClient) SearchNodes(query string) ([]zededa.Node, error) {
+func (f *fakeZededaClient) SearchNodes(query string, page int, limit int, enterprise string) ([]zededa.Node, error) {
 	return nil, errors.New("not implemented")
 }
 func (f *fakeZededaClient) UpdateConfig(baseURL, token string) {}
