@@ -10,7 +10,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     apiCall: (endpoint, method, body) => ipcRenderer.invoke('api-call', endpoint, method, body),
 
     // Convenience methods for common operations
-    searchNodes: (query) => ipcRenderer.invoke('api-call', '/api/search-nodes', 'POST', { query }),
+    searchNodes: (query, limit, skip, projectId) => ipcRenderer.invoke('api-call', '/api/search-nodes', 'POST', { query, limit, skip, projectId }),
     connectToNode: (nodeId, useInApp) => ipcRenderer.invoke('api-call', '/api/connect', 'POST', { nodeId, useInApp }),
     getSettings: () => ipcRenderer.invoke('api-call', '/api/settings', 'GET'),
     saveSettings: (clusters, activeCluster) => ipcRenderer.invoke('api-call', '/api/settings', 'POST', { clusters, activeCluster }),

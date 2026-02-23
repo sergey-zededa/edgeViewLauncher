@@ -38,6 +38,9 @@ func NewHTTPServer(port int) *HTTPServer {
 // Request/Response types
 type SearchNodesRequest struct {
 	Query string `json:"query"`
+	Limit     int    `json:"limit,omitempty"`
+	Skip      int    `json:"skip,omitempty"`
+	ProjectID string `json:"projectId,omitempty"`
 }
 
 type ConnectRequest struct {
@@ -94,7 +97,7 @@ func (s *HTTPServer) handleSearchNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nodes, err := s.app.SearchNodes(req.Query)
+	nodes, err := s.app.SearchNodes(req.Query, req.Limit, req.Skip, req.ProjectID)
 	if err != nil {
 		s.sendError(w, err)
 		return

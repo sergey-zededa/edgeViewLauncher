@@ -361,7 +361,10 @@ function App() {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [enterprise, setEnterprise] = useState(null);
   const [userInfo, setUserInfo] = useState(null);
-  const [projects, setProjects] = useState([]);
+  const [projects, setProjects] = useState({});
+  const [skip, setSkip] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+  const LIMIT = 200;
 
   // Theme State
   // Default to 'auto' if no theme is set
@@ -1563,16 +1566,33 @@ function App() {
   useEffect(() => {
     const search = async () => {
       setLoading(true);
-      setAuthError(false); // Clear auth error before attempting
+      setAuthError(false);
       try {
-        const results = await SearchNodes(query);
-        setNodes(results || []);
-        setSelectedIndex(0);
-        setAuthError(false); // Clear any previous auth errors on success
+        // Resolve project name to ID if possible
+        let projectId = '';
+        if (query) {
+          const lowerQuery = query.toLowerCase();
+          for (const [id, name] of Object.entries(projects)) {
+            if (name.toLowerCase() === lowerQuery) {
+              projectId = id;
+              break;
+            }
+          }
+        }
+
+        const results = await SearchNodes(query, LIMIT, skip, projectId);
+        
+        if (skip === 0) {
+          setNodes(results || []);
+        } else {
+          setNodes(prev => [...prev, ...(results || [])]);
+        }
+        
+        setHasMore((results || []).length === LIMIT);
+        setAuthError(false);
       } catch (err) {
         console.error(err);
-        setNodes([]);
-        // Check if this is an authentication error (401)
+        if (skip === 0) setNodes([]);
         if (err.message && (err.message.includes('401') || err.message.includes('unauthorized'))) {
           setAuthError(true);
         }
@@ -1580,8 +1600,19 @@ function App() {
         setLoading(false);
       }
     };
-    const timeoutId = setTimeout(search, 300);
+
+    // Debounce only if resetting (typing)
+    const timeoutId = setTimeout(() => {
+        search();
+    }, skip === 0 ? 300 : 0);
+
     return () => clearTimeout(timeoutId);
+  }, [query, skip, projects]); // Added projects dependency to re-resolve if projects load
+
+  // Reset pagination when query changes
+  useEffect(() => {
+    setSkip(0);
+    // Don't clear nodes here to avoid flicker, let the search effect handle replacement
   }, [query]);
 
   const handleConnect = async (node) => {
@@ -4059,8 +4090,16 @@ Do you want to try connecting anyway?`)) {
 
             {
               !selectedNode && (
-                <div className="results-list">
-                  {loading && (
+                <div 
+                  className="results-list"
+                  onScroll={(e) => {
+                    const { scrollTop, scrollHeight, clientHeight } = e.target;
+                    if (scrollHeight - scrollTop - clientHeight < 100 && hasMore && !loading) {
+                      setSkip(prev => prev + LIMIT);
+                    }
+                  }}
+                >
+                  {loading && skip === 0 && (
                     <div className="loading-state">
                       <Activity className="loading-icon animate-spin" size={24} />
                       <p>Loading nodes...</p>

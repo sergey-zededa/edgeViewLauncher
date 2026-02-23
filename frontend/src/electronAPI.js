@@ -7,8 +7,8 @@ if (!api) {
     throw new Error('Electron API not available - preload script failed to load');
 }
 
-export const SearchNodes = (query) => {
-    return api.searchNodes(query).then(res => {
+export const SearchNodes = (query, limit = 200, skip = 0, projectId = '') => {
+    return api.searchNodes(query, limit, skip, projectId).then(res => {
         return res.data;
     }).catch(err => {
         console.error('SearchNodes error:', err);

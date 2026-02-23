@@ -17,7 +17,7 @@ import (
 type zededaAPI interface {
 	GetEnterprise() (*zededa.Enterprise, error)
 	GetProjects() ([]zededa.Project, error)
-	SearchNodes(query string) ([]zededa.Node, error)
+	SearchNodes(query string, limit, skip int, projectID string) ([]zededa.Node, error)
 	UpdateConfig(baseURL, token string)
 	InitSession(targetID string) (string, error)
 	ParseEdgeViewScript(script string) (*zededa.SessionConfig, error)
@@ -261,8 +261,8 @@ func (a *App) GetProjects() ([]zededa.Project, error) {
 }
 
 // SearchNodes searches for nodes matching the query
-func (a *App) SearchNodes(query string) ([]zededa.Node, error) {
-	return a.zededaClient.SearchNodes(query)
+func (a *App) SearchNodes(query string, limit, skip int, projectID string) ([]zededa.Node, error) {
+	return a.zededaClient.SearchNodes(query, limit, skip, projectID)
 }
 
 // AddRecentDevice adds a device ID to the recent list

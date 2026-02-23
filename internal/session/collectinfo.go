@@ -104,30 +104,124 @@ func (m *Manager) runCollectInfo(ctx context.Context, job *CollectInfoJob, confi
 		fmt.Printf("DEBUG: runCollectInfo finished for job %s. Final status: %s, Error: %s\n", job.ID, job.Status, job.Error)
 	}()
 
-	// Connect to WebSocket
-	fmt.Println("DEBUG: Connecting to EdgeView for collectinfo...")
-	wsConn, _, err := m.connectToEdgeView(config)
-	if err != nil {
-		fmt.Printf("DEBUG: CollectInfo connection failed: %v\n", err)
-		m.updateJobError(job, fmt.Sprintf("Failed to connect: %v", err))
+	// Connect to WebSocket with retry and instance rotation logic (similar to StartProxy)
+	var wsConn *websocket.Conn
+	var clientIP string
+	var err error
+	var lastErr error
+
+	// Determine initial instance
+	initialInstID := config.InstID
+	if config.MaxInst == 1 {
+		initialInstID = 0
+	} else if config.MaxInst > 1 {
+		// Start with InstID 1 for consistency with other tools
+		initialInstID = 1
+	} else {
+		initialInstID = 0
+	}
+
+	const maxRetries = 5
+	triedInstances := make(map[int]bool)
+	currentInstID := initialInstID
+	seenNoDeviceOnline := false
+
+	// --- Retry Loop Start ---
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		if attempt > 1 {
+			fmt.Printf("DEBUG: CollectInfo retry attempt %d/%d...\n", attempt, maxRetries)
+		}
+
+		// Set Instance ID for this attempt
+		config.InstID = currentInstID
+		triedInstances[currentInstID] = true
+
+		// Connect
+		fmt.Printf("DEBUG: Connecting to EdgeView for collectinfo (InstID: %d)...\n", currentInstID)
+		wsConn, clientIP, err = m.connectToEdgeView(config)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to connect: %w", err)
+			
+			// Check for specific errors
+			if err == ErrBusyInstance {
+				fmt.Printf("DEBUG: Instance %d is busy\n", currentInstID)
+			} else if err == ErrNoDeviceOnline {
+				seenNoDeviceOnline = true
+				fmt.Printf("DEBUG: Device not online (attempt %d/%d)\n", attempt, maxRetries)
+			} else {
+				fmt.Printf("DEBUG: Connection failed: %v\n", err)
+			}
+		} else {
+			// Connected successfully!
+			// Send collectinfo command
+			query := cmdOpt{
+				Version:      edgeViewVersion,
+				ClientEPAddr: clientIP,
+				System:       "collectinfo",
+				IsJSON:       false,
+			}
+
+			queryBytes, _ := json.Marshal(query)
+			fmt.Println("DEBUG: Sending collectinfo command...")
+			if err := sendWrappedMessage(wsConn, queryBytes, config.Key, websocket.TextMessage, config.Enc); err != nil {
+				fmt.Printf("DEBUG: Failed to send command: %v\n", err)
+				lastErr = fmt.Errorf("failed to send command: %w", err)
+				wsConn.Close()
+				wsConn = nil
+			} else {
+				// Success! Break the retry loop
+				break
+			}
+		}
+
+		// If we are here, something failed. Decide whether to rotate instance or backoff.
+
+		// Try to find an untried instance before applying backoff
+		if config.MaxInst > 1 {
+			foundAlternative := false
+			// Try next instance in round-robin fashion
+			for i := 1; i < config.MaxInst; i++ {
+				nextInstID := (currentInstID + i) % config.MaxInst
+				if !triedInstances[nextInstID] {
+					currentInstID = nextInstID
+					foundAlternative = true
+					fmt.Printf("DEBUG: Switching to alternative instance %d (previous failed)...\n", currentInstID)
+					break
+				}
+			}
+
+			if foundAlternative {
+				continue // Skip backoff and try immediately
+			}
+			
+			// All instances tried - reset for next full round
+			fmt.Printf("DEBUG: All %d instances have been tried. Will retry with backoff.\n", config.MaxInst)
+			triedInstances = make(map[int]bool)
+		}
+
+		// Backoff
+		if attempt < maxRetries {
+			waitTime := time.Duration(1<<uint(attempt)) * time.Second
+			fmt.Printf("DEBUG: Waiting %v before next attempt...\n", waitTime)
+			time.Sleep(waitTime)
+		}
+	}
+	// --- Retry Loop End ---
+
+	if wsConn == nil {
+		finalErr := lastErr
+		if seenNoDeviceOnline {
+			finalErr = ErrNoDeviceOnline
+		}
+		if finalErr == nil {
+			finalErr = fmt.Errorf("failed after %d attempts", maxRetries)
+		}
+		
+		fmt.Printf("DEBUG: CollectInfo failed after retries: %v\n", finalErr)
+		m.updateJobError(job, finalErr.Error())
 		return
 	}
 	defer wsConn.Close()
-
-	// Send collectinfo command
-	query := cmdOpt{
-		Version: edgeViewVersion,
-		System:  "collectinfo",
-		IsJSON:  false,
-	}
-
-	queryBytes, _ := json.Marshal(query)
-	fmt.Println("DEBUG: Sending collectinfo command...")
-	if err := sendWrappedMessage(wsConn, queryBytes, config.Key, websocket.TextMessage, config.Enc); err != nil {
-		fmt.Printf("DEBUG: Failed to send command: %v\n", err)
-		m.updateJobError(job, fmt.Sprintf("Failed to send command: %v", err))
-		return
-	}
 
 	// Read loop
 	var file *os.File
@@ -145,7 +239,8 @@ func (m *Manager) runCollectInfo(ctx context.Context, job *CollectInfoJob, confi
 
 	// Wait for response
 	// Set a reasonable timeout for the *start* of data, but data transfer can take long
-	wsConn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	// Some devices take time to generate the tarball, so we use a generous 5-minute timeout
+	wsConn.SetReadDeadline(time.Now().Add(5 * time.Minute))
 
 	for {
 		select {
@@ -164,8 +259,9 @@ func (m *Manager) runCollectInfo(ctx context.Context, job *CollectInfoJob, confi
 				return
 			}
 
-			// Reset deadline for next message (keepalive)
-			wsConn.SetReadDeadline(time.Now().Add(60 * time.Second))
+			// Reset deadline for next message (keepalive) to 5 minutes
+			// This handles slow transfers or pauses in generation
+			wsConn.SetReadDeadline(time.Now().Add(5 * time.Minute))
 
 			// Unwrap
 			payload, err := unwrapMessage(msg, config.Key, config.Enc)
@@ -263,7 +359,7 @@ func (m *Manager) runCollectInfo(ctx context.Context, job *CollectInfoJob, confi
 					return
 				} else if !gotFileInfo {
 					// Might be log output before file starts? Ignore or log.
-					// fmt.Printf("CollectInfo ignored text: %s\n", payloadStr)
+					fmt.Printf("CollectInfo ignored text: %s\n", payloadStr)
 				}
 			}
 

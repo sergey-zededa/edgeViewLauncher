@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog, globalShortcut } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -74,56 +74,110 @@ autoUpdater.on('update-downloaded', (info) => {
 });
 
 function createTray() {
-    // Prefer trayTemplate.png, fallback to icon.png
-    let iconPath = path.join(__dirname, 'assets', 'trayTemplate.png');
-    let trayIcon = nativeImage.createFromPath(iconPath);
-
-    if (trayIcon.isEmpty()) {
-        console.log('[Tray] trayTemplate.png not found/empty, falling back to icon.png');
-        iconPath = path.join(__dirname, 'assets', 'icon.png');
-        trayIcon = nativeImage.createFromPath(iconPath);
+    // Ensure we don't create multiple trays
+    if (global.tray && !global.tray.isDestroyed()) {
+        try { global.tray.destroy(); } catch (e) { console.error(e); }
+    }
+    if (tray && !tray.isDestroyed()) {
+        try { tray.destroy(); } catch (e) { console.error(e); }
     }
 
-    if (trayIcon.isEmpty()) {
-        // Fallback to icns if png fails
-        trayIcon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.icns'));
+    let trayIcon = null;
+
+    // 1. Define search paths for assets
+    // Use app.getAppPath() which is reliable in both dev and prod
+    // In dev: .../edgeViewLauncher/
+    // In prod: .../app.asar/
+    const possibleAssetPaths = [
+        path.join(app.getAppPath(), 'assets'),
+        path.join(process.resourcesPath, 'assets'),
+        path.join(__dirname, 'assets')
+    ];
+
+    console.log('[Tray] Searching for tray icons in:', possibleAssetPaths);
+
+    // 2. Try to load trayTemplate.png (Standard for macOS)
+    for (const assetsPath of possibleAssetPaths) {
+        try {
+            const templatePath = path.join(assetsPath, 'trayTemplate.png');
+            let img = nativeImage.createFromPath(templatePath);
+
+            if (!img.isEmpty()) {
+                const size = img.getSize();
+                console.log(`[Tray] Found template: ${templatePath} (${size.width}x${size.height})`);
+                trayIcon = img;
+
+                // On macOS, mark as template image so it adapts to light/dark mode
+                if (process.platform === 'darwin') {
+                    trayIcon.setTemplateImage(true);
+                }
+                break;
+            }
+        } catch (e) { /* ignore */ }
     }
 
-    // Platform-specific adjustments
-    if (process.platform === 'darwin') {
-        // macOS: Standard size is 22x22.
-        // We use 'Template' in filename to ensure macOS treats it as a template image.
-        // We do NOT resize here to preserve @2x quality (nativeImage handles it).
-        trayIcon.setTemplateImage(true); 
-    } else {
-        // Windows/Linux: 16x16 is standard
-        trayIcon = trayIcon.resize({ width: 16, height: 16 });
+    // 3. Fallback to icon.png if template missing
+    if (!trayIcon || trayIcon.isEmpty()) {
+        for (const assetsPath of possibleAssetPaths) {
+            try {
+                const iconPath = path.join(assetsPath, 'icon.png');
+                let img = nativeImage.createFromPath(iconPath);
+
+                if (!img.isEmpty()) {
+                    console.log('[Tray] Found fallback icon:', iconPath);
+                    trayIcon = img;
+
+                    if (process.platform === 'darwin') {
+                        trayIcon = trayIcon.resize({ width: 22, height: 22 });
+                        trayIcon.setTemplateImage(false);
+                    } else {
+                        trayIcon = trayIcon.resize({ width: 16, height: 16 });
+                    }
+                    break;
+                }
+            } catch (e) { /* ignore */ }
+        }
     }
 
-    tray = new Tray(trayIcon);
-    
-    // Set empty title on macOS to force proper layout/rendering in some versions
-    if (process.platform === 'darwin') {
-        tray.setTitle('');
+    // 4. Last Resort: Generated red square fallback
+    if (!trayIcon || trayIcon.isEmpty()) {
+        console.log('[Tray] Using Red Square Fallback');
+        trayIcon = nativeImage.createFromDataURL('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABYAAAAWBAMAAAA2mn1CAAAAGFBMVEUAAAD/AAD/AAD/AAD/AAD/AAD/AAD/AADQUOtFAAAACHRSTlMAAKC/wL+/v+C41QnQAAAAKUlEQVQY02NgQAza1QABQ0sLgDAKUBgsABVAFWJgqABVCAKjQhAYFQIQAQB4OwQ5gG44eQAAAABJRU5ErkJggg==');
+        if (process.platform === 'darwin') {
+            trayIcon = trayIcon.resize({ width: 22, height: 22 });
+            trayIcon.setTemplateImage(false);
+        }
     }
 
-    tray.setToolTip('EdgeView Launcher');
-
-    // Set initial menu to verify tray creation
     try {
+        // Create tray
+        tray = new Tray(trayIcon);
+        global.tray = tray; // Prevent GC
+
+        tray.setToolTip('EdgeView Launcher');
+
+        if (process.platform === 'darwin') {
+            tray.setIgnoreDoubleClickEvents(true);
+        }
+
         const initialMenu = Menu.buildFromTemplate([
             { label: 'EdgeView Launcher', enabled: false },
-            { label: 'Initializing...', enabled: false }
+            { type: 'separator' },
+            { label: 'Status: Initializing...', enabled: false },
+            { type: 'separator' },
+            { label: 'Open Window', click: () => mainWindow ? mainWindow.show() : createWindow() },
+            { label: 'Quit', click: () => { isQuitting = true; app.quit(); } }
         ]);
         tray.setContextMenu(initialMenu);
+
+        console.log('[Tray] Created successfully');
     } catch (e) {
-        console.error('[Tray] Failed to set initial menu:', e);
+        console.error('[Tray] Failed to create tray instance:', e);
     }
 
-    // Initial menu (will be updated with dynamic content)
+    // Update menu immediately
     updateTrayMenu();
 
-    // Refresh menu periodically (every 30 seconds)
     if (trayRefreshInterval) clearInterval(trayRefreshInterval);
     trayRefreshInterval = setInterval(updateTrayMenu, 30000);
 
@@ -131,7 +185,6 @@ function createTray() {
         if (mainWindow) {
             mainWindow.show();
             mainWindow.focus();
-            // Show dock icon on macOS when window is shown
             if (process.platform === 'darwin' && app.dock) {
                 app.dock.show();
             }
@@ -403,7 +456,6 @@ function createWindow() {
 }
 
 // ... (createVncWindow and startGoBackend functions remain unchanged) ...
-
 // We need to keep the original functions but I'm replacing the top block, so I'll skip re-pasting them here 
 // and just continue with the app lifecycle events which are at the bottom of the replaced block in the original file.
 // Wait, I need to be careful not to delete createVncWindow and startGoBackend.
@@ -562,7 +614,7 @@ function startGoBackend() {
 
     goBackend.stderr.on('data', (data) => {
         const output = data.toString();
-        
+
         // Check for non-error informational messages that Go logs to stderr
         if (output.includes('EdgeView Backend Version') || output.includes('Found free port') || output.includes('HTTP Server starting')) {
             console.log('[Go Backend]', output);
@@ -610,10 +662,35 @@ app.whenReady().then(() => {
     });
 
     startGoBackend();
-    createTray();
+
+    // DELAY Tray creation to ensure app is fully initialized and OS is ready
+    setTimeout(() => {
+        createTray();
+    }, 1000);
 
     // Give backend a moment to start
     setTimeout(createWindow, 1000);
+
+    // Safety-net: Register global shortcut to re-show the window.
+    // On macOS with a notch, the tray icon may be hidden by menu bar overflow,
+    // so this gives the user a reliable way to bring the app back.
+    const shortcut = 'CommandOrControl+Shift+E';
+    const registered = globalShortcut.register(shortcut, () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.show();
+            mainWindow.focus();
+            if (process.platform === 'darwin' && app.dock) {
+                app.dock.show();
+            }
+        } else {
+            createWindow();
+        }
+    });
+    if (registered) {
+        console.log(`[Shortcut] Registered ${shortcut} to show window`);
+    } else {
+        console.warn(`[Shortcut] Failed to register ${shortcut}`);
+    }
 
     // Check for updates after app is fully initialized (15 second delay)
     // Skip in development mode and for unsigned builds on macOS
@@ -702,6 +779,8 @@ ipcMain.handle('get-electron-app-info', async () => {
 
 app.on('before-quit', () => {
     isQuitting = true;
+    // Unregister all global shortcuts
+    globalShortcut.unregisterAll();
     // Kill Go backend
     if (goBackend) {
         goBackend.kill();
@@ -1188,12 +1267,12 @@ ipcMain.handle('save-collected-file', async (event, { jobId, filename }) => {
         return { success: true, filePath };
     } catch (error) {
         console.error('Failed to save collected file:', error);
-        
+
         let userMsg = error.message;
         if (userMsg.includes('404') || userMsg.includes('not found')) {
             userMsg = "The collected information bundle could not be found. The collection process may have failed to receive the file. Please try again.";
         }
-        
+
         return { success: false, error: userMsg };
     }
 });

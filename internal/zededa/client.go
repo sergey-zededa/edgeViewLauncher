@@ -106,7 +106,7 @@ func (c *Client) UpdateConfig(baseURL, token string) {
 	c.Token = token
 }
 
-func (c *Client) SearchNodes(query string) ([]Node, error) {
+func (c *Client) SearchNodes(query string, limit, skip int, projectID string) ([]Node, error) {
 	if c.Token == "" {
 		return nil, fmt.Errorf("API token not configured")
 	}
@@ -118,6 +118,26 @@ func (c *Client) SearchNodes(query string) ([]Node, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	q := req.URL.Query()
+	// Add pagination parameters
+	if limit > 0 {
+		q.Add("top", fmt.Sprintf("%d", limit))
+	}
+	if skip > 0 {
+		q.Add("skip", fmt.Sprintf("%d", skip))
+	}
+
+	// Add filtering parameters
+	if projectID != "" {
+		q.Add("projectId", projectID)
+	}
+	if query != "" {
+		q.Add("namePattern", query)
+	}
+
+	req.URL.RawQuery = q.Encode()
+
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 	req.Header.Set("Content-Type", "application/json")
 
@@ -140,12 +160,9 @@ func (c *Client) SearchNodes(query string) ([]Node, error) {
 	}
 
 	var results []Node
-	query = strings.ToLower(query)
 	for _, d := range deviceResp.List {
-		// Simple client-side filter for MVP
-		if query != "" && !strings.Contains(strings.ToLower(d.Name), query) && !strings.Contains(strings.ToLower(d.ProjectID), query) {
-			continue
-		}
+		// Client-side filtering removed as we rely on API filtering now.
+		// This enables proper pagination.
 
 		runState := strings.TrimSpace(d.RunState)
 		status := "offline"
