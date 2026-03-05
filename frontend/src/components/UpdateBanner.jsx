@@ -18,12 +18,14 @@ function UpdateBanner({ updateState, onDownload, onInstall, onDismiss }) {
                             <AlertCircle size={18} />
                             <div className="update-text-container">
                                 <span>New version <strong>{version}</strong> is available</span>
-                                <a 
-                                    href="#" 
+                                <a
+                                    href="#"
                                     className="update-whats-new-link"
                                     onClick={(e) => {
                                         e.preventDefault();
-                                        window.electronAPI.openExternal('https://github.com/sergey-zededa/edgeViewLauncher/releases');
+                                        import('../tauriAPI').then(api =>
+                                            api.openExternal('https://github.com/sergey-zededa/edgeViewLauncher/releases')
+                                        );
                                     }}
                                 >
                                     (What's new?)
@@ -31,14 +33,14 @@ function UpdateBanner({ updateState, onDownload, onInstall, onDismiss }) {
                             </div>
                         </div>
                         <div className="update-banner-actions">
-                            <button 
+                            <button
                                 className="update-banner-button primary"
                                 onClick={onDownload}
                             >
                                 <Download size={16} />
                                 Download
                             </button>
-                            <button 
+                            <button
                                 className="update-banner-button secondary"
                                 onClick={onDismiss}
                             >
@@ -57,8 +59,8 @@ function UpdateBanner({ updateState, onDownload, onInstall, onDismiss }) {
                             <span>Downloading update... {downloadProgress}%</span>
                         </div>
                         <div className="update-banner-progress">
-                            <div 
-                                className="update-banner-progress-bar" 
+                            <div
+                                className="update-banner-progress-bar"
                                 style={{ width: `${downloadProgress}%` }}
                             />
                         </div>
@@ -73,14 +75,14 @@ function UpdateBanner({ updateState, onDownload, onInstall, onDismiss }) {
                             <span>Update <strong>{version}</strong> is ready to install</span>
                         </div>
                         <div className="update-banner-actions">
-                            <button 
+                            <button
                                 className="update-banner-button primary"
                                 onClick={onInstall}
                             >
                                 <RefreshCw size={16} />
                                 Restart & Install
                             </button>
-                            <button 
+                            <button
                                 className="update-banner-button secondary"
                                 onClick={onDismiss}
                             >
@@ -98,7 +100,7 @@ function UpdateBanner({ updateState, onDownload, onInstall, onDismiss }) {
                             <span>Update failed: {error || 'Unknown error'}</span>
                         </div>
                         <div className="update-banner-actions">
-                            <button 
+                            <button
                                 className="update-banner-button secondary"
                                 onClick={onDismiss}
                             >

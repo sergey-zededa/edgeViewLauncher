@@ -33,34 +33,33 @@ xattr -cr "/Applications/EdgeView Launcher.app"
 ## Architecture
 
 This repository contains three main parts:
-- **Electron shell** (root JavaScript files) – window management, tray integration, and process orchestration
+- **Tauri shell** (`src-tauri/`) – window management, tray integration, secure storage, and process orchestration
 - **Frontend** (`frontend/`) – React UI, device search, tunnel management, terminal and VNC views
 - **Go backend** (root Go files and `internal/`) – HTTP API, EdgeView session management, SSH/VNC/TCP tunneling
 
-For a more detailed architectural overview, see `WARP.md` and the source code in `internal/`, `frontend/`, and the Electron entry files.
+For a more detailed architectural overview, see `WARP.md` and the source code in `internal/`, `frontend/`, and `src-tauri/`.
 
 ## Development Prerequisites
 
-- Go toolchain (for the backend)
-- Node.js (v20+ recommended) + npm (for the frontend and Electron shell)
+- Rust toolchain (for the Tauri desktop shell)
+- Go toolchain (for the backend sidecar)
+- Node.js (v20+ recommended) + npm (for the frontend React UI)
 
 ## Development
 
-The development workflow is driven by the Electron + Go backend + React frontend stack. The typical setup is:
+The development workflow is driven by the Tauri + Go backend + React frontend stack. The typical setup is:
 
-1. **Start the frontend (Vite)**
-   - Change into `frontend/` and run the Vite dev server (see `frontend/package.json` scripts).
-2. **Build and run the Go backend**
-   - Build the backend binary at the repository root.
-3. **Run Electron in development mode**
-   - Use the npm scripts in the root `package.json` to start the Electron shell, which will load the frontend and talk to the Go backend.
+1. **Build and run the Go backend**
+   - Build the backend binary at the repository root into `src-tauri/binaries/edgeview-backend-{target}`.
+2. **Run Tauri in development mode**
+   - Run `npm run dev` at the project root to start the Tauri app. Tauri will automatically spawn the Go backend and the Vite dev server.
 
-Exact commands and variations can be found in `WARP.md` and the package/config files (`package.json`, `frontend/package.json`).
+Exact commands and variations can be found in `WARP.md` and the package/config files (`package.json`, `tauri.conf.json`).
 
 ## Key Components
 
-- `electron-main.js` – Electron main process, tray icon, window lifecycle, backend process management
-- `electron-preload.js` – IPC surface exposed to the React frontend
+- `src-tauri/src/main.rs` – Tauri main process, tray icon, window lifecycle, backend sidecar orchestration
+- `src-tauri/src/commands/` – Rust commands exposed to the React frontend
 - `frontend/src/App.jsx` – main React UI for clusters, devices, tunnels, and settings
 - `frontend/src/components/TerminalView.jsx` – xterm.js-based SSH terminal over WebSocket
 - `frontend/src/components/VncViewer.jsx` – noVNC-based remote desktop client
@@ -71,7 +70,7 @@ Refer to comments in these files and to `WARP.md` for implementation details and
 
 ## Building
 
-Build and packaging are handled via Electron Builder. To create distributable installers:
+Build and packaging are handled via Tauri CLI. To create distributable installers:
 
 ```bash
 # macOS ARM64 (default)

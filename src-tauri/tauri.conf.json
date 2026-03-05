@@ -1,0 +1,72 @@
+{
+    "$schema": "https://schema.tauri.app/config/2",
+    "productName": "EdgeView Launcher",
+    "version": "0.1.22",
+    "identifier": "com.edgeview.launcher",
+    "build": {
+        "beforeDevCommand": "cd frontend && npm run dev",
+        "beforeBuildCommand": "cd frontend && npm run build",
+        "devUrl": "http://localhost:5173",
+        "frontendDist": "../frontend/dist"
+    },
+    "bundle": {
+        "active": true,
+        "targets": "all",
+        "icon": [
+            "../assets/icon.icns",
+            "../assets/icon.ico",
+            "../assets/icon.png"
+        ],
+        "resources": [],
+        "externalBin": [
+            "binaries/edgeview-backend"
+        ],
+        "macOS": {
+            "entitlements": "../assets/entitlements.mac.plist",
+            "hardenedRuntime": true
+        },
+        "windows": {
+            "certificateThumbprint": null,
+            "digestAlgorithm": "sha256",
+            "timestampUrl": ""
+        }
+    },
+    "app": {
+        "withGlobalTauri": false,
+        "windows": [
+            {
+                "label": "main",
+                "title": "EdgeView Launcher",
+                "width": 1000,
+                "height": 900,
+                "minWidth": 800,
+                "minHeight": 600,
+                "decorations": false,
+                "visible": false,
+                "center": true
+            }
+        ],
+        "security": {
+            "csp": null,
+            "dangerousDisableAssetCspModification": false
+        },
+        "trayIcon": {
+            "id": "main-tray",
+            "iconPath": "../assets/trayTemplate.png",
+            "iconAsTemplate": true
+        }
+    },
+    "plugins": {
+        "updater": {
+            "pubkey": "PLACEHOLDER_UPDATE_AFTER_tauri_signer_generate",
+            "endpoints": [
+                "https://github.com/sergey-zededa/edgeViewLauncher/releases/latest/download/latest.json"
+            ],
+            "dialog": false
+        },
+        "shell": {
+            "open": true,
+            "sidecar": true
+        }
+    }
+}

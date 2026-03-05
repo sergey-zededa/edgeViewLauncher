@@ -25,23 +25,24 @@ This file provides guidance to AI Agents (including WARP) when working with code
 
 ## Project Overview
 
-EdgeView Launcher is an Electron desktop application with a Go backend for managing remote ZEDEDA edge devices. It provides SSH terminal access, VNC remote desktop, and TCP tunneling through EdgeView proxy connections.
+EdgeView Launcher is a Tauri desktop application with a Go backend sidecar for managing remote ZEDEDA edge devices. It provides SSH terminal access, VNC remote desktop, and TCP tunneling through EdgeView proxy connections.
 
 ## Architecture
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│                        Electron Main Process                              │
-│  electron-main.js                                                         │
-│  - Spawns Go backend (edgeview-backend) on port 8080                     │
-│  - Creates BrowserWindow, handles IPC (api-call, open-terminal-window)   │
+│                             Tauri Core (Rust)                             │
+│  src-tauri/src/main.rs                                                    │
+│  - Spawns Go backend as sidecar (edgeview-backend)                        │
+│  - Creates WebviewWindow, tray menu, native dialogs                       │
+│  - Handles IPC commands (api_call, open_terminal_window)                  │
 └─────────────────────────────┬────────────────────────────────────────────┘
-                              │ IPC via electron-preload.js
+                              │ IPC via invoke() / listen()
 ┌─────────────────────────────▼────────────────────────────────────────────┐
 │                        Frontend (React + Vite)                            │
 │  frontend/src/                                                            │
 │  ├── App.jsx           – Main UI (search, settings, device details)      │
-│  ├── electronAPI.js    – Wraps window.electronAPI for API calls          │
+│  ├── tauriAPI.js       – Wraps Tauri commands for API calls              │
 │  └── components/                                                          │
 │      ├── TerminalView.jsx  – xterm.js WebSocket terminal                 │
 │      └── VncViewer.jsx     – NoVNC remote desktop viewer                 │
@@ -61,7 +62,7 @@ EdgeView Launcher is an Electron desktop application with a Go backend for manag
 ```
 
 ### Data Flow
-1. React calls `electronAPI.js` → Electron IPC → Go backend HTTP API
+1. React calls `tauriAPI.js` → Tauri IPC `api_call` → Tauri Rust proxies HTTP to Go backend
 2. SSH Terminal: Frontend opens WebSocket to `/api/ssh/term?port=<port>`
 3. VNC: Frontend uses noVNC to connect through EdgeView TCP tunnel
 4. EdgeView sessions are cached with ~5 hour expiration
@@ -74,16 +75,14 @@ EdgeView Launcher is an Electron desktop application with a Go backend for manag
 ## Development Commands
 
 ```bash
-# Start development (runs both frontend and backend)
-cd frontend && npm run dev          # Terminal 1: Vite dev server (localhost:5173)
-go build -o edgeview-backend && NODE_ENV=development npm start  # Terminal 2: Electron app
+# Start development (runs both frontend and backend automatically via tauri.conf.json)
+npm run dev
 
-# Rebuild Go backend only (after Go code changes)
-# Important: Binary name MUST be edgeview-backend (macOS/Linux) or edgeview-backend.exe (Windows)
-go build -o edgeview-backend http-server.go app.go
+# Rebuild Go backend only (after Go code changes) -> needed before Tauri runs
+go build -o src-tauri/binaries/edgeview-backend ./cmd/edgeview-backend
 
 # Build for production
-npm run build                       # Builds frontend + backend + Electron package
+npm run build                       # Builds Tauri package
 npm run build:windows               # Windows x64 build
 npm run build:linux                 # Linux x64 build
 
@@ -97,9 +96,9 @@ cd frontend && npm test             # Run all tests with Vitest
 
 Frontend tests use **Vitest** + **React Testing Library** with **jsdom** environment.
 
-All Electron IPC calls must be mocked in tests:
+All Tauri IPC calls must be mocked in tests:
 ```javascript
-vi.mock('./electronAPI', () => ({
+vi.mock('./tauriAPI', () => ({
   SearchNodes: vi.fn().mockResolvedValue([]),
   GetSettings: vi.fn().mockResolvedValue({ clusters: [], activeCluster: '' }),
   // ... other methods

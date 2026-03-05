@@ -22,9 +22,9 @@ vi.mock('./components/GlobalStatusBanner', () => ({
   default: ({ status }) => status ? <div data-testid="global-status-banner-mock">{status.message}</div> : null,
 }));
 
-vi.mock('./electronAPI', () => {
+vi.mock('./tauriAPI', () => {
   const fn = () => Promise.resolve();
-  const noop = () => () => {}; // Cleanup function for event listeners
+  const noop = () => () => { }; // Cleanup function for event listeners
   return {
     SearchNodes: vi.fn().mockResolvedValue([]),
     ConnectToNode: vi.fn(fn),
@@ -72,7 +72,7 @@ vi.mock('./electronAPI', () => {
   };
 });
 
-import * as electronAPI from './electronAPI';
+import * as electronAPI from './tauriAPI';
 import App, { ActivityLog } from './App';
 
 describe('App configuration and tunnels', () => {
@@ -84,12 +84,12 @@ describe('App configuration and tunnels', () => {
 
     // Mock global window.electronAPI with required methods
     Object.defineProperty(window, 'electronAPI', {
-      value: { 
+      value: {
         openExternal: vi.fn(),
         openVncWindow: vi.fn(),
         getSystemTimeFormat: vi.fn().mockResolvedValue(false),
-        getElectronAppInfo: vi.fn().mockResolvedValue({ 
-          version: '0.1.1', 
+        getElectronAppInfo: vi.fn().mockResolvedValue({
+          version: '0.1.1',
           buildNumber: 'dev',
           buildDate: null,
           gitCommit: 'abc123'
@@ -108,7 +108,7 @@ describe('App configuration and tunnels', () => {
     };
     electronAPI.GetSettings.mockResolvedValue(defaultConfig);
     electronAPI.SecureStorageGetSettings.mockResolvedValue(defaultConfig);
-    
+
     electronAPI.SearchNodes.mockResolvedValue([]);
     electronAPI.SearchNodes.mockResolvedValue([]);
   });
@@ -131,7 +131,7 @@ describe('App configuration and tunnels', () => {
     // We check that at least one exists
     const switchButtons = await screen.findAllByRole('button', { name: /switch to this cluster/i });
     expect(switchButtons.length).toBeGreaterThan(0);
-    
+
     // Should not have the active badge
     expect(screen.queryByText('Active')).not.toBeInTheDocument();
   });
@@ -201,24 +201,24 @@ describe('App configuration and tunnels', () => {
   it('saveSettings persists clusters and reloads user and nodes', async () => {
     // First GetSettings call - empty config so settings open
     const emptyConfig = {
-        baseUrl: '',
-        apiToken: '',
-        clusters: [],
-        activeCluster: '',
-        recentDevices: [],
+      baseUrl: '',
+      apiToken: '',
+      clusters: [],
+      activeCluster: '',
+      recentDevices: [],
     };
     const savedConfig = {
-        baseUrl: 'https://cluster.example',
-        apiToken: '',
-        clusters: [
-          {
-            name: 'Cluster 1',
-            baseUrl: 'https://cluster.example',
-            apiToken: 'ENT1234:' + 'A'.repeat(171),
-          },
-        ],
-        activeCluster: 'Cluster 1',
-        recentDevices: [],
+      baseUrl: 'https://cluster.example',
+      apiToken: '',
+      clusters: [
+        {
+          name: 'Cluster 1',
+          baseUrl: 'https://cluster.example',
+          apiToken: 'ENT1234:' + 'A'.repeat(171),
+        },
+      ],
+      activeCluster: 'Cluster 1',
+      recentDevices: [],
     };
 
     electronAPI.GetSettings.mockResolvedValue(emptyConfig);
@@ -236,10 +236,10 @@ describe('App configuration and tunnels', () => {
     // Add a new cluster so we have something to save
     const addButton = screen.getByRole('button', { name: /add/i });
     fireEvent.click(addButton);
-    
+
     // Activate it so it becomes the active cluster on save
     const switchButton = screen.queryByText('Switch to this Cluster');
-    
+
     // If we're adding the first cluster, it might auto-activate
     if (switchButton) {
       fireEvent.click(switchButton);
@@ -312,9 +312,9 @@ describe('App configuration and tunnels', () => {
     // Verify the saved data contains the NEW token
     const [configArg] = electronAPI.SecureStorageSaveSettings.mock.calls[0];
     expect(configArg.clusters).toHaveLength(1);
-    
+
     expect([newToken, 'original-token']).toContain(configArg.clusters[0].apiToken);
-    
+
     expect(configArg.activeCluster).toBe('Cluster 1');
   });
 
@@ -358,13 +358,13 @@ describe('App configuration and tunnels', () => {
     electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify(servicesPayload));
 
     // Mock active session so Connect button is enabled
-    electronAPI.GetSessionStatus.mockResolvedValue({ 
-      active: true, 
-      expiresAt: new Date(Date.now() + 3600000).toISOString() 
+    electronAPI.GetSessionStatus.mockResolvedValue({
+      active: true,
+      expiresAt: new Date(Date.now() + 3600000).toISOString()
     });
-    electronAPI.GetSSHStatus.mockResolvedValue({ 
+    electronAPI.GetSSHStatus.mockResolvedValue({
       status: 'enabled',
-      expiry: Math.floor(Date.now() / 1000) + 3600 
+      expiry: Math.floor(Date.now() / 1000) + 3600
     });
 
     // Stub window.electronAPI for openExternal used when launching VNC
@@ -468,15 +468,15 @@ describe('App configuration and tunnels', () => {
     const node = { id: 'node-1', name: 'Node 1', status: 'online', edgeView: true };
     electronAPI.SearchNodes.mockResolvedValue([node]);
     electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
-    
+
     // Valid session so we see the reset button
-    electronAPI.GetSSHStatus.mockResolvedValue({ 
-      status: 'enabled', 
-      expiry: Math.floor(Date.now() / 1000) + 3600 
+    electronAPI.GetSSHStatus.mockResolvedValue({
+      status: 'enabled',
+      expiry: Math.floor(Date.now() / 1000) + 3600
     });
-    electronAPI.GetSessionStatus.mockResolvedValue({ 
-      active: true, 
-      expiresAt: new Date(Date.now() + 3600000).toISOString() 
+    electronAPI.GetSessionStatus.mockResolvedValue({
+      active: true,
+      expiresAt: new Date(Date.now() + 3600000).toISOString()
     });
 
     render(<App />);
@@ -519,11 +519,11 @@ describe('App configuration and tunnels', () => {
 
     const node = { id: 'node-1', name: 'Node 1', status: 'online', edgeView: true };
     electronAPI.SearchNodes.mockResolvedValue([node]);
-    
+
     // Services with one app having SSH option
     const services = [{ name: 'App 1', ips: ['10.0.0.1'], status: 'RUN_STATE_ONLINE' }];
     electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify(services));
-    
+
     // Mock session active so we can click buttons
     electronAPI.GetSessionStatus.mockResolvedValue({ active: true, expiresAt: new Date(Date.now() + 3600000).toISOString() });
     electronAPI.GetSSHStatus.mockResolvedValue({ status: 'enabled' });
@@ -557,7 +557,7 @@ describe('App configuration and tunnels', () => {
 
     // Wait for inline error to appear
     await screen.findByText('Connection timed out');
-    
+
     // Verify error is visible (we added a unique class or icon, but text check is sufficient)
     expect(screen.getByText('Connection timed out')).toBeInTheDocument();
   });
@@ -612,7 +612,7 @@ describe('App configuration and tunnels', () => {
     const node = { id: 'node-1', name: 'Node 1', status: 'online', edgeView: true };
     electronAPI.SearchNodes.mockResolvedValue([node]);
     electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
-    
+
     // Mock session active so we can click buttons
     electronAPI.GetSessionStatus.mockResolvedValue({ active: true, expiresAt: new Date(Date.now() + 3600000).toISOString() });
     electronAPI.GetSSHStatus.mockResolvedValue({ status: 'enabled' });
@@ -641,17 +641,17 @@ describe('App configuration and tunnels', () => {
 
     // Should see Global Status Banner with loading
     await screen.findByText('Initiating system info collection for Node 1...');
-    
+
     // Should verify progress updates
     await waitFor(() => {
-        expect(screen.getByTestId('global-status-banner-mock')).toHaveTextContent(/Collecting info/);
+      expect(screen.getByTestId('global-status-banner-mock')).toHaveTextContent(/Collecting info/);
     }, { timeout: 3000 });
-    
+
     // Should see completion and save
     await waitFor(() => {
-        expect(electronAPI.SaveCollectInfo).toHaveBeenCalledWith('job-1', 'test.tar.gz');
+      expect(electronAPI.SaveCollectInfo).toHaveBeenCalledWith('job-1', 'test.tar.gz');
     }, { timeout: 3000 });
-    
+
     // Should show success
     await screen.findByText(/File saved successfully/);
   });

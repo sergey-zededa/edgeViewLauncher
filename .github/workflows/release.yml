@@ -31,16 +31,10 @@ jobs:
             package-lock.json
             frontend/package-lock.json
 
-      - name: Cache electron-builder artifacts
-        uses: actions/cache@v5
+      - name: Cache Cargo and Tauri artifacts
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/Library/Caches/electron-builder
-            ~/.cache/electron-builder
-            ~\AppData\Local\electron-builder\Cache
-          key: ${{ runner.os }}-electron-builder-${{ hashFiles('package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-electron-builder-
+          workspaces: src-tauri -> target
 
       - name: Install dependencies
         run: |
@@ -53,35 +47,41 @@ jobs:
       - name: Build Go backend (ARM64)
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          GOOS=darwin GOARCH=arm64 go build -ldflags="-X 'main.Version=$VERSION'" -o edgeview-backend-arm64 ./cmd/edgeview-backend
+          GOOS=darwin GOARCH=arm64 go build -ldflags="-X 'main.Version=$VERSION'" -o src-tauri/binaries/edgeview-backend-aarch64-apple-darwin ./cmd/edgeview-backend
 
       - name: Build Go backend (x64)
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          GOOS=darwin GOARCH=amd64 go build -ldflags="-X 'main.Version=$VERSION'" -o edgeview-backend-amd64 ./cmd/edgeview-backend
+          GOOS=darwin GOARCH=amd64 go build -ldflags="-X 'main.Version=$VERSION'" -o src-tauri/binaries/edgeview-backend-x86_64-apple-darwin ./cmd/edgeview-backend
 
-      - name: Create universal Go binary
-        run: |
-          lipo -create -output edgeview-backend edgeview-backend-arm64 edgeview-backend-amd64
-          rm edgeview-backend-arm64 edgeview-backend-amd64
-
-      - name: Generate build info
-        run: npm run prebuild
-
-      - name: Build Electron app (macOS universal)
+      - name: Build Tauri app (macOS universal)
+        uses: tauri-apps/tauri-action@v0
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --mac --publish always
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: v__VERSION__
+          releaseName: "EdgeView Launcher v__VERSION__"
+          releaseBody: "See the assets to download this version and install."
+          releaseDraft: true
+          prerelease: false
+          args: --target universal-apple-darwin
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
           name: macos
           path: |
-            dist-electron/*.dmg
-            dist-electron/*.zip
-            dist-electron/latest-mac.yml
-            dist-electron/*.blockmap
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/latest.json
           retention-days: 5
 
   build-windows:
@@ -106,13 +106,10 @@ jobs:
             package-lock.json
             frontend/package-lock.json
 
-      - name: Cache electron-builder artifacts
-        uses: actions/cache@v5
+      - name: Cache Cargo and Tauri artifacts
+        uses: Swatinem/rust-cache@v2
         with:
-          path: ~\AppData\Local\electron-builder\Cache
-          key: ${{ runner.os }}-electron-builder-${{ hashFiles('package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-electron-builder-
+          workspaces: src-tauri -> target
 
       - name: Install dependencies
         run: |
@@ -127,24 +124,26 @@ jobs:
           $VERSION = node -p "require('./package.json').version"
           $env:GOOS = "windows"
           $env:GOARCH = "amd64"
-          go build -ldflags="-X 'main.Version=$VERSION'" -o edgeview-backend.exe ./cmd/edgeview-backend
+          go build -ldflags="-X 'main.Version=$VERSION'" -o src-tauri\binaries\edgeview-backend-x86_64-pc-windows-msvc.exe ./cmd/edgeview-backend
 
-      - name: Generate build info
-        run: npm run prebuild
-
-      - name: Build Electron app (NSIS installer)
+      - name: Build Tauri app (Windows)
+        uses: tauri-apps/tauri-action@v0
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --win --x64 --publish always
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: v__VERSION__
+          releaseDraft: true
+          args: --target x86_64-pc-windows-msvc
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
           name: windows-x64
           path: |
-            dist-electron/*.exe
-            dist-electron/latest.yml
-            dist-electron/*.blockmap
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/latest.json
           retention-days: 5
 
   build-linux:
@@ -160,6 +159,9 @@ jobs:
           go-version: '1.24'
           cache: true
 
+      - name: Install Tauri System Dependencies
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -169,13 +171,10 @@ jobs:
             package-lock.json
             frontend/package-lock.json
 
-      - name: Cache electron-builder artifacts
-        uses: actions/cache@v5
+      - name: Cache Cargo and Tauri artifacts
+        uses: Swatinem/rust-cache@v2
         with:
-          path: ~/.cache/electron-builder
-          key: ${{ runner.os }}-electron-builder-${{ hashFiles('package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-electron-builder-
+          workspaces: src-tauri -> target
 
       - name: Install dependencies
         run: |
@@ -188,26 +187,27 @@ jobs:
       - name: Build Go backend (Linux x64)
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          GOOS=linux GOARCH=amd64 go build -ldflags="-X 'main.Version=$VERSION'" -o edgeview-backend ./cmd/edgeview-backend
+          GOOS=linux GOARCH=amd64 go build -ldflags="-X 'main.Version=$VERSION'" -o src-tauri/binaries/edgeview-backend-x86_64-unknown-linux-gnu ./cmd/edgeview-backend
 
-      - name: Generate build info
-        run: npm run prebuild
-
-      - name: Build Electron app (AppImage & deb)
+      - name: Build Tauri app (Linux)
+        uses: tauri-apps/tauri-action@v0
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --linux --x64 --publish always
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: v__VERSION__
+          releaseDraft: true
+          args: --target x86_64-unknown-linux-gnu
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
           name: linux-x64
           path: |
-            dist-electron/*.AppImage
-            dist-electron/*.deb
-            dist-electron/*.rpm
-            dist-electron/latest-linux.yml
-            dist-electron/*.blockmap
+            src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
+            src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
+            src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/latest.json
           retention-days: 5
 
   release:

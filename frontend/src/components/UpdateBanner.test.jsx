@@ -1,9 +1,21 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import React from 'react';
 import UpdateBanner from './UpdateBanner';
+import * as api from '../tauriAPI';
 
+vi.mock('../tauriAPI', () => ({
+    openExternal: vi.fn(),
+}));
+
+// Mock window.electronAPI for the tests
+beforeEach(() => {
+    vi.clearAllMocks();
+});
+
+afterEach(() => {
+});
 describe('UpdateBanner', () => {
     it('should not render when status is not-available', () => {
         const updateState = {
@@ -14,7 +26,7 @@ describe('UpdateBanner', () => {
         };
 
         const { container } = render(
-            <UpdateBanner 
+            <UpdateBanner
                 updateState={updateState}
                 onDownload={vi.fn()}
                 onInstall={vi.fn()}
@@ -34,7 +46,7 @@ describe('UpdateBanner', () => {
         };
 
         const { container } = render(
-            <UpdateBanner 
+            <UpdateBanner
                 updateState={updateState}
                 onDownload={vi.fn()}
                 onInstall={vi.fn()}
@@ -54,7 +66,7 @@ describe('UpdateBanner', () => {
         };
 
         render(
-            <UpdateBanner 
+            <UpdateBanner
                 updateState={updateState}
                 onDownload={vi.fn()}
                 onInstall={vi.fn()}
@@ -78,7 +90,7 @@ describe('UpdateBanner', () => {
         };
 
         render(
-            <UpdateBanner 
+            <UpdateBanner
                 updateState={updateState}
                 onDownload={onDownload}
                 onInstall={vi.fn()}
@@ -102,7 +114,7 @@ describe('UpdateBanner', () => {
         };
 
         render(
-            <UpdateBanner 
+            <UpdateBanner
                 updateState={updateState}
                 onDownload={vi.fn()}
                 onInstall={vi.fn()}
@@ -125,7 +137,7 @@ describe('UpdateBanner', () => {
         };
 
         render(
-            <UpdateBanner 
+            <UpdateBanner
                 updateState={updateState}
                 onDownload={vi.fn()}
                 onInstall={vi.fn()}
@@ -134,7 +146,7 @@ describe('UpdateBanner', () => {
         );
 
         expect(screen.getByText(/Downloading update\.\.\. 45%/)).toBeInTheDocument();
-        
+
         // Check progress bar width
         const progressBar = document.querySelector('.update-banner-progress-bar');
         expect(progressBar).toHaveStyle({ width: '45%' });
@@ -149,7 +161,7 @@ describe('UpdateBanner', () => {
         };
 
         render(
-            <UpdateBanner 
+            <UpdateBanner
                 updateState={updateState}
                 onDownload={vi.fn()}
                 onInstall={vi.fn()}
@@ -174,7 +186,7 @@ describe('UpdateBanner', () => {
         };
 
         render(
-            <UpdateBanner 
+            <UpdateBanner
                 updateState={updateState}
                 onDownload={vi.fn()}
                 onInstall={onInstall}
@@ -197,7 +209,7 @@ describe('UpdateBanner', () => {
         };
 
         render(
-            <UpdateBanner 
+            <UpdateBanner
                 updateState={updateState}
                 onDownload={vi.fn()}
                 onInstall={vi.fn()}
@@ -219,7 +231,7 @@ describe('UpdateBanner', () => {
         };
 
         const { container } = render(
-            <UpdateBanner 
+            <UpdateBanner
                 updateState={updateState}
                 onDownload={vi.fn()}
                 onInstall={vi.fn()}
@@ -240,7 +252,7 @@ describe('UpdateBanner', () => {
         };
 
         render(
-            <UpdateBanner 
+            <UpdateBanner
                 updateState={updateState}
                 onDownload={vi.fn()}
                 onInstall={vi.fn()}
