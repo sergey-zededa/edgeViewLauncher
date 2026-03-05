@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { getBackendPort, closeCurrentWindow } from '../tauriAPI';
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { WebLinksAddon } from 'xterm-addon-web-links';
@@ -144,9 +144,11 @@ const TerminalView = ({ port }) => {
         const connectWebSocket = async (initialCols, initialRows) => {
             try {
                 let backendPort = 8080; // Default fallback
-                if (window.electronAPI && window.electronAPI.getBackendPort) {
-                    const port = await window.electronAPI.getBackendPort();
+                try {
+                    const port = await getBackendPort();
                     if (port) backendPort = port;
+                } catch (e) {
+                    console.error('Failed to get backend port', e);
                 }
 
                 // Get username from URL params
@@ -278,11 +280,10 @@ const TerminalView = ({ port }) => {
     }, [port]);
 
     const handleClose = () => {
-        if (window.electronAPI && window.electronAPI.closeWindow) {
-            window.electronAPI.closeWindow();
-        } else {
+        closeCurrentWindow().catch(err => {
+            console.error('Failed to close window', err);
             window.close();
-        }
+        });
     };
 
     return (
@@ -302,7 +303,7 @@ const TerminalView = ({ port }) => {
             {/* Toolbar */}
             <div className="terminal-toolbar" style={{
                 padding: '10px',
-                paddingLeft: window.electronAPI?.platform === 'darwin' ? '80px' : '10px',
+                paddingLeft: navigator.userAgent.includes('Mac') ? '80px' : '10px',
                 backgroundColor: 'var(--bg-panel)',
                 borderBottom: '1px solid var(--border-subtle)',
                 WebkitAppRegion: 'drag',

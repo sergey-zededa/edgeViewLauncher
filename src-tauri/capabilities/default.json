@@ -1,0 +1,20 @@
+{
+  "identifier": "default",
+  "description": "Default permissions for the app",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "shell:allow-open",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "edgeview-backend",
+          "cmd": "edgeview-backend",
+          "sidecar": true,
+          "args": true
+        }
+      ]
+    }
+  ]
+}

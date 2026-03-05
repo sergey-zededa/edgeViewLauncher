@@ -1,5 +1,6 @@
 import React from 'react';
 import { Download, RefreshCw, X, AlertCircle } from 'lucide-react';
+import { openExternal } from '../tauriAPI';
 import './UpdateBanner.css';
 
 function UpdateBanner({ updateState, onDownload, onInstall, onDismiss }) {
@@ -23,9 +24,7 @@ function UpdateBanner({ updateState, onDownload, onInstall, onDismiss }) {
                                     className="update-whats-new-link"
                                     onClick={(e) => {
                                         e.preventDefault();
-                                        import('../tauriAPI').then(api =>
-                                            api.openExternal('https://github.com/sergey-zededa/edgeViewLauncher/releases')
-                                        );
+                                        openExternal('https://github.com/sergey-zededa/edgeViewLauncher/releases');
                                     }}
                                 >
                                     (What's new?)

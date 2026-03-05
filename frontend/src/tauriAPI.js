@@ -149,6 +149,9 @@ export const SecureStorageSaveSettings = (config) =>
         return res;
     });
 
+export const InjectSecureConfig = () =>
+    invoke('inject_secure_config');
+
 // ── Windows ───────────────────────────────────────────────────────────────────
 
 export const openVncWindow = (options) =>
@@ -159,6 +162,9 @@ export const openTerminalWindow = (options) =>
 
 export const resizeWindow = (width, height) =>
     invoke('resize_window', { width, height });
+
+export const closeCurrentWindow = () =>
+    invoke('close_current_window');
 
 export const getBackendPort = () =>
     invoke('get_backend_port');

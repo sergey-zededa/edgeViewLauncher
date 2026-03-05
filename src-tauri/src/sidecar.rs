@@ -50,12 +50,6 @@ async fn run_sidecar(app: AppHandle) {
                         *guard = Some(port);
                         println!("[Sidecar] Backend port detected: {port}");
                         drop(guard);
-
-                        // Inject secure config into the backend
-                        let app2 = app.clone();
-                        tauri::async_runtime::spawn(async move {
-                            inject_config(app2).await;
-                        });
                     }
                 }
             }
@@ -75,49 +69,6 @@ fn parse_port(line: &str) -> Option<u16> {
     let idx = line.find(prefix)?;
     let rest = &line[idx + prefix.len()..];
     rest.split_whitespace().next()?.parse::<u16>().ok()
-}
-
-/// After the backend starts, push the saved configuration (clusters + tokens)
-/// so the Go server knows which clusters to use.
-async fn inject_config(app: AppHandle) {
-    use tokio::time::{sleep, Duration};
-
-    // Small grace period to let the HTTP server bind
-    sleep(Duration::from_millis(500)).await;
-
-    let state = app.state::<AppState>();
-    let port = match state.wait_for_port(5000).await {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("[Sidecar] Cannot inject config – backend port unknown: {e}");
-            return;
-        }
-    };
-
-    // Load config with tokens from secure storage
-    match crate::commands::secure_storage::load_config_with_tokens() {
-        Ok(Some(config)) => {
-            let url = format!("http://localhost:{port}/api/settings");
-            match reqwest::Client::new().post(&url).json(&config).send().await {
-                Ok(_) => {
-                    println!("[Sidecar] Secure configuration injected");
-                    *state.is_configured.lock().unwrap() = true;
-                }
-                Err(e) => {
-                    eprintln!("[Sidecar] Failed to inject config: {e}");
-                    *state.is_configured.lock().unwrap() = true; // unblock anyway
-                }
-            }
-        }
-        Ok(None) => {
-            println!("[Sidecar] No configuration to inject");
-            *state.is_configured.lock().unwrap() = true;
-        }
-        Err(e) => {
-            eprintln!("[Sidecar] Failed to load secure config: {e}");
-            *state.is_configured.lock().unwrap() = true;
-        }
-    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

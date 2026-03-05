@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { SearchNodes, ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, EnableExternalPolicy, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo, CheckForUpdates } from './tauriAPI';
+import { SearchNodes, ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, EnableExternalPolicy, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo, CheckForUpdates, openTerminalWindow, openVncWindow, openExternalTerminal, getElectronAppInfo, startContainerShell, getSystemTimeFormat, openExternal, InjectSecureConfig } from './tauriAPI';
 import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers, Shield, Moon, Sun } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
 import Tooltip from './components/Tooltip';
@@ -18,7 +18,7 @@ function VersionDisplay() {
   const [versionInfo, setVersionInfo] = React.useState(null);
 
   React.useEffect(() => {
-    window.electronAPI.getElectronAppInfo().then(info => {
+    getElectronAppInfo().then(info => {
       setVersionInfo(info);
     }).catch(err => {
       console.error('Failed to get version info:', err);
@@ -443,6 +443,10 @@ function App() {
     encryptionAvailable: true
   });
 
+  // Lock state - removed as we are reverting to auto-unlock
+  // const [isLocked, setIsLocked] = useState(false);
+  // const [unlocking, setUnlocking] = useState(false);
+
   // Dropdown state
   const [showTerminalMenu, setShowTerminalMenu] = useState(false);
   const [showVncMenu, setShowVncMenu] = useState(false);
@@ -580,7 +584,7 @@ function App() {
         } catch (e) { /* ignore */ }
       }, 500);
 
-      const result = await window.electronAPI.startContainerShell(
+      const result = await startContainerShell(
         selectedNode.id,
         app.name,
         c.containerName,
@@ -975,7 +979,7 @@ function App() {
     // Fetch system time format preference on mount
     const checkTimeFormat = async () => {
       try {
-        const is24h = await window.electronAPI.getSystemTimeFormat();
+        const is24h = await getSystemTimeFormat();
 
         if (is24h !== null) {
           setUse24HourTime(is24h);
@@ -1245,7 +1249,7 @@ function App() {
       addTunnel('VNC', ip, port, localPort, tunnelId);
 
       // Open VNC viewer window
-      await window.electronAPI.openVncWindow({
+      await openVncWindow({
         port: localPort,
         nodeName: selectedNode.name,
         appName: appName,
@@ -1302,7 +1306,7 @@ function App() {
       addTunnel('SSH', ip, 22, localPort, tunnelId, username);
 
       // Open built-in terminal
-      await window.electronAPI.openTerminalWindow({
+      await openTerminalWindow({
         port: localPort,
         nodeName: selectedNode.name,
         targetInfo: `${username}@${ip}:22`,
@@ -1377,10 +1381,10 @@ function App() {
       setExpandedServiceId(null);
 
       if (mode === 'native') {
-        await window.electronAPI.openExternalTerminal(sshCommand);
+        await openExternalTerminal(sshCommand);
         addLog('Launched native terminal', 'success');
       } else if (mode === 'builtin') {
-        await window.electronAPI.openTerminalWindow({
+        await openTerminalWindow({
           port: localPort,
           nodeName: selectedNode.name,
           targetInfo: `${sshUser}@${selectedNode.name}`,
@@ -1481,9 +1485,19 @@ function App() {
     }
   };
 
+  // Ref to track if initialization has already run to prevent double-execution in Strict Mode
+  const initRef = useRef(false);
+
   useEffect(() => {
     // Check secure storage status and perform migration if needed
     const initializeSettings = async () => {
+      if (initRef.current) return;
+      initRef.current = true;
+
+      // Small delay to allow the window to paint and become active before
+      // invoking any commands that might trigger a native modal (keychain).
+      await new Promise(resolve => setTimeout(resolve, 500));
+
       try {
         const status = await SecureStorageStatus();
 
@@ -1533,6 +1547,8 @@ function App() {
           const hasToken = cfg.apiToken || (cfg.clusters && cfg.clusters.some(c => c.name === cfg.activeCluster && c.apiToken));
           if (hasToken) {
             loadUserInfo();
+            // Inject secure config to backend now that we have tokens
+            InjectSecureConfig().catch(err => console.error("Failed to inject config:", err));
           } else {
             setShowSettings(true);
           }
@@ -1562,6 +1578,8 @@ function App() {
 
     initializeSettings();
   }, []);
+
+  // Removed loadSettingsAndUnlock as we are back to auto-init
 
   useEffect(() => {
     const search = async () => {
@@ -1770,7 +1788,7 @@ Do you want to try connecting anyway?`)) {
       }
 
       if (useInApp) {
-        window.electronAPI.openTerminalWindow({
+        openTerminalWindow({
           port: port,
           nodeName: selectedNode.name,
           targetInfo: 'EVE-OS SSH',
@@ -1783,7 +1801,7 @@ Do you want to try connecting anyway?`)) {
         const sshUser = 'root'; // Default for EVE-OS
         const sshCommand = `ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p ${port} ${sshUser}@localhost`;
         addLog(`Launching native terminal: ${sshCommand}`, 'info');
-        await window.electronAPI.openExternalTerminal(sshCommand);
+        await openExternalTerminal(sshCommand);
       }
 
       // Refresh session status to reflect potential encryption updates
@@ -2462,6 +2480,8 @@ Do you want to try connecting anyway?`)) {
         </div>
       </div>
 
+      {/* Unlock Prompt Overlay Removed */}
+
       {/* Update Banner */}
       <UpdateBanner
         updateState={updateState}
@@ -2792,11 +2812,7 @@ Do you want to try connecting anyway?`)) {
                     <div className="version-row">
                       <span className="version-label">Version:</span>
                       <span className="version-value">
-                        {window.electronAPI ? (
-                          <VersionDisplay />
-                        ) : (
-                          'Loading...'
-                        )}
+                        <VersionDisplay />
                       </span>
                     </div>
                     {updateState.status === 'available' && (
@@ -2866,7 +2882,7 @@ Do you want to try connecting anyway?`)) {
                         <button
                           className="icon-btn"
                           title="Open in Browser"
-                          onClick={() => window.electronAPI.openExternal(`http://localhost:${tunnel.localPort}`)}
+                          onClick={() => openExternal(`http://localhost:${tunnel.localPort}`)}
                         >
                           <ExternalLink size={12} />
                         </button>
@@ -2887,7 +2903,7 @@ Do you want to try connecting anyway?`)) {
                           <button
                             className="icon-btn"
                             title="Open VNC Viewer"
-                            onClick={() => window.electronAPI.openExternal(`vnc://localhost:${tunnel.localPort}`)}
+                            onClick={() => openExternal(`vnc://localhost:${tunnel.localPort}`)}
                           >
                             <ExternalLink size={14} />
                           </button>
@@ -2896,7 +2912,7 @@ Do you want to try connecting anyway?`)) {
                           <button
                             className="icon-btn"
                             title="Open Terminal"
-                            onClick={() => window.electronAPI.openTerminalWindow({
+                            onClick={() => openTerminalWindow({
                               port: tunnel.localPort,
                               username: tunnel.username,
                               nodeName: tunnel.nodeName,
@@ -3761,7 +3777,7 @@ Do you want to try connecting anyway?`)) {
                                                 addTunnel('VNC', vncTarget, app.vncPort, port, tunnelId);
 
                                                 // Open VNC in new window
-                                                await window.electronAPI.openVncWindow({
+                                                await openVncWindow({
                                                   port: port,
                                                   nodeName: selectedNode.name,
                                                   appName: app.name,

@@ -69,6 +69,18 @@ vi.mock('./tauriAPI', () => {
     StartCollectInfo: vi.fn(fn).mockResolvedValue({ jobId: 'job-123' }),
     GetCollectInfoStatus: vi.fn(fn).mockResolvedValue({ status: 'starting', progress: 0, totalSize: 100 }),
     DownloadCollectInfo: vi.fn(id => `http://localhost:8080/api/collect-info/download?jobId=${id}`),
+    openVncWindow: vi.fn(),
+    openTerminalWindow: vi.fn(),
+    openExternalTerminal: vi.fn(),
+    getElectronAppInfo: vi.fn().mockResolvedValue({
+      version: '0.1.1',
+      buildNumber: 'dev',
+      buildDate: null,
+      gitCommit: 'abc123'
+    }),
+    getSystemTimeFormat: vi.fn().mockResolvedValue(false),
+    startContainerShell: vi.fn(),
+    openExternal: vi.fn()
   };
 });
 
@@ -82,19 +94,9 @@ describe('App configuration and tunnels', () => {
     electronAPI.GetSettings.mockReset();
     electronAPI.SecureStorageGetSettings.mockReset();
 
-    // Mock global window.electronAPI with required methods
+    // Mock global window.electronAPI is no longer needed since we use tauriAPI imports
     Object.defineProperty(window, 'electronAPI', {
-      value: {
-        openExternal: vi.fn(),
-        openVncWindow: vi.fn(),
-        getSystemTimeFormat: vi.fn().mockResolvedValue(false),
-        getElectronAppInfo: vi.fn().mockResolvedValue({
-          version: '0.1.1',
-          buildNumber: 'dev',
-          buildDate: null,
-          gitCommit: 'abc123'
-        })
-      },
+      value: undefined,
       writable: true,
     });
 
@@ -369,7 +371,7 @@ describe('App configuration and tunnels', () => {
 
     // Stub window.electronAPI for openExternal used when launching VNC
     // Note: getSystemTimeFormat and other methods are already mocked in beforeEach
-    const openExternal = window.electronAPI.openExternal;
+    const openExternal = electronAPI.openExternal;
 
     render(<App />);
 

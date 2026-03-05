@@ -52,6 +52,7 @@ pub fn run() {
             secure_storage::secure_storage_get_settings,
             secure_storage::secure_storage_save_settings,
             secure_storage::secure_storage_migrate,
+            secure_storage::inject_secure_config,
             // Files
             files::save_collected_file,
             // Updater

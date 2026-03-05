@@ -41,18 +41,17 @@ vi.mock('./tauriAPI', () => ({
   SecureStorageMigrate: vi.fn(),
   SecureStorageGetSettings: vi.fn(),
   SecureStorageSaveSettings: vi.fn(),
-}));
-
-// Mock window.tauriAPI for version info
-global.window.tauriAPI = {
   getElectronAppInfo: vi.fn().mockResolvedValue({
     version: '1.0.0',
     buildNumber: 'test',
     buildDate: '2024-01-01',
     gitCommit: 'abc123'
   }),
-  getSystemTimeFormat: vi.fn().mockResolvedValue(false)
-};
+  getSystemTimeFormat: vi.fn().mockResolvedValue(false),
+  openExternal: vi.fn()
+}));
+
+// Mock window.tauriAPI for version info is no longer needed as we import directly
 
 describe('Secure Storage Integration', () => {
   beforeEach(() => {

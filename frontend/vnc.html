@@ -224,6 +224,7 @@
 
     <script type="module">
         import RFB from '@novnc/novnc/lib/rfb.js';
+        import { resizeWindow, closeCurrentWindow } from './src/tauriAPI.js';
 
         const urlParams = new URLSearchParams(window.location.search);
         const port = urlParams.get('port');
@@ -331,8 +332,8 @@
 
                         console.log(`Resizing window to ${totalWidthInt}x${totalHeight} (Remote: ${width}x${height}, Header: ${headerHeight}, Controls: ${controlsHeight})`);
 
-                        if (window.electronAPI && window.electronAPI.resizeWindow) {
-                            window.electronAPI.resizeWindow(totalWidthInt, totalHeight);
+                        if (resizeWindow) {
+                            resizeWindow(totalWidthInt, totalHeight);
                         }
                     } else {
                         console.warn('Could not determine remote screen dimensions');
@@ -444,11 +445,7 @@
 
         // Close window button
         document.getElementById('btn-close').addEventListener('click', () => {
-            if (window.electronAPI && window.electronAPI.closeWindow) {
-                window.electronAPI.closeWindow();
-            } else {
-                window.close();
-            }
+            closeCurrentWindow().catch(() => window.close());
         });
     </script>
 </body>

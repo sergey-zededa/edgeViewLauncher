@@ -15,8 +15,13 @@
 use keyring::Entry;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
+
+// In-memory cache: None = not loaded yet. Some(None) = loaded but empty. Some(Some(map)) = loaded with tokens.
+static TOKEN_CACHE: OnceLock<Mutex<Option<Option<HashMap<String, String>>>>> = OnceLock::new();
 
 // ── Config file location (same path as the old Electron app) ─────────────────
 
@@ -33,29 +38,88 @@ fn legacy_enc_path() -> PathBuf { config_dir().join("secure-tokens.enc") }
 
 // ── Keyring helpers ───────────────────────────────────────────────────────────
 
-const SERVICE: &str = "edgeview-launcher";
+const SERVICE: &str = "edgeview-launcher-v2";
 const ACCOUNT: &str = "tokens";
 
 fn keyring_entry() -> Result<Entry, String> {
     Entry::new(SERVICE, ACCOUNT).map_err(|e| format!("Keyring init failed: {e}"))
 }
 
-fn get_tokens() -> Result<Option<std::collections::HashMap<String, String>>, String> {
+// Protects keychain access to prevent concurrent OS prompts which cause the window to disappear.
+static KEYCHAIN_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn get_tokens() -> Result<Option<HashMap<String, String>>, String> {
+    println!("[SecureStorage] get_tokens called");
+    
+    // 1. Try to read from cache (fast path)
+    let cache_mutex = TOKEN_CACHE.get_or_init(|| Mutex::new(None));
+    {
+        let guard = cache_mutex.lock().map_err(|e| e.to_string())?;
+        if let Some(cached_val) = &*guard {
+            println!("[SecureStorage] Cache hit");
+            return Ok(cached_val.clone());
+        }
+    }
+
+    println!("[SecureStorage] Cache miss - acquiring keychain lock...");
+    
+    // 2. Acquire global lock to serialize keychain access
+    let _lock = KEYCHAIN_MUTEX.lock().map_err(|e| e.to_string())?;
+    
+    // 3. Check cache again (double-checked locking) just in case another thread filled it
+    {
+        let guard = cache_mutex.lock().map_err(|e| e.to_string())?;
+        if let Some(cached_val) = &*guard {
+            println!("[SecureStorage] Cache hit (after lock)");
+            return Ok(cached_val.clone());
+        }
+    }
+
+    println!("[SecureStorage] Reading from OS keyring (Blocking)...");
+
+    // 4. Read from keychain
     let entry = keyring_entry()?;
-    match entry.get_password() {
+    let result = match entry.get_password() {
         Ok(json) => {
+            println!("[SecureStorage] Keyring read success");
             let map = serde_json::from_str(&json)
                 .map_err(|e| format!("Token JSON corrupt: {e}"))?;
             Ok(Some(map))
         }
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(format!("Keyring read failed: {e}")),
+        Err(keyring::Error::NoEntry) => {
+            println!("[SecureStorage] Keyring entry not found");
+            Ok(None)
+        },
+        Err(e) => {
+            println!("[SecureStorage] Keyring read error: {}", e);
+            Err(format!("Keyring read failed: {e}"))
+        },
+    };
+
+    // 5. Update cache if successful
+    if let Ok(val) = &result {
+        let mut guard = cache_mutex.lock().map_err(|e| e.to_string())?;
+        *guard = Some(val.clone());
+        println!("[SecureStorage] Cache updated");
     }
+
+    result
 }
 
-fn save_tokens(tokens: &std::collections::HashMap<String, String>) -> Result<(), String> {
+fn save_tokens(tokens: &HashMap<String, String>) -> Result<(), String> {
+    // 1. Acquire global lock
+    let _lock = KEYCHAIN_MUTEX.lock().map_err(|e| e.to_string())?;
+
+    // 2. Write to keychain
     let json = serde_json::to_string(tokens).map_err(|e| e.to_string())?;
-    keyring_entry()?.set_password(&json).map_err(|e| format!("Keyring write failed: {e}"))
+    keyring_entry()?.set_password(&json).map_err(|e| format!("Keyring write failed: {e}"))?;
+
+    // 3. Update cache
+    let cache_mutex = TOKEN_CACHE.get_or_init(|| Mutex::new(None));
+    let mut guard = cache_mutex.lock().map_err(|e| e.to_string())?;
+    *guard = Some(Some(tokens.clone()));
+
+    Ok(())
 }
 
 // ── Config file helpers ───────────────────────────────────────────────────────
@@ -124,7 +188,11 @@ pub fn load_config_with_tokens() -> Result<Option<Value>, String> {
 
 // ── Tauri commands ────────────────────────────────────────────────────────────
 
+use tauri::{AppHandle, Manager};
+use crate::state::AppState;
+
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StorageStatus {
     pub encryption_available: bool,
     pub secure_tokens_exist: bool,
@@ -137,13 +205,20 @@ pub struct StorageStatus {
 
 #[tauri::command]
 pub fn secure_storage_status() -> StorageStatus {
-    let tokens_exist = get_tokens().ok().flatten().is_some();
+    // Avoid calling get_tokens() here as it triggers a keychain prompt on macOS
+    // causing "white screen" delays and potential race conditions on startup.
+    // Instead, rely on config state to infer if tokens should exist.
+    
+    let config_opt = read_config().ok().flatten();
     let legacy_exists = legacy_enc_path().exists();
 
+    // Check if any cluster expects an encrypted token
+    let tokens_exist = config_opt.as_ref()
+        .map(|c| c.clusters.iter().any(|cl| cl.token_encrypted))
+        .unwrap_or(false);
+
     // needs_migration: plaintext tokens in config.json
-    let needs_migration = read_config()
-        .ok()
-        .flatten()
+    let needs_migration = config_opt.as_ref()
         .map(|c| c.clusters.iter().any(|cl| !cl.api_token.is_empty() && !cl.token_encrypted))
         .unwrap_or(false);
 
@@ -157,12 +232,16 @@ pub fn secure_storage_status() -> StorageStatus {
 }
 
 /// Load settings (config.json merged with keychain tokens) and return as JSON.
+/// Async to ensure it runs on a thread pool that doesn't block main loop,
+/// and to explicitly wrap the blocking keychain call.
 #[tauri::command]
-pub fn secure_storage_get_settings() -> Result<Value, String> {
-    match load_config_with_tokens()? {
-        Some(v) => Ok(serde_json::json!({ "success": true, "data": v })),
-        None => Ok(serde_json::json!({ "success": true, "data": null })),
-    }
+pub async fn secure_storage_get_settings() -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        match load_config_with_tokens()? {
+            Some(v) => Ok(serde_json::json!({ "success": true, "data": v })),
+            None => Ok(serde_json::json!({ "success": true, "data": null })),
+        }
+    }).await.map_err(|e| e.to_string())?
 }
 
 /// Save settings: strip apiToken from the on-disk JSON and store them in the
@@ -173,7 +252,7 @@ pub fn secure_storage_save_settings(config: Value) -> Result<Value, String> {
         serde_json::from_value(config.clone()).map_err(|e| format!("Invalid config: {e}"))?;
 
     // Extract tokens into keychain
-    let mut token_map: std::collections::HashMap<String, String> =
+    let mut token_map: HashMap<String, String> =
         get_tokens().ok().flatten().unwrap_or_default();
 
     for cluster in &mut app_config.clusters {
@@ -203,7 +282,7 @@ pub fn secure_storage_migrate() -> Value {
         }
     };
 
-    let mut token_map: std::collections::HashMap<String, String> =
+    let mut token_map: HashMap<String, String> =
         get_tokens().ok().flatten().unwrap_or_default();
 
     let mut count = 0u32;
@@ -243,6 +322,38 @@ pub fn secure_storage_migrate() -> Value {
         "message": format!("Migrated {} token(s) to OS keychain", count),
         "tokenCount": count
     })
+}
+
+/// Manually trigger injection of secure config into the backend.
+/// Should be called by the frontend after it successfully loads settings (and thus unlocks keychain).
+#[tauri::command]
+pub async fn inject_secure_config(app: AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    
+    // 1. Wait for backend port (should be ready quickly if app is loaded)
+    let port = state.wait_for_port(5000).await.map_err(|e| e.to_string())?;
+
+    // 2. Load config (uses cached tokens if available)
+    let config = match load_config_with_tokens()? {
+        Some(c) => c,
+        None => return Ok(()), // Nothing to inject
+    };
+
+    // 3. Push to backend
+    let url = format!("http://localhost:{port}/api/settings");
+    match reqwest::Client::new().post(&url).json(&config).send().await {
+        Ok(_) => {
+            println!("[SecureStorage] Secure configuration injected via command");
+            *state.is_configured.lock().unwrap() = true;
+            Ok(())
+        }
+        Err(e) => {
+            let msg = format!("Failed to inject config: {e}");
+            eprintln!("[SecureStorage] {msg}");
+            *state.is_configured.lock().unwrap() = true; // Unblock to avoid stalling
+            Err(msg)
+        }
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
