@@ -20,8 +20,10 @@ This file provides guidance to AI Agents (including WARP) when working with code
      - Frontend: `npm run build:frontend` (or `cd frontend && npm run build`)
      - Backend: `go build -o edgeview-backend ./cmd/edgeview-backend`
    - **If in frontend directory (`edgeViewLauncher/frontend/`)**:
-     - Frontend: `npm run build` (DO NOT run `cd frontend` again)
+   - Frontend: `npm run build` (DO NOT run `cd frontend` again)
      - Backend: `cd .. && go build -o edgeview-backend ./cmd/edgeview-backend`
+6. **Commit Message Attribution**:
+   - **DO NOT** include the `Co-Authored-By` attribution line in commit messages.
 
 ## Project Overview
 
