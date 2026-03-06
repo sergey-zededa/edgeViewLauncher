@@ -145,10 +145,15 @@ const TerminalView = ({ port }) => {
             try {
                 let backendPort = 8080; // Default fallback
                 try {
-                    const port = await getBackendPort();
-                    if (port) backendPort = port;
+                    const serverPort = await getBackendPort();
+                    if (serverPort) {
+                        backendPort = serverPort;
+                    } else {
+                        term.writeln('\r\n\x1b[1;33mWarning: Backend port not detected, defaulting to 8080\x1b[0m');
+                    }
                 } catch (e) {
                     console.error('Failed to get backend port', e);
+                    term.writeln(`\r\n\x1b[1;31mError getting backend port: ${e}\x1b[0m`);
                 }
 
                 // Get username from URL params
@@ -158,7 +163,10 @@ const TerminalView = ({ port }) => {
                 const initialCommand = params.get('initialCommand') || '';
 
                 // Pass initial keys to backend to avoid race condition
-                const wsUrl = `ws://localhost:${backendPort}/api/ssh/term?port=${port}&user=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&cols=${initialCols}&rows=${initialRows}&command=${encodeURIComponent(initialCommand)}`;
+                // Use 127.0.0.1 to avoid localhost IPv6 resolution issues on macOS
+                const wsUrl = `ws://127.0.0.1:${backendPort}/api/ssh/term?port=${port}&user=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&cols=${initialCols}&rows=${initialRows}&command=${encodeURIComponent(initialCommand)}`;
+                
+                term.writeln(`\x1b[1;30mDebug: Connecting to backend on port ${backendPort}...\x1b[0m`);
                 const ws = new WebSocket(wsUrl);
                 ws.binaryType = 'arraybuffer'; // Ensure we receive raw bytes
                 wsRef.current = ws;

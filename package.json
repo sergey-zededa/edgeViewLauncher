@@ -7,7 +7,7 @@
     "dev": "tauri dev",
     "prebuild": "node scripts/generate-build-info.js",
     "build": "npm run build:mac",
-    "build:mac": "npm run build:backend:mac && tauri build --target aarch64-apple-darwin",
+    "build:mac": "npm run build:backend:mac && APPLE_SIGNING_IDENTITY='EdgeView Dev' tauri build --target aarch64-apple-darwin",
     "build:frontend": "cd frontend && npm run build",
     "build:backend:mac": "VERSION=$(node -p \"require('./package.json').version\") && GOOS=darwin GOARCH=arm64 go build -ldflags=\"-X main.Version=$VERSION\" -o src-tauri/binaries/edgeview-backend-aarch64-apple-darwin ./cmd/edgeview-backend",
     "build:backend:windows": "VERSION=$(node -p \"require('./package.json').version\") && GOOS=windows GOARCH=amd64 go build -ldflags=\"-X main.Version=$VERSION\" -o src-tauri/binaries/edgeview-backend-x86_64-pc-windows-msvc.exe ./cmd/edgeview-backend",

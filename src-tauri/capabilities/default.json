@@ -1,7 +1,7 @@
 {
   "identifier": "default",
   "description": "Default permissions for the app",
-  "windows": ["main"],
+  "windows": ["main", "terminal-*", "vnc-*"],
   "permissions": [
     "core:default",
     "shell:allow-open",

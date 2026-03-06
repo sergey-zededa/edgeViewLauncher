@@ -48,6 +48,9 @@ fn keyring_entry() -> Result<Entry, String> {
 // Protects keychain access to prevent concurrent OS prompts which cause the window to disappear.
 static KEYCHAIN_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+// Track last failure time to prevent prompt spam loop
+static LAST_FAILURE: OnceLock<Mutex<Option<std::time::Instant>>> = OnceLock::new();
+
 fn get_tokens() -> Result<Option<HashMap<String, String>>, String> {
     println!("[SecureStorage] get_tokens called");
     
@@ -61,12 +64,24 @@ fn get_tokens() -> Result<Option<HashMap<String, String>>, String> {
         }
     }
 
+    // 2. Check cooldown to avoid spamming the OS prompt if it just failed
+    let failure_mutex = LAST_FAILURE.get_or_init(|| Mutex::new(None));
+    {
+        let guard = failure_mutex.lock().map_err(|e| e.to_string())?;
+        if let Some(last_time) = *guard {
+            if last_time.elapsed() < std::time::Duration::from_secs(10) {
+                println!("[SecureStorage] Skipping keychain access due to recent failure (cooldown active)");
+                return Ok(None);
+            }
+        }
+    }
+
     println!("[SecureStorage] Cache miss - acquiring keychain lock...");
     
-    // 2. Acquire global lock to serialize keychain access
+    // 3. Acquire global lock to serialize keychain access
     let _lock = KEYCHAIN_MUTEX.lock().map_err(|e| e.to_string())?;
     
-    // 3. Check cache again (double-checked locking) just in case another thread filled it
+    // 4. Check cache again (double-checked locking) just in case another thread filled it
     {
         let guard = cache_mutex.lock().map_err(|e| e.to_string())?;
         if let Some(cached_val) = &*guard {
@@ -75,9 +90,24 @@ fn get_tokens() -> Result<Option<HashMap<String, String>>, String> {
         }
     }
 
-    println!("[SecureStorage] Reading from OS keyring (Blocking)...");
+    // 5. Check cooldown AGAIN after lock (in case another thread failed while we waited)
+    {
+        let guard = failure_mutex.lock().map_err(|e| e.to_string())?;
+        if let Some(last_time) = *guard {
+            if last_time.elapsed() < std::time::Duration::from_secs(10) {
+                println!("[SecureStorage] Skipping keychain access due to recent failure (cooldown active)");
+                return Ok(None);
+            }
+        }
+    }
 
-    // 4. Read from keychain
+    println!("[SecureStorage] Reading from OS keyring (Blocking)...");
+    
+    // Add delay to prevent race condition with window focus on startup
+    #[cfg(target_os = "macos")]
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    // 6. Read from keychain
     let entry = keyring_entry()?;
     let result = match entry.get_password() {
         Ok(json) => {
@@ -91,12 +121,46 @@ fn get_tokens() -> Result<Option<HashMap<String, String>>, String> {
             Ok(None)
         },
         Err(e) => {
+            // Record failure time to trigger cooldown
             println!("[SecureStorage] Keyring read error: {}", e);
-            Err(format!("Keyring read failed: {e}"))
+            if let Ok(mut guard) = failure_mutex.lock() {
+                *guard = Some(std::time::Instant::now());
+            }
+            
+            // If native authorization failed (e.g. prompt loop issue),
+            // try falling back to the 'security' CLI tool.
+            // This runs as a separate process and may offer a more stable prompt context.
+            if e.to_string().contains("Unable to obtain authorization") {
+                 println!("[SecureStorage] Authorization denied. Attempting CLI fallback...");
+                 
+                 use std::process::Command;
+                 let output = Command::new("security")
+                    .args(["find-generic-password", "-s", SERVICE, "-a", ACCOUNT, "-w"])
+                    .output();
+                 
+                 if let Ok(out) = output {
+                     if out.status.success() {
+                         let password = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                         if !password.is_empty() {
+                             println!("[SecureStorage] CLI fallback success");
+                             if let Ok(map) = serde_json::from_str(&password) {
+                                 return Ok(Some(map));
+                             }
+                         }
+                     } else {
+                         println!("[SecureStorage] CLI fallback failed: {}", String::from_utf8_lossy(&out.stderr));
+                     }
+                 }
+                 
+                 // If fallback also failed, proceed without tokens
+                 Ok(None)
+            } else {
+                 Err(format!("Keyring read failed: {e}"))
+            }
         },
     };
 
-    // 5. Update cache if successful
+    // 7. Update cache if successful
     if let Ok(val) = &result {
         let mut guard = cache_mutex.lock().map_err(|e| e.to_string())?;
         *guard = Some(val.clone());
@@ -236,12 +300,12 @@ pub fn secure_storage_status() -> StorageStatus {
 /// and to explicitly wrap the blocking keychain call.
 #[tauri::command]
 pub async fn secure_storage_get_settings() -> Result<Value, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        match load_config_with_tokens()? {
-            Some(v) => Ok(serde_json::json!({ "success": true, "data": v })),
-            None => Ok(serde_json::json!({ "success": true, "data": null })),
-        }
-    }).await.map_err(|e| e.to_string())?
+    // Remove spawn_blocking to execute on the Tauri invoke thread directly.
+    // This may help with macOS Keychain prompt window association.
+    match load_config_with_tokens()? {
+        Some(v) => Ok(serde_json::json!({ "success": true, "data": v })),
+        None => Ok(serde_json::json!({ "success": true, "data": null })),
+    }
 }
 
 /// Save settings: strip apiToken from the on-disk JSON and store them in the

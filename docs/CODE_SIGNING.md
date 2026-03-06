@@ -1,163 +1,78 @@
-# Code Signing for EdgeView Launcher
+# Code Signing for EdgeView Launcher (Tauri)
 
 ## Overview
 
-macOS auto-update functionality requires **properly code-signed applications**. Without code signing:
-- Auto-update will fail with signature validation errors
-- Users will see security warnings when opening the app
-- The app cannot be distributed via Mac App Store
+macOS requires applications to be code-signed to access certain system features (like the Keychain) and to run on Apple Silicon devices without ad-hoc signing hacks.
 
-## Current Status
+## Local Development Signing ("EdgeView Dev")
 
-⚠️ **The GitHub Actions builds are NOT code-signed**
+For local development, we use a self-signed certificate named **"EdgeView Dev"**. This allows the app to:
+1. Build and run locally on macOS (including Apple Silicon).
+2. Access the macOS Keychain for secure token storage.
+3. Mimic the production signing environment.
 
-This means:
-- ✅ Apps built locally or via CI can be installed
-- ✅ Apps run normally after bypassing Gatekeeper  
-- ❌ Auto-update does NOT work
-- ❌ Users see "unidentified developer" warnings
+### Setup
 
-## Setting Up Code Signing
+To set up the local signing identity:
 
-### Prerequisites
+1. **Create the Certificate**:
+   Use the `scripts/setup-dev-cert.sh` script (if available) or create a self-signed code signing certificate in Keychain Access named "EdgeView Dev".
 
-1. **Apple Developer Account** ($99/year for organizations)
-   - Enroll at https://developer.apple.com/programs/
+2. **Configure Keychain Access**:
+   The `codesign` tool needs permission to access the private key of the certificate.
+   - When you build the app for the first time, macOS will prompt you to allow `codesign` to access the keychain.
+   - **Always select "Always Allow"** to prevent future prompts and build failures.
+   - If you accidentally denied access or the prompt doesn't appear, you can manually grant access:
+     ```bash
+     security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "YOUR_LOGIN_PASSWORD" login.keychain-db
+     ```
 
-2. **Developer ID Application Certificate**
-   - Log in to Apple Developer portal
-   - Go to Certificates, Identifiers & Profiles
-   - Create new certificate → Developer ID Application
-   - Download and install in macOS Keychain
+### Troubleshooting Keychain Issues
 
-3. **App-Specific Password** (for notarization)
-   - Go to https://appleid.apple.com/
-   - Sign In → Security → App-Specific Passwords
-   - Generate password for "EdgeView Launcher Notarization"
+#### "errSecInternalComponent" or Auto-Dismissing Prompts
 
-### Configuration
+If the build fails with `errSecInternalComponent` or if the app launches but the keychain access prompt appears and immediately disappears (making the app unusable), it is likely due to a **keychain item conflict**.
 
-#### Step 1: Add Certificates to Build Machine
+This happens when a keychain item (e.g., stored tokens) was created by a binary signed with a *different* identity (e.g., ad-hoc signed or signed by a different certificate) than the current build.
 
-**For local builds:**
-```bash
-# Export certificate from Keychain
-# Certificates & Keys → Right-click Developer ID Application → Export
-
-# Import on build machine
-security import certificate.p12 -k ~/Library/Keychains/login.keychain-db
-```
-
-**For GitHub Actions:**
-```bash
-# Base64 encode certificate
-base64 -i certificate.p12 -o certificate-base64.txt
-
-# Add to GitHub Secrets:
-# - MACOS_CERTIFICATE: (content of certificate-base64.txt)
-# - MACOS_CERTIFICATE_PWD: (p12 password)
-# - APPLE_ID: (your Apple ID email)
-# - APPLE_APP_PASSWORD: (app-specific password)
-# - APPLE_TEAM_ID: (10-character team ID from Apple Developer)
-```
-
-#### Step 2: Update package.json
-
-Add to `build.mac` section:
-```json
-{
-  "mac": {
-    "identity": "Developer ID Application: ZEDEDA Inc (TEAM_ID)",
-    "hardenedRuntime": true,
-    "gatekeeperAssess": false,
-    "entitlements": "assets/entitlements.mac.plist",
-    "entitlementsInherit": "assets/entitlements.mac.plist",
-    "notarize": {
-      "teamId": "TEAM_ID"
-    }
-  }
-}
-```
-
-#### Step 3: Update GitHub Actions Workflow
-
-Add certificate import and notarization to `.github/workflows/release.yml`:
-
-```yaml
-- name: Import Code Signing Certificate
-  env:
-    MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-    MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
-  run: |
-    echo $MACOS_CERTIFICATE | base64 --decode > certificate.p12
-    security create-keychain -p actions build.keychain
-    security default-keychain -s build.keychain
-    security unlock-keychain -p actions build.keychain
-    security import certificate.p12 -k build.keychain -P $MACOS_CERTIFICATE_PWD -T /usr/bin/codesign
-    security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k actions build.keychain
-
-- name: Build Electron app (macOS universal)
-  env:
-    GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    APPLE_ID: ${{ secrets.APPLE_ID }}
-    APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
-    APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-  run: npx electron-builder --mac --publish always
-```
-
-## Testing Code Signing
-
-### Verify Signed Build
+**Fix:**
+Delete the conflicting generic password item from the keychain:
 
 ```bash
-# Check if app is signed
-codesign -dv --verbose=4 "dist-electron/mac-arm64/EdgeView Launcher.app"
-
-# Verify signature
-codesign --verify --verbose=4 "dist-electron/mac-arm64/EdgeView Launcher.app"
-
-# Check notarization
-spctl -a -vvv -t install "dist-electron/mac-arm64/EdgeView Launcher.app"
+security delete-generic-password -l "edgeview-launcher-v2"
 ```
 
-Expected output:
+After deleting the item, restart the app. You will need to re-authenticate (enter your API tokens) as the secure storage has been reset.
+
+## Production Signing
+
+For production builds (e.g., CI/CD), we use a valid **Developer ID Application** certificate from Apple.
+
+### Environment Variables
+
+The Tauri build process (`tauri build`) looks for the following environment variables:
+- `APPLE_SIGNING_IDENTITY`: The name or SHA-1 hash of the signing identity (e.g., "Developer ID Application: ZEDEDA Inc (TEAM_ID)").
+- `APPLE_CERTIFICATE`: Base64-encoded `.p12` certificate.
+- `APPLE_CERTIFICATE_PASSWORD`: Password for the `.p12` file.
+- `APPLE_KEYCHAIN_PASSWORD`: (Optional) Password for the temporary keychain created during CI.
+
+### Notarization
+
+After signing, the app must be notarized by Apple to run on user machines without "unidentified developer" warnings. This requires:
+- `APPLE_ID`: Apple ID email.
+- `APPLE_PASSWORD`: App-specific password.
+- `APPLE_TEAM_ID`: Apple Team ID.
+
+## Verification
+
+To verify the signature of a built app:
+
+```bash
+codesign -dv --verbose=4 "src-tauri/target/aarch64-apple-darwin/release/bundle/macos/EdgeView Launcher.app"
 ```
-source=Notarized Developer ID
-origin=Developer ID Application: ZEDEDA Inc (TEAM_ID)
+
+To verify entitlements (required for Keychain access):
+
+```bash
+codesign -d --entitlements :- "src-tauri/target/aarch64-apple-darwin/release/bundle/macos/EdgeView Launcher.app"
 ```
-
-## Workaround: Manual Updates
-
-Until code signing is set up, users can:
-
-1. **Download from GitHub Releases**
-   - Go to https://github.com/sergey-zededa/edgeViewLauncher/releases
-   - Download latest `.dmg` or `.zip` file
-   - Install manually
-
-2. **Bypass Gatekeeper** (first launch only)
-   ```bash
-   xattr -cr "/Applications/EdgeView Launcher.app"
-   ```
-
-3. **Or**: Right-click app → Open → "Open Anyway"
-
-## Cost Considerations
-
-- **Apple Developer Program**: $99/year
-- **No additional costs** for code signing or notarization
-- One certificate works for all apps from the organization
-
-## Timeline
-
-Typical setup time: **2-3 hours**
-- 1 hour: Apple Developer enrollment (if needed)
-- 30 min: Certificate generation and export
-- 30 min: GitHub Secrets configuration
-- 30 min: Workflow updates and testing
-
-## References
-
-- [electron-builder Code Signing](https://www.electron.build/code-signing)
-- [Apple Code Signing Guide](https://developer.apple.com/support/code-signing/)
-- [Notarizing macOS Software](https://developer.apple.com/documentation/security/notarizing_macos_software_before_distribution)
