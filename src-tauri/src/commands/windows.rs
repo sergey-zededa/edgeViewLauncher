@@ -13,6 +13,7 @@ use tauri::{AppHandle, LogicalSize, WebviewUrl, WebviewWindowBuilder, Window};
 // ── Data types ────────────────────────────────────────────────────────────────
 
 #[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct TerminalOptions {
     pub port: u16,
     pub node_name: Option<String>,
@@ -26,6 +27,7 @@ pub struct TerminalOptions {
 }
 
 #[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct VncOptions {
     pub port: u16,
     pub node_name: Option<String>,
