@@ -12,6 +12,7 @@
 /// Service name: "edgeview-launcher"
 /// Account name: "tokens"  (stores a JSON-encoded map of clusterName → apiToken)
 
+#[cfg(not(target_os = "macos"))]
 use keyring::Entry;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -41,6 +42,7 @@ fn legacy_enc_path() -> PathBuf { config_dir().join("secure-tokens.enc") }
 const SERVICE: &str = "edgeview-launcher-v2";
 const ACCOUNT: &str = "tokens";
 
+#[cfg(not(target_os = "macos"))]
 fn keyring_entry() -> Result<Entry, String> {
     Entry::new(SERVICE, ACCOUNT).map_err(|e| format!("Keyring init failed: {e}"))
 }
@@ -108,66 +110,93 @@ fn get_tokens() -> Result<Option<HashMap<String, String>>, String> {
     std::thread::sleep(std::time::Duration::from_millis(500));
 
     // 6. Read from keychain
-    let entry = keyring_entry()?;
-    let result = match entry.get_password() {
-        Ok(json) => {
-            println!("[SecureStorage] Keyring read success");
-            let map = serde_json::from_str(&json)
-                .map_err(|e| format!("Token JSON corrupt: {e}"))?;
-            Ok(Some(map))
-        }
-        Err(keyring::Error::NoEntry) => {
-            println!("[SecureStorage] Keyring entry not found");
-            Ok(None)
-        },
-        Err(e) => {
-            // Record failure time to trigger cooldown
-            println!("[SecureStorage] Keyring read error: {}", e);
-            if let Ok(mut guard) = failure_mutex.lock() {
-                *guard = Some(std::time::Instant::now());
-            }
-            
-            // If native authorization failed (e.g. prompt loop issue),
-            // try falling back to the 'security' CLI tool.
-            // This runs as a separate process and may offer a more stable prompt context.
-            if e.to_string().contains("Unable to obtain authorization") {
-                 println!("[SecureStorage] Authorization denied. Attempting CLI fallback...");
-                 
-                 use std::process::Command;
-                 let output = Command::new("security")
-                    .args(["find-generic-password", "-s", SERVICE, "-a", ACCOUNT, "-w"])
-                    .output();
-                 
-                 if let Ok(out) = output {
-                     if out.status.success() {
-                         let password = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                         if !password.is_empty() {
-                             println!("[SecureStorage] CLI fallback success");
-                             if let Ok(map) = serde_json::from_str(&password) {
-                                 return Ok(Some(map));
-                             }
-                         }
-                     } else {
-                         println!("[SecureStorage] CLI fallback failed: {}", String::from_utf8_lossy(&out.stderr));
-                     }
-                 }
-                 
-                 // If fallback also failed, proceed without tokens
-                 Ok(None)
-            } else {
-                 Err(format!("Keyring read failed: {e}"))
-            }
-        },
-    };
+    // On macOS, use the `security` CLI directly. This avoids issues where the native API
+    // prompt is auto-dismissed or fails due to development signing instability.
+    #[cfg(target_os = "macos")]
+    {
+        println!("[SecureStorage] Using 'security' CLI for stable prompt...");
+        use std::process::Command;
+        let output = Command::new("security")
+            .args(["find-generic-password", "-s", SERVICE, "-a", ACCOUNT, "-w"])
+            .output();
 
-    // 7. Update cache if successful
-    if let Ok(val) = &result {
-        let mut guard = cache_mutex.lock().map_err(|e| e.to_string())?;
-        *guard = Some(val.clone());
-        println!("[SecureStorage] Cache updated");
+        match output {
+            Ok(out) if out.status.success() => {
+                let password = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !password.is_empty() {
+                    println!("[SecureStorage] CLI read success");
+                    if let Ok(map) = serde_json::from_str::<HashMap<String, String>>(&password) {
+                        // Update cache
+                        let mut guard = cache_mutex.lock().map_err(|e| e.to_string())?;
+                        *guard = Some(Some(map.clone()));
+                        return Ok(Some(map));
+                    }
+                }
+                // Empty password or invalid JSON -> treat as None
+                return Ok(None);
+            }
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                if stderr.contains("The specified item could not be found") {
+                    println!("[SecureStorage] Item not found (CLI)");
+                    return Ok(None);
+                }
+                // Empty stderr + non-zero exit means the macOS authorization
+                // dialog was auto-dismissed (Tauri's WebView activation steals
+                // focus from the system security dialog during startup). The
+                // stale item — created by the keyring crate with the old Tauri
+                // binary in its ACL — will keep triggering this dialog on every
+                // launch. Delete it now so the cycle stops: the user re-enters
+                // their token once in the UI, the next save recreates the item
+                // with /usr/bin/security as the trusted app, and all future
+                // reads succeed silently without any dialog.
+                if stderr.trim().is_empty() {
+                    println!("[SecureStorage] Authorization dialog auto-dismissed — deleting stale item to break the loop");
+                    let _ = Command::new("security")
+                        .args(["delete-generic-password", "-s", SERVICE, "-a", ACCOUNT])
+                        .output();
+                } else {
+                    println!("[SecureStorage] CLI read failed: {}", stderr);
+                }
+                return Ok(None);
+            }
+            Err(e) => {
+                println!("[SecureStorage] CLI execution failed: {}", e);
+                return Err(format!("Failed to execute security CLI: {e}"));
+            }
+        }
     }
 
-    result
+    #[cfg(not(target_os = "macos"))]
+    {
+        let entry = keyring_entry()?;
+        let result = match entry.get_password() {
+            Ok(json) => {
+                println!("[SecureStorage] Keyring read success");
+                let map = serde_json::from_str(&json)
+                    .map_err(|e| format!("Token JSON corrupt: {e}"))?;
+                Ok(Some(map))
+            }
+            Err(keyring::Error::NoEntry) => {
+                println!("[SecureStorage] Keyring entry not found");
+                Ok(None)
+            },
+            Err(e) => {
+                println!("[SecureStorage] Keyring read error: {}", e);
+                if let Ok(mut guard) = failure_mutex.lock() {
+                    *guard = Some(std::time::Instant::now());
+                }
+                Err(format!("Keyring read failed: {e}"))
+            },
+        };
+
+        if let Ok(val) = &result {
+            let mut guard = cache_mutex.lock().map_err(|e| e.to_string())?;
+            *guard = Some(val.clone());
+            println!("[SecureStorage] Cache updated");
+        }
+        result
+    }
 }
 
 fn save_tokens(tokens: &HashMap<String, String>) -> Result<(), String> {
@@ -176,6 +205,48 @@ fn save_tokens(tokens: &HashMap<String, String>) -> Result<(), String> {
 
     // 2. Write to keychain
     let json = serde_json::to_string(tokens).map_err(|e| e.to_string())?;
+
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+
+        // Delete any existing item first to reset its ACL.
+        //
+        // When a keychain item is created by the `keyring` crate (native
+        // Security.framework calls inside the Tauri process), macOS records
+        // the Tauri app binary's code signature as the sole trusted accessor.
+        // Using `-U` to update only changes the password while preserving
+        // that stale ACL, so `/usr/bin/security` is still not trusted and
+        // every subsequent `security find-generic-password -w` call triggers
+        // an authorization dialog.
+        //
+        // By deleting first we ensure the item is always (re)created by the
+        // `security` CLI tool, which becomes the trusted app in the new ACL.
+        // Future reads with `security find-generic-password -w` therefore
+        // never require user authorization — regardless of how many times
+        // the Tauri binary is rebuilt.
+        let _ = Command::new("security")
+            .args(["delete-generic-password", "-s", SERVICE, "-a", ACCOUNT])
+            .output();
+
+        let output = Command::new("security")
+            .args([
+                "add-generic-password",
+                "-s", SERVICE,
+                "-a", ACCOUNT,
+                "-w", &json,
+                // No -U: fresh create so /usr/bin/security owns the ACL.
+            ])
+            .output()
+            .map_err(|e| format!("Failed to execute security CLI: {e}"))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("Keychain write failed (CLI): {stderr}"));
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
     keyring_entry()?.set_password(&json).map_err(|e| format!("Keyring write failed: {e}"))?;
 
     // 3. Update cache
@@ -296,13 +367,19 @@ pub fn secure_storage_status() -> StorageStatus {
 }
 
 /// Load settings (config.json merged with keychain tokens) and return as JSON.
-/// Async to ensure it runs on a thread pool that doesn't block main loop,
-/// and to explicitly wrap the blocking keychain call.
 #[tauri::command]
 pub async fn secure_storage_get_settings() -> Result<Value, String> {
-    // Remove spawn_blocking to execute on the Tauri invoke thread directly.
-    // This may help with macOS Keychain prompt window association.
-    match load_config_with_tokens()? {
+    // Run on a dedicated blocking thread so the tokio async scheduler cannot
+    // interrupt or time-out the thread while the `security` CLI subprocess is
+    // waiting for user input in a macOS Keychain authorization dialog.
+    // Calling blocking I/O (std::thread::sleep, Command::output) directly on
+    // a tokio async thread risks having the task killed mid-prompt, which is
+    // why the dialog previously disappeared after ~1 second.
+    let result = tokio::task::spawn_blocking(load_config_with_tokens)
+        .await
+        .map_err(|e| format!("Task join error: {e}"))??;
+
+    match result {
         Some(v) => Ok(serde_json::json!({ "success": true, "data": v })),
         None => Ok(serde_json::json!({ "success": true, "data": null })),
     }

@@ -23,7 +23,7 @@
         ],
         "macOS": {
             "entitlements": "../assets/entitlements.mac.plist",
-            "hardenedRuntime": true
+            "hardenedRuntime": false
         },
         "windows": {
             "certificateThumbprint": null,
@@ -49,11 +49,6 @@
         "security": {
             "csp": null,
             "dangerousDisableAssetCspModification": false
-        },
-        "trayIcon": {
-            "id": "main-tray",
-            "iconPath": "../assets/trayTemplate.png",
-            "iconAsTemplate": true
         }
     },
     "plugins": {

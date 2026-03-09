@@ -15,9 +15,8 @@ use tokio::time::{Duration, interval};
 pub fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let tray = TrayIconBuilder::with_id("main-tray")
         .tooltip("EdgeView Launcher")
-        .icon(app.default_window_icon().cloned().unwrap_or_else(|| {
-            tauri::image::Image::new_owned(vec![], 0, 0)
-        }))
+        .icon(tauri::image::Image::from_bytes(include_bytes!("../../assets/trayTemplate.png")).expect("tray icon"))
+        .icon_as_template(true)
         .menu(&build_initial_menu(app)?)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| {

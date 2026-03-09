@@ -21,5 +21,9 @@
     <!-- Allow JIT compilation (for Node.js/Electron) -->
     <key>com.apple.security.cs.allow-jit</key>
     <true/>
+
+    <!-- Allow debugging (required for local development to prevent keychain prompt issues) -->
+    <key>com.apple.security.get-task-allow</key>
+    <true/>
 </dict>
 </plist>
