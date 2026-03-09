@@ -807,6 +807,51 @@ describe('Search and lazy loading', () => {
     });
   });
 
+  it('does not trigger multiple pagination requests on repeated scroll events', async () => {
+    const fullPage = Array.from({ length: 200 }, (_, i) => ({
+      id: `node-${i}`,
+      name: `Device ${i}`,
+      status: 'online',
+      project: 'p1',
+      edgeView: true,
+    }));
+
+    electronAPI.SearchNodes.mockResolvedValue(fullPage);
+
+    render(<App />);
+    await vi.advanceTimersByTimeAsync(500);
+    await screen.findByText('Device 0');
+
+    // Set up a slow response for pagination
+    let resolvePagination;
+    electronAPI.SearchNodes.mockImplementation(() =>
+      new Promise(resolve => { resolvePagination = resolve; })
+    );
+
+    const callsBefore = electronAPI.SearchNodes.mock.calls.length;
+
+    // Simulate multiple scroll events to bottom
+    const resultsList = document.querySelector('.results-list');
+    Object.defineProperties(resultsList, {
+      scrollHeight: { value: 5000, configurable: true },
+      scrollTop: { value: 4900, configurable: true },
+      clientHeight: { value: 50, configurable: true },
+    });
+    fireEvent.scroll(resultsList);
+    fireEvent.scroll(resultsList);
+    fireEvent.scroll(resultsList);
+
+    await vi.advanceTimersByTimeAsync(50);
+
+    // Only one additional SearchNodes call should have been made
+    const newCalls = electronAPI.SearchNodes.mock.calls.length - callsBefore;
+    expect(newCalls).toBe(1);
+
+    // Clean up
+    resolvePagination([]);
+    await vi.advanceTimersByTimeAsync(50);
+  });
+
   it('background refresh skips when pagination is in progress', async () => {
     const fullPage = Array.from({ length: 200 }, (_, i) => ({
       id: `node-${i}`,

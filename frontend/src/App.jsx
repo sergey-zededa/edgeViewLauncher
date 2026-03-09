@@ -4256,7 +4256,7 @@ Do you want to try connecting anyway?`)) {
                   className="results-list"
                   onScroll={(e) => {
                     const { scrollTop, scrollHeight, clientHeight } = e.target;
-                    if (scrollHeight - scrollTop - clientHeight < 100 && hasMore && !loading) {
+                    if (scrollHeight - scrollTop - clientHeight < 100 && hasMore && !loading && !loadingMore) {
                       setSkip(prev => prev + LIMIT);
                     }
                   }}
