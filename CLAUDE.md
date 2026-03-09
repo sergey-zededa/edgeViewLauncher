@@ -1,0 +1,117 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Critical Rules
+
+- **NEVER DELETE KEYCHAIN ITEMS** unless explicitly and unambiguously instructed for a specific item.
+- **NEVER create git tags** or trigger release builds unless explicitly instructed.
+- **NEVER commit directly to `main`**. Always work on a feature branch and use PRs.
+- **Do not modify `eve/`** — it contains reference implementations.
+- **Do NOT include `Co-Authored-By`** attribution in commit messages.
+- **Always run tests and build** after modifying code to verify changes.
+
+## Architecture
+
+EdgeView Launcher is a **Tauri v2 desktop app** with three layers:
+
+```
+Tauri Core (Rust) — src-tauri/
+  Spawns Go backend as sidecar, creates windows, tray, and IPC commands.
+  All frontend API calls go through the generic api_call IPC command,
+  which proxies HTTP requests to the Go backend on a dynamic port.
+
+Frontend (React + Vite) — frontend/src/
+  App.jsx: main UI — clusters, devices, tunnels, settings
+  tauriAPI.js: wraps all Tauri invoke() calls
+  components/TerminalView.jsx: xterm.js terminal over WebSocket
+  components/VncViewer.jsx: noVNC remote desktop viewer
+
+Go Backend (sidecar) — cmd/edgeview-backend/
+  http-server.go: HTTP routes and WebSocket SSH terminal handler
+  app.go: business logic, ZEDEDA API integration, session management
+  internal/config/: cluster config persistence (~/.edgeview-config.json)
+  internal/session/: EdgeView session cache, TCP tunnel management
+  internal/ssh/: SSH key generation (~/.ssh/edgeview_rsa)
+  internal/zededa/: ZEDEDA Cloud API client
+```
+
+**Data flow**: React → `tauriAPI.js` (invoke) → Rust `api_call` command → HTTP to Go backend on `localhost:<dynamic-port>`. The port is discovered at startup by parsing the Go backend's stdout log line `"HTTP Server starting on :<PORT>"`.
+
+**Key concepts**:
+- **Clusters**: Multiple ZEDEDA cloud endpoints (baseUrl + apiToken), stored in `~/.edgeview-config.json`
+- **EdgeView Sessions**: Authenticated WebSocket tunnels to edge devices, cached ~5 hours
+- **Tunnels**: Persistent TCP tunnels (SSH port 2222, VNC port 5900, custom) tracked in `session.Manager`
+- The Go binary is named `edgeview-backend` and placed in `src-tauri/binaries/` with a platform triple suffix (e.g., `edgeview-backend-aarch64-apple-darwin`)
+
+## Development Commands
+
+All commands run from the **project root** unless noted.
+
+```bash
+# Start full dev environment (spawns Vite + Tauri; Go backend must be pre-built)
+npm run dev
+
+# Build Go backend (required before `npm run dev` if Go code changed)
+go build -o src-tauri/binaries/edgeview-backend-aarch64-apple-darwin ./cmd/edgeview-backend
+
+# Build frontend only
+npm run build:frontend          # or: cd frontend && npm run build
+
+# Run frontend tests (Vitest + React Testing Library)
+cd frontend && npm test
+cd frontend && npm test -- --run   # non-watch mode (used in CI)
+
+# Run Go tests
+go test ./...
+
+# Run Rust tests
+cd src-tauri && cargo test
+
+# Go vet
+go vet ./...
+
+# Production builds
+npm run build           # macOS ARM64
+npm run build:windows   # Windows x64
+npm run build:linux     # Linux x64
+```
+
+## Testing Notes
+
+Frontend tests use **Vitest** + **React Testing Library** with **jsdom**. All Tauri IPC calls must be mocked:
+
+```javascript
+vi.mock('./tauriAPI', () => ({
+  SearchNodes: vi.fn().mockResolvedValue([]),
+  GetSettings: vi.fn().mockResolvedValue({ clusters: [], activeCluster: '' }),
+}));
+```
+
+## Go Backend API Endpoints
+
+Defined in `cmd/edgeview-backend/http-server.go`:
+- `POST /api/search-nodes` — search devices by name/project
+- `POST /api/connect` — initialize EdgeView session, start SSH proxy
+- `POST /api/start-tunnel` — create TCP tunnel to device IP:port
+- `DELETE /api/tunnel/{id}` — close a tunnel
+- `GET /api/ssh/term?port=<port>` — WebSocket endpoint for SSH terminal
+- `GET/POST /api/settings` — cluster configuration CRUD
+
+## File Locations
+
+- Config: `~/.edgeview-config.json`
+- SSH keys: `~/.ssh/edgeview_rsa` and `~/.ssh/edgeview_rsa.pub`
+- Go backend binary (dev, mac): `src-tauri/binaries/edgeview-backend-aarch64-apple-darwin`
+- Production build output: `src-tauri/target/`
+
+## Release Process
+
+1. Bump version in both `package.json` (root) and `frontend/package.json`
+2. Update version in `src-tauri/tauri.conf.json`
+3. Commit from project root (`git add .`) and push to `main`
+4. Create a GitHub release with a `v*` tag pointing to the latest commit on `main`:
+   ```bash
+   gh release create v0.x.y --generate-notes --title "v0.x.y"
+   ```
+   The CI "Release" workflow builds and uploads artifacts automatically.

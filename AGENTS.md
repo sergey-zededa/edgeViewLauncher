@@ -5,8 +5,9 @@ This file provides guidance to AI Agents (including WARP) when working with code
 ## Critical Rules
 
 **IMPORTANT**: 
-1. **NEVER create git tags** or trigger release builds (CI/CD) unless explicitly instructed by the user.
-2. **ALWAYS work using PR process**:
+1. **NEVER DELETE KEYCHAIN ITEMS**: You are strictly forbidden from deleting items from the user's keychain (e.g., via `security delete-generic-password`) unless explicitly and unambiguously instructed to do so by the user for a specific item.
+2. **NEVER create git tags** or trigger release builds (CI/CD) unless explicitly instructed by the user.
+3. **ALWAYS work using PR process**:
    - Create a new branch for every task or set of changes.
    - **NEVER commit directly to the `main` or `master` branch.**
    - Push your branch to the remote to facilitate PR creation.
