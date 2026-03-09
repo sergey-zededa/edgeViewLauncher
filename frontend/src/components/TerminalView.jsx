@@ -1,8 +1,9 @@
-import { getBackendPort, closeCurrentWindow } from '../tauriAPI';
+import { useRef, useState, useEffect } from 'react';
+import { getBackendPort, closeCurrentWindow, CloseTunnel } from '../tauriAPI';
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { WebLinksAddon } from 'xterm-addon-web-links';
-import { X } from 'lucide-react';
+import { X, Power } from 'lucide-react';
 import 'xterm/css/xterm.css';
 
 const TerminalView = ({ port }) => {
@@ -14,7 +15,8 @@ const TerminalView = ({ port }) => {
     const [status, setStatus] = useState('Connecting...');
     const [connectionInfo, setConnectionInfo] = useState({
         nodeName: 'Unknown Device',
-        targetInfo: 'EVE-OS SSH'
+        targetInfo: 'EVE-OS SSH',
+        tunnelId: ''
     });
 
     const [theme, setTheme] = useState(() => {
@@ -27,7 +29,8 @@ const TerminalView = ({ port }) => {
         const params = new URLSearchParams(window.location.search);
         setConnectionInfo({
             nodeName: params.get('nodeName') || 'Unknown Device',
-            targetInfo: params.get('targetInfo') || 'EVE-OS SSH'
+            targetInfo: params.get('targetInfo') || 'EVE-OS SSH',
+            tunnelId: params.get('tunnelId') || ''
         });
 
         // Listen for theme changes in other windows
@@ -134,7 +137,6 @@ const TerminalView = ({ port }) => {
         term.attachCustomKeyEventHandler(handleKeyDown);
 
         term.open(terminalRef.current);
-        fitAddon.fit();
         term.focus(); // Ensure focus
 
         xtermRef.current = term;
@@ -166,7 +168,6 @@ const TerminalView = ({ port }) => {
                 // Use 127.0.0.1 to avoid localhost IPv6 resolution issues on macOS
                 const wsUrl = `ws://127.0.0.1:${backendPort}/api/ssh/term?port=${port}&user=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&cols=${initialCols}&rows=${initialRows}&command=${encodeURIComponent(initialCommand)}`;
                 
-                term.writeln(`\x1b[1;30mDebug: Connecting to backend on port ${backendPort}...\x1b[0m`);
                 const ws = new WebSocket(wsUrl);
                 ws.binaryType = 'arraybuffer'; // Ensure we receive raw bytes
                 wsRef.current = ws;
@@ -235,11 +236,15 @@ const TerminalView = ({ port }) => {
         // Use FitAddon to calculate available cols/rows based on container size
         const calculateAndResize = () => {
             try {
+                // Check if container has size
+                if (terminalRef.current && (terminalRef.current.clientWidth === 0 || terminalRef.current.clientHeight === 0)) {
+                    console.warn("Terminal container has 0 size, skipping fit");
+                    return null;
+                }
+
                 fitAddon.fit();
                 const dims = fitAddon.proposeDimensions();
                 if (dims && dims.cols && dims.rows) {
-                    // Update Electron window size if needed (optional, or just sync PTY)
-                    // For now, we prioritize syncing the PTY to the current container size
                     return { cols: dims.cols, rows: dims.rows };
                 }
             } catch (e) {
@@ -252,14 +257,31 @@ const TerminalView = ({ port }) => {
         const initConnection = () => {
             // Give the renderer a moment to layout
             setTimeout(() => {
-                const dims = calculateAndResize();
-                // Default to standard size if fit fails
-                const cols = dims ? dims.cols : 80;
-                const rows = dims ? dims.rows : 24;
+                let dims = calculateAndResize();
+                
+                // If fit fails or returns invalid dimensions, force a reasonable default
+                if (!dims || dims.cols < 10 || dims.rows < 5) {
+                    console.warn('FitAddon failed to propose valid dimensions, falling back to 80x24');
+                    dims = { cols: 80, rows: 24 };
+                    term.resize(80, 24); // Explicitly resize xterm instance
+                }
 
+                const { cols, rows } = dims;
                 console.log(`Initializing PTY with dimensions: ${cols}x${rows}`);
                 connectWebSocket(cols, rows);
-            }, 100);
+                
+                // Retry fit after a longer delay to handle window animation/layout settling
+                setTimeout(() => {
+                    fitAddon.fit();
+                    const newDims = fitAddon.proposeDimensions();
+                    if (newDims && (newDims.cols !== cols || newDims.rows !== rows)) {
+                         console.log(`Refining PTY dimensions to: ${newDims.cols}x${newDims.rows}`);
+                         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                             wsRef.current.send(JSON.stringify({ type: 'resize', cols: newDims.cols, rows: newDims.rows }));
+                         }
+                    }
+                }, 500);
+            }, 300);
         };
 
         initConnection();
@@ -292,6 +314,17 @@ const TerminalView = ({ port }) => {
             console.error('Failed to close window', err);
             window.close();
         });
+    };
+
+    const handleStopTunnelAndClose = async () => {
+        if (connectionInfo.tunnelId) {
+            try {
+                await CloseTunnel(connectionInfo.tunnelId);
+            } catch (err) {
+                console.error('Failed to close tunnel:', err);
+            }
+        }
+        handleClose();
     };
 
     return (
@@ -354,10 +387,20 @@ const TerminalView = ({ port }) => {
                     gap: '10px',
                     WebkitAppRegion: 'no-drag'
                 }}>
+                    {connectionInfo.tunnelId && (
+                        <button
+                            onClick={handleStopTunnelAndClose}
+                            className="icon-btn danger"
+                            title="Stop Tunnel & Close Window"
+                            style={{ color: '#ef4444' }}
+                        >
+                            <Power size={18} />
+                        </button>
+                    )}
                     <button
                         onClick={handleClose}
                         className="icon-btn"
-                        title="Close Terminal"
+                        title="Close Window (Leave Tunnel Open)"
                         style={{ color: 'var(--text-primary)' }}
                     >
                         <X size={20} />
