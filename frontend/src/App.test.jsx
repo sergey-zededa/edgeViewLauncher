@@ -66,6 +66,7 @@ vi.mock('./tauriAPI', () => {
     SecureStorageMigrate: vi.fn().mockResolvedValue({ success: true }),
     SecureStorageGetSettings: vi.fn(),
     SecureStorageSaveSettings: vi.fn().mockResolvedValue({ success: true }),
+    InjectSecureConfig: vi.fn().mockResolvedValue(),
     StartCollectInfo: vi.fn(fn).mockResolvedValue({ jobId: 'job-123' }),
     GetCollectInfoStatus: vi.fn(fn).mockResolvedValue({ status: 'starting', progress: 0, totalSize: 100 }),
     DownloadCollectInfo: vi.fn(id => `http://localhost:8080/api/collect-info/download?jobId=${id}`),
@@ -289,8 +290,15 @@ describe('App configuration and tunnels', () => {
 
     render(<App />);
 
+    // Wait for async initialization to complete before opening settings.
+    // Without this, fireEvent runs before SecureStorageGetSettings resolves,
+    // so config.activeCluster is still '' when the [showSettings] effect sets
+    // viewingClusterName.
+    await waitFor(() => {
+      expect(electronAPI.SecureStorageGetSettings).toHaveBeenCalled();
+    });
+
     // Use keyboard shortcut to open settings
-    // We need to focus the app container first or just dispatch to it
     const appContainer = document.querySelector('.app-container');
     fireEvent.keyDown(appContainer, { key: ',', metaKey: true });
 
