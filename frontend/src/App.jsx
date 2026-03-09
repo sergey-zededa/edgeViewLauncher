@@ -364,7 +364,10 @@ function App() {
   const [projects, setProjects] = useState({});
   const [skip, setSkip] = useState(0);
   const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const LIMIT = 200;
+  const searchAbortRef = useRef(null);
+  const searchInFlightRef = useRef(false);
 
   // Theme State
   // Default to 'auto' if no theme is set
@@ -819,11 +822,56 @@ function App() {
 
     // Set up interval to refresh device list every 30 seconds
     const refreshInterval = setInterval(async () => {
+      // Don't refresh while a search/pagination request is in flight
+      if (searchInFlightRef.current) return;
       try {
-        // Silent refresh - don't set loading state to avoid UI flicker
-        const results = await SearchNodes(query);
-        setNodes(results || []);
-        // Preserve selectedIndex to maintain user's position in the list
+        // Silent refresh — replicate the same search logic as the main effect
+        const matchingProjectIds = resolveMatchingProjectIds(query);
+        const lowerQuery = query ? query.toLowerCase() : '';
+
+        const nameResults = await SearchNodes(query, LIMIT, 0, '');
+
+        let projectResults = [];
+        if (matchingProjectIds.length > 0) {
+          const projectArrays = await Promise.all(
+            matchingProjectIds.map(pid => SearchNodes('', LIMIT, 0, pid).catch(() => []))
+          );
+          projectResults = projectArrays.flat();
+        }
+
+        // Client-side filter for name results
+        let filtered = nameResults || [];
+        if (lowerQuery) {
+          filtered = filtered.filter(n => {
+            const nameMatch = n.name && n.name.toLowerCase().includes(lowerQuery);
+            const projName = projects[n.project] || '';
+            const projMatch = projName.toLowerCase().includes(lowerQuery);
+            return nameMatch || projMatch;
+          });
+        }
+
+        // Client-side filter for project results too
+        if (lowerQuery) {
+          projectResults = projectResults.filter(n => {
+            const nameMatch = n.name && n.name.toLowerCase().includes(lowerQuery);
+            const projName = projects[n.project] || '';
+            const projMatch = projName.toLowerCase().includes(lowerQuery);
+            return nameMatch || projMatch;
+          });
+        }
+
+        // Merge project results
+        const existingIds = new Set(filtered.map(n => n.id));
+        for (const node of projectResults) {
+          if (!existingIds.has(node.id)) {
+            filtered.push(node);
+            existingIds.add(node.id);
+          }
+        }
+
+        setNodes(filtered);
+        setSkip(0);
+        setHasMore((nameResults || []).length === LIMIT);
       } catch (err) {
         console.error('Background device list refresh failed:', err);
         // Silently fail - don't disrupt user experience
@@ -833,7 +881,7 @@ function App() {
     return () => {
       clearInterval(refreshInterval);
     };
-  }, [query, showSettings, selectedNode]);
+  }, [query, showSettings, selectedNode, projects]);
 
 
   const fetchViewingUserInfo = async (cluster) => {
@@ -1581,56 +1629,128 @@ function App() {
 
   // Removed loadSettingsAndUnlock as we are back to auto-init
 
+  // Resolve query to matching project IDs (partial/substring match)
+  const resolveMatchingProjectIds = (searchQuery) => {
+    if (!searchQuery) return [];
+    const lowerQuery = searchQuery.toLowerCase();
+    return Object.entries(projects)
+      .filter(([, name]) => name.toLowerCase().includes(lowerQuery))
+      .map(([id]) => id);
+  };
+
   useEffect(() => {
+    // Abort any in-flight search request
+    if (searchAbortRef.current) {
+      searchAbortRef.current.abort();
+    }
+
+    const abortController = new AbortController();
+    searchAbortRef.current = abortController;
+
     const search = async () => {
-      setLoading(true);
+      const isPaginating = skip > 0;
+      if (isPaginating) {
+        setLoadingMore(true);
+      } else {
+        setLoading(true);
+      }
+      searchInFlightRef.current = true;
       setAuthError(false);
       try {
-        // Resolve project name to ID if possible
-        let projectId = '';
-        if (query) {
-          const lowerQuery = query.toLowerCase();
-          for (const [id, name] of Object.entries(projects)) {
-            if (name.toLowerCase() === lowerQuery) {
-              projectId = id;
-              break;
-            }
+        const matchingProjectIds = resolveMatchingProjectIds(query);
+        const lowerQuery = query ? query.toLowerCase() : '';
+
+        // Search by device name via API
+        const namePromise = SearchNodes(query, LIMIT, skip, '');
+
+        // For skip=0, also search by matching project IDs (no namePattern)
+        // to find devices whose project name matches the query
+        let projectResults = [];
+        if (skip === 0 && matchingProjectIds.length > 0) {
+          const projectPromises = matchingProjectIds.map(pid =>
+            SearchNodes('', LIMIT, 0, pid).catch(() => [])
+          );
+          const projectArrays = await Promise.all(projectPromises);
+          projectResults = projectArrays.flat();
+        }
+
+        const nameResults = await namePromise;
+
+        // If this request was aborted, discard results
+        if (abortController.signal.aborted) return;
+
+        // Client-side filter: the API's namePattern may use prefix matching,
+        // so filter to only keep devices where the query appears in the
+        // device name or its project name (substring match)
+        let filteredNameResults = nameResults || [];
+        if (lowerQuery) {
+          filteredNameResults = filteredNameResults.filter(n => {
+            const nameMatch = n.name && n.name.toLowerCase().includes(lowerQuery);
+            const projName = projects[n.project] || '';
+            const projMatch = projName.toLowerCase().includes(lowerQuery);
+            return nameMatch || projMatch;
+          });
+        }
+
+        // Apply the same client-side filter to project results
+        if (lowerQuery) {
+          projectResults = projectResults.filter(n => {
+            const nameMatch = n.name && n.name.toLowerCase().includes(lowerQuery);
+            const projName = projects[n.project] || '';
+            const projMatch = projName.toLowerCase().includes(lowerQuery);
+            return nameMatch || projMatch;
+          });
+        }
+
+        // Merge and deduplicate name results + project results
+        const existingIds = new Set(filteredNameResults.map(n => n.id));
+        for (const node of projectResults) {
+          if (!existingIds.has(node.id)) {
+            filteredNameResults.push(node);
+            existingIds.add(node.id);
           }
         }
 
-        const results = await SearchNodes(query, LIMIT, skip, projectId);
-
         if (skip === 0) {
-          setNodes(results || []);
+          setNodes(filteredNameResults);
         } else {
-          setNodes(prev => [...prev, ...(results || [])]);
+          setNodes(prev => {
+            const prevIds = new Set(prev.map(n => n.id));
+            const newNodes = filteredNameResults.filter(n => !prevIds.has(n.id));
+            return [...prev, ...newNodes];
+          });
         }
 
-        setHasMore((results || []).length === LIMIT);
+        setHasMore((nameResults || []).length === LIMIT);
         setAuthError(false);
       } catch (err) {
+        if (abortController.signal.aborted) return;
         console.error(err);
         if (skip === 0) setNodes([]);
         if (err.message && (err.message.includes('401') || err.message.includes('unauthorized'))) {
           setAuthError(true);
         }
       } finally {
+        searchInFlightRef.current = false;
         setLoading(false);
+        setLoadingMore(false);
       }
     };
 
-    // Debounce only if resetting (typing)
+    // Debounce only on fresh search (typing), not pagination
     const timeoutId = setTimeout(() => {
       search();
     }, skip === 0 ? 300 : 0);
 
-    return () => clearTimeout(timeoutId);
-  }, [query, skip, projects]); // Added projects dependency to re-resolve if projects load
+    return () => {
+      clearTimeout(timeoutId);
+      abortController.abort();
+    };
+  }, [query, skip, projects]);
 
   // Reset pagination when query changes
   useEffect(() => {
     setSkip(0);
-    // Don't clear nodes here to avoid flicker, let the search effect handle replacement
   }, [query]);
 
   const handleConnect = async (node) => {
@@ -4217,6 +4337,12 @@ Do you want to try connecting anyway?`)) {
                       </div>
                     )
                   })}
+                  {loadingMore && (
+                    <div className="loading-more-state">
+                      <Activity className="loading-icon animate-spin" size={16} />
+                      <span>Loading more devices...</span>
+                    </div>
+                  )}
                 </div>
               )
             }

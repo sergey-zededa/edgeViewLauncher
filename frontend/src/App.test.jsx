@@ -1,6 +1,6 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
-import { vi, describe, it, beforeEach } from 'vitest';
+import { vi, describe, it, beforeEach, afterEach } from 'vitest';
 
 vi.mock('./components/VncViewer', () => ({
   __esModule: true,
@@ -664,6 +664,390 @@ describe('App configuration and tunnels', () => {
 
     // Should show success
     await screen.findByText(/File saved successfully/);
+  });
+});
+
+describe('Search and lazy loading', () => {
+  const validKey = 'A'.repeat(171);
+  const validToken = `ENT1234:${validKey}`;
+  const config = {
+    baseUrl: 'https://cluster.example',
+    apiToken: validToken,
+    clusters: [{ name: 'Prod', baseUrl: 'https://cluster.example', apiToken: validToken }],
+    activeCluster: 'Prod',
+    recentDevices: [],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    electronAPI.GetSettings.mockResolvedValue(config);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(config);
+    electronAPI.GetProjects.mockResolvedValue([]);
+    electronAPI.GetEnterprise.mockResolvedValue({ name: 'Test Enterprise' });
+    electronAPI.SearchNodes.mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('debounces search requests while typing and only sends the final query', async () => {
+    render(<App />);
+
+    // Wait for initial load to settle
+    await vi.advanceTimersByTimeAsync(500);
+
+    const callCountAfterInit = electronAPI.SearchNodes.mock.calls.length;
+
+    const searchInput = screen.getByPlaceholderText('Search nodes, projects...');
+
+    // Type rapidly: T, TO, TOK
+    fireEvent.change(searchInput, { target: { value: 'T' } });
+    await vi.advanceTimersByTimeAsync(100);
+    fireEvent.change(searchInput, { target: { value: 'TO' } });
+    await vi.advanceTimersByTimeAsync(100);
+    fireEvent.change(searchInput, { target: { value: 'TOK' } });
+
+    // Before debounce fires, no new calls should have been made
+    expect(electronAPI.SearchNodes.mock.calls.length).toBe(callCountAfterInit);
+
+    // After 300ms debounce, only the final query should fire
+    await vi.advanceTimersByTimeAsync(350);
+
+    const callsAfterDebounce = electronAPI.SearchNodes.mock.calls.slice(callCountAfterInit);
+    // Should have exactly one call with the final query
+    expect(callsAfterDebounce.length).toBe(1);
+    expect(callsAfterDebounce[0][0]).toBe('TOK');
+  });
+
+  it('discards stale search results when a newer query is issued', async () => {
+    // First query returns slowly, second query returns fast
+    let resolveFirst;
+    const slowResult = new Promise(resolve => { resolveFirst = resolve; });
+    const fastResult = [{ id: 'n2', name: 'AB-FastNode', status: 'online', project: 'p1', edgeView: true }];
+
+    electronAPI.SearchNodes.mockResolvedValue([]); // initial load
+
+    render(<App />);
+    await vi.advanceTimersByTimeAsync(500);
+
+    // Set up mock sequence: slow response for "A", fast response for "AB"
+    electronAPI.SearchNodes
+      .mockImplementationOnce(() => slowResult)
+      .mockResolvedValueOnce(fastResult);
+
+    const searchInput = screen.getByPlaceholderText('Search nodes, projects...');
+
+    // Type "A", wait for debounce
+    fireEvent.change(searchInput, { target: { value: 'A' } });
+    await vi.advanceTimersByTimeAsync(350);
+
+    // Type "AB" before first resolves, wait for debounce
+    fireEvent.change(searchInput, { target: { value: 'AB' } });
+    await vi.advanceTimersByTimeAsync(350);
+
+    // Fast result resolves first
+    await vi.advanceTimersByTimeAsync(50);
+
+    // Now the slow first result resolves — it should be discarded (aborted)
+    resolveFirst([{ id: 'n1', name: 'StaleNode', status: 'online', project: 'p1', edgeView: true }]);
+    await vi.advanceTimersByTimeAsync(50);
+
+    // Only FastNode should be shown, not StaleNode
+    expect(screen.queryByText('StaleNode')).not.toBeInTheDocument();
+    expect(screen.getByText('AB-FastNode')).toBeInTheDocument();
+  });
+
+  it('shows loading-more indicator when paginating via scroll', async () => {
+    // Return full page (LIMIT=200) so hasMore is true
+    const fullPage = Array.from({ length: 200 }, (_, i) => ({
+      id: `node-${i}`,
+      name: `Device ${i}`,
+      status: 'online',
+      project: 'p1',
+      edgeView: true,
+    }));
+
+    electronAPI.SearchNodes.mockResolvedValue(fullPage);
+
+    render(<App />);
+
+    // Wait for initial load
+    await vi.advanceTimersByTimeAsync(500);
+    await screen.findByText('Device 0');
+
+    // Set up a slow response for the pagination request
+    let resolvePagination;
+    electronAPI.SearchNodes.mockImplementationOnce(() =>
+      new Promise(resolve => { resolvePagination = resolve; })
+    );
+
+    // Simulate scroll to bottom
+    const resultsList = document.querySelector('.results-list');
+    Object.defineProperties(resultsList, {
+      scrollHeight: { value: 5000, configurable: true },
+      scrollTop: { value: 4900, configurable: true },
+      clientHeight: { value: 50, configurable: true },
+    });
+    fireEvent.scroll(resultsList);
+
+    // The loading more indicator should appear
+    await waitFor(() => {
+      expect(screen.getByText('Loading more devices...')).toBeInTheDocument();
+    });
+
+    // Resolve pagination
+    resolvePagination([]);
+    await vi.advanceTimersByTimeAsync(50);
+
+    // Loading indicator should disappear
+    await waitFor(() => {
+      expect(screen.queryByText('Loading more devices...')).not.toBeInTheDocument();
+    });
+  });
+
+  it('background refresh skips when pagination is in progress', async () => {
+    const fullPage = Array.from({ length: 200 }, (_, i) => ({
+      id: `node-${i}`,
+      name: `Device ${i}`,
+      status: 'online',
+      project: 'p1',
+      edgeView: true,
+    }));
+
+    electronAPI.SearchNodes.mockResolvedValue(fullPage);
+
+    render(<App />);
+    await vi.advanceTimersByTimeAsync(500);
+    await screen.findByText('Device 0');
+
+    // Set up a slow pagination response
+    let resolvePagination;
+    electronAPI.SearchNodes.mockImplementation(() =>
+      new Promise(resolve => { resolvePagination = resolve; })
+    );
+
+    // Trigger scroll pagination
+    const resultsList = document.querySelector('.results-list');
+    Object.defineProperties(resultsList, {
+      scrollHeight: { value: 5000, configurable: true },
+      scrollTop: { value: 4900, configurable: true },
+      clientHeight: { value: 50, configurable: true },
+    });
+    fireEvent.scroll(resultsList);
+
+    // loadingMore should be true now
+    await waitFor(() => {
+      expect(screen.getByText('Loading more devices...')).toBeInTheDocument();
+    });
+
+    const callsBefore = electronAPI.SearchNodes.mock.calls.length;
+
+    // Advance 30s — background refresh should skip because loadingMore is true
+    await vi.advanceTimersByTimeAsync(30000);
+
+    // No new calls should have been made by background refresh
+    expect(electronAPI.SearchNodes.mock.calls.length).toBe(callsBefore);
+
+    // Resolve pagination to clean up
+    resolvePagination([]);
+    await vi.advanceTimersByTimeAsync(50);
+  });
+
+  it('search by partial project name returns devices from matching projects', async () => {
+    electronAPI.GetProjects.mockResolvedValue([
+      { id: 'proj-abc', name: 'Production' },
+      { id: 'proj-def', name: 'Staging' },
+    ]);
+
+    const nameResults = []; // No device names match "Prod"
+    const projectResults = [
+      { id: 'n1', name: 'Server-1', status: 'online', project: 'proj-abc', edgeView: true },
+      { id: 'n2', name: 'Server-2', status: 'online', project: 'proj-abc', edgeView: true },
+    ];
+
+    // First call: initial load (empty query)
+    electronAPI.SearchNodes.mockResolvedValueOnce([]);
+
+    render(<App />);
+    await vi.advanceTimersByTimeAsync(500);
+
+    // Set up mocks for the search:
+    // Call with namePattern="Prod" returns nothing
+    // Call with projectId="proj-abc" returns project devices
+    electronAPI.SearchNodes.mockImplementation((query, limit, skip, projectId) => {
+      if (projectId === 'proj-abc') return Promise.resolve(projectResults);
+      return Promise.resolve(nameResults);
+    });
+
+    const searchInput = screen.getByPlaceholderText('Search nodes, projects...');
+    fireEvent.change(searchInput, { target: { value: 'Prod' } });
+
+    // Wait for debounce + search
+    await vi.advanceTimersByTimeAsync(500);
+
+    // Devices from the Production project should appear
+    await waitFor(() => {
+      expect(screen.getByText('Server-1')).toBeInTheDocument();
+      expect(screen.getByText('Server-2')).toBeInTheDocument();
+    });
+  });
+
+  it('search merges and deduplicates device name and project name results', async () => {
+    electronAPI.GetProjects.mockResolvedValue([
+      { id: 'proj-abc', name: 'Alpha' },
+    ]);
+
+    const sharedDevice = { id: 'n1', name: 'Alpha-Server', status: 'online', project: 'proj-abc', edgeView: true };
+    const nameOnlyDevice = { id: 'n2', name: 'Alpha-Router', status: 'online', project: 'proj-other', edgeView: true };
+    const projectOnlyDevice = { id: 'n3', name: 'Beta-Server', status: 'online', project: 'proj-abc', edgeView: true };
+
+    electronAPI.SearchNodes.mockResolvedValueOnce([]); // initial load
+
+    render(<App />);
+    await vi.advanceTimersByTimeAsync(500);
+
+    // Name search returns sharedDevice + nameOnlyDevice
+    // Project search returns sharedDevice + projectOnlyDevice
+    electronAPI.SearchNodes.mockImplementation((query, limit, skip, projectId) => {
+      if (projectId === 'proj-abc') return Promise.resolve([sharedDevice, projectOnlyDevice]);
+      return Promise.resolve([sharedDevice, nameOnlyDevice]);
+    });
+
+    const searchInput = screen.getByPlaceholderText('Search nodes, projects...');
+    fireEvent.change(searchInput, { target: { value: 'Alpha' } });
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    // All three should appear, with sharedDevice not duplicated
+    await waitFor(() => {
+      expect(screen.getByText('Alpha-Server')).toBeInTheDocument();
+      expect(screen.getByText('Alpha-Router')).toBeInTheDocument();
+      expect(screen.getByText('Beta-Server')).toBeInTheDocument();
+    });
+
+    // sharedDevice should appear exactly once
+    const alphaServers = screen.getAllByText('Alpha-Server');
+    expect(alphaServers).toHaveLength(1);
+  });
+
+  it('filters out API results that do not match query in device name or project name', async () => {
+    electronAPI.GetProjects.mockResolvedValue([
+      { id: 'proj-china', name: 'BOBST-staging-no-tpm-china' },
+      { id: 'proj-dev', name: 'BOBST-develop' },
+    ]);
+
+    // API namePattern returns prefix-matched results that don't contain "china"
+    const apiResults = [
+      { id: 'n1', name: 'CHINA-Device', status: 'online', project: 'proj-dev', edgeView: true },
+      { id: 'n2', name: 'UNRELATED123', status: 'online', project: 'proj-dev', edgeView: true },
+      { id: 'n3', name: 'INTTST445843', status: 'online', project: 'proj-china', edgeView: true },
+    ];
+    const projectResults = [
+      { id: 'n3', name: 'INTTST445843', status: 'online', project: 'proj-china', edgeView: true },
+      { id: 'n4', name: 'M2ZZ1575', status: 'online', project: 'proj-china', edgeView: true },
+    ];
+
+    electronAPI.SearchNodes.mockResolvedValueOnce([]); // initial load
+
+    render(<App />);
+    await vi.advanceTimersByTimeAsync(500);
+
+    electronAPI.SearchNodes.mockImplementation((query, limit, skip, projectId) => {
+      if (projectId === 'proj-china') return Promise.resolve(projectResults);
+      return Promise.resolve(apiResults);
+    });
+
+    const searchInput = screen.getByPlaceholderText('Search nodes, projects...');
+    fireEvent.change(searchInput, { target: { value: 'china' } });
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    await waitFor(() => {
+      // CHINA-Device matches by device name (contains "china")
+      expect(screen.getByText('CHINA-Device')).toBeInTheDocument();
+      // INTTST445843 matches by project name (BOBST-staging-no-tpm-china)
+      expect(screen.getByText('INTTST445843')).toBeInTheDocument();
+      // M2ZZ1575 matches via project search
+      expect(screen.getByText('M2ZZ1575')).toBeInTheDocument();
+    });
+
+    // UNRELATED123 should be filtered out — no "china" in device name or project name
+    expect(screen.queryByText('UNRELATED123')).not.toBeInTheDocument();
+  });
+
+  it('background refresh preserves project-matched results', async () => {
+    electronAPI.GetProjects.mockResolvedValue([
+      { id: 'proj-china', name: 'staging-china' },
+    ]);
+
+    const projectDevices = [
+      { id: 'n1', name: 'Device-1', status: 'online', project: 'proj-china', edgeView: true },
+    ];
+
+    electronAPI.SearchNodes.mockResolvedValueOnce([]); // initial load
+
+    render(<App />);
+    await vi.advanceTimersByTimeAsync(500);
+
+    // Set up search: name results empty, project results have devices
+    electronAPI.SearchNodes.mockImplementation((query, limit, skip, projectId) => {
+      if (projectId === 'proj-china') return Promise.resolve(projectDevices);
+      return Promise.resolve([]);
+    });
+
+    const searchInput = screen.getByPlaceholderText('Search nodes, projects...');
+    fireEvent.change(searchInput, { target: { value: 'china' } });
+    await vi.advanceTimersByTimeAsync(500);
+
+    await waitFor(() => {
+      expect(screen.getByText('Device-1')).toBeInTheDocument();
+    });
+
+    // Advance 30s for background refresh — results should persist
+    await vi.advanceTimersByTimeAsync(30000);
+
+    // Device should still be visible after background refresh
+    expect(screen.getByText('Device-1')).toBeInTheDocument();
+    expect(screen.queryByText('No results found')).not.toBeInTheDocument();
+  });
+
+  it('pagination appends results instead of replacing', async () => {
+    const firstPage = Array.from({ length: 200 }, (_, i) => ({
+      id: `node-${i}`,
+      name: `Device ${i}`,
+      status: 'online',
+      project: 'p1',
+      edgeView: true,
+    }));
+    const secondPage = [
+      { id: 'node-200', name: 'Device 200', status: 'online', project: 'p1', edgeView: true },
+    ];
+
+    electronAPI.SearchNodes
+      .mockResolvedValueOnce(firstPage)  // initial load
+      .mockResolvedValueOnce(secondPage); // pagination
+
+    render(<App />);
+    await vi.advanceTimersByTimeAsync(500);
+    await screen.findByText('Device 0');
+
+    // Trigger scroll pagination
+    const resultsList = document.querySelector('.results-list');
+    Object.defineProperties(resultsList, {
+      scrollHeight: { value: 5000, configurable: true },
+      scrollTop: { value: 4900, configurable: true },
+      clientHeight: { value: 50, configurable: true },
+    });
+    fireEvent.scroll(resultsList);
+    await vi.advanceTimersByTimeAsync(100);
+
+    // Both first page and second page items should be present
+    await waitFor(() => {
+      expect(screen.getByText('Device 200')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Device 0')).toBeInTheDocument();
   });
 });
 
