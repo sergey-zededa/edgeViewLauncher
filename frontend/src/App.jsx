@@ -2879,13 +2879,15 @@ Do you want to try connecting anyway?`)) {
                             <code>localhost:{tunnel.localPort}</code>
                           </Copyable>
                         </div>
-                        <button
-                          className="icon-btn"
-                          title="Open in Browser"
-                          onClick={() => openExternal(`http://localhost:${tunnel.localPort}`)}
-                        >
-                          <ExternalLink size={12} />
-                        </button>
+                        {tunnel.type === 'TCP' && (
+                          <button
+                            className="icon-btn"
+                            title="Open in Browser"
+                            onClick={() => openExternal(`http://localhost:${tunnel.localPort}`)}
+                          >
+                            <ExternalLink size={12} />
+                          </button>
+                        )}
                         <div className="tunnel-stats">
                           <div
                             className={`activity-dot ${Date.now() - (tunnel.lastActivity || 0) < 5000 ? 'active' : ''}`}
@@ -2900,28 +2902,52 @@ Do you want to try connecting anyway?`)) {
                       </div>
                       <div className="tunnel-actions">
                         {tunnel.type === 'VNC' && (
-                          <button
-                            className="icon-btn"
-                            title="Open VNC Viewer"
-                            onClick={() => openExternal(`vnc://localhost:${tunnel.localPort}`)}
-                          >
-                            <ExternalLink size={14} />
-                          </button>
+                          <>
+                            <button
+                              className="icon-btn"
+                              title="Open External VNC Viewer"
+                              onClick={() => openExternal(`vnc://localhost:${tunnel.localPort}`)}
+                            >
+                              <ExternalLink size={14} />
+                            </button>
+                            <button
+                              className="icon-btn"
+                              title="Open Built-in VNC Viewer"
+                              onClick={() => openVncWindow({
+                                port: tunnel.localPort,
+                                nodeName: tunnel.nodeName || selectedNode.name,
+                                tunnelId: tunnel.id,
+                                theme
+                              })}
+                            >
+                              <Monitor size={14} />
+                            </button>
+                          </>
                         )}
                         {tunnel.type === 'SSH' && (
-                          <button
-                            className="icon-btn"
-                            title="Open Terminal"
-                            onClick={() => openTerminalWindow({
-                              port: tunnel.localPort,
-                              username: tunnel.username,
-                              nodeName: tunnel.nodeName,
-                              targetInfo: `${tunnel.username || 'root'}@${tunnel.nodeName}`,
-                              theme
-                            })}
-                          >
-                            <Terminal size={14} />
-                          </button>
+                          <>
+                            <button
+                              className="icon-btn"
+                              title="Open External Terminal"
+                              onClick={() => openExternalTerminal(`ssh -p ${tunnel.localPort} ${tunnel.username || 'root'}@localhost`)}
+                            >
+                              <ExternalLink size={14} />
+                            </button>
+                            <button
+                              className="icon-btn"
+                              title="Open Built-in Terminal"
+                              onClick={() => openTerminalWindow({
+                                port: tunnel.localPort,
+                                username: tunnel.username,
+                                nodeName: tunnel.nodeName || selectedNode.name,
+                                targetInfo: `${tunnel.username || 'root'}@${tunnel.nodeName || selectedNode.name}`,
+                                tunnelId: tunnel.id,
+                                theme
+                              })}
+                            >
+                              <Terminal size={14} />
+                            </button>
+                          </>
                         )}
                         <button
                           className="icon-btn danger"
