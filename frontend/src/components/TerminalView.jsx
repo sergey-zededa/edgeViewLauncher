@@ -3,7 +3,7 @@ import { getBackendPort, closeCurrentWindow, CloseTunnel } from '../tauriAPI';
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { WebLinksAddon } from 'xterm-addon-web-links';
-import { X, Power } from 'lucide-react';
+import { X, Unplug } from 'lucide-react';
 import 'xterm/css/xterm.css';
 
 const TerminalView = ({ port }) => {
@@ -394,7 +394,7 @@ const TerminalView = ({ port }) => {
                             title="Stop Tunnel & Close Window"
                             style={{ color: '#ef4444' }}
                         >
-                            <Power size={18} />
+                            <Unplug size={18} />
                         </button>
                     )}
                     <button
