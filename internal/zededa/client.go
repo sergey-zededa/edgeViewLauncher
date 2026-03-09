@@ -23,9 +23,16 @@ type Node struct {
 	EdgeView bool   `json:"edgeview"` // Check if this field exists or we need to check config
 }
 
+type SearchResult struct {
+	Nodes     []Node `json:"nodes"`
+	NextToken string `json:"nextToken"` // Cursor for next page, empty if no more results
+}
+
 // API Response structures
 type DeviceListResponse struct {
-	List []Device `json:"list"`
+	List  []Device `json:"list"`
+	Next  string   `json:"next"`  // Cursor token for next page
+	Total int      `json:"totalCount,omitempty"`
 }
 
 type Device struct {
@@ -106,7 +113,11 @@ func (c *Client) UpdateConfig(baseURL, token string) {
 	c.Token = token
 }
 
-func (c *Client) SearchNodes(query string, limit, skip int, projectID string) ([]Node, error) {
+func (c *Client) SearchNodes(query string, limit, skip int, projectID string) (*SearchResult, error) {
+	return c.SearchNodesWithToken(query, limit, "", projectID)
+}
+
+func (c *Client) SearchNodesWithToken(query string, limit int, pageToken string, projectID string) (*SearchResult, error) {
 	if c.Token == "" {
 		return nil, fmt.Errorf("API token not configured")
 	}
@@ -124,8 +135,8 @@ func (c *Client) SearchNodes(query string, limit, skip int, projectID string) ([
 	if limit > 0 {
 		q.Add("top", fmt.Sprintf("%d", limit))
 	}
-	if skip > 0 {
-		q.Add("skip", fmt.Sprintf("%d", skip))
+	if pageToken != "" {
+		q.Add("next", pageToken)
 	}
 
 	// Add filtering parameters
@@ -140,9 +151,6 @@ func (c *Client) SearchNodes(query string, limit, skip int, projectID string) ([
 
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 	req.Header.Set("Content-Type", "application/json")
-
-	// fmt.Printf("DEBUG: API Request: [%s] %s\n", req.Method, req.URL.String())
-	// fmt.Printf("DEBUG: API Auth: %s\n", req.Header.Get("Authorization"))
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -161,15 +169,11 @@ func (c *Client) SearchNodes(query string, limit, skip int, projectID string) ([
 
 	var results []Node
 	for _, d := range deviceResp.List {
-		// Client-side filtering removed as we rely on API filtering now.
-		// This enables proper pagination.
-
 		runState := strings.TrimSpace(d.RunState)
 		status := "offline"
 		if runState == "RUN_STATE_ONLINE" || runState == "ONLINE" {
 			status = "online"
 		} else {
-			// Cleanup status string for display (e.g. RUN_STATE_REBOOTING -> REBOOTING)
 			status = strings.TrimPrefix(runState, "RUN_STATE_")
 			status = strings.ToLower(status)
 		}
@@ -177,12 +181,12 @@ func (c *Client) SearchNodes(query string, limit, skip int, projectID string) ([
 		results = append(results, Node{
 			ID:       d.ID,
 			Name:     d.Name,
-			Project:  d.ProjectID, // TODO: Resolve project name
+			Project:  d.ProjectID,
 			Status:   status,
-			EdgeView: true, // TODO: Check actual EdgeView status
+			EdgeView: true,
 		})
 	}
-	return results, nil
+	return &SearchResult{Nodes: results, NextToken: deviceResp.Next}, nil
 }
 
 // GetDeviceAppInstances fetches the list of app instances for a specific device

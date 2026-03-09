@@ -362,9 +362,10 @@ function App() {
   const [enterprise, setEnterprise] = useState(null);
   const [userInfo, setUserInfo] = useState(null);
   const [projects, setProjects] = useState({});
-  const [skip, setSkip] = useState(0);
+  const [nextPageToken, setNextPageToken] = useState('');
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [paginationTrigger, setPaginationTrigger] = useState(0); // incremented to trigger pagination
   const LIMIT = 200;
   const searchAbortRef = useRef(null);
   const searchInFlightRef = useRef(false);
@@ -829,38 +830,25 @@ function App() {
         const matchingProjectIds = resolveMatchingProjectIds(query);
         const lowerQuery = query ? query.toLowerCase() : '';
 
-        const nameResults = await SearchNodes(query, LIMIT, 0, '');
+        const nameResult = await SearchNodes(query, LIMIT, '', '');
+        const nameNodes = nameResult?.nodes || nameResult || [];
+        const nameNextToken = nameResult?.nextToken || '';
 
         let projectResults = [];
         if (matchingProjectIds.length > 0) {
           const projectArrays = await Promise.all(
-            matchingProjectIds.map(pid => SearchNodes('', LIMIT, 0, pid).catch(() => []))
+            matchingProjectIds.map(pid =>
+              SearchNodes('', LIMIT, '', pid)
+                .then(r => r?.nodes || r || [])
+                .catch(() => [])
+            )
           );
           projectResults = projectArrays.flat();
         }
 
-        // Client-side filter for name results
-        let filtered = nameResults || [];
-        if (lowerQuery) {
-          filtered = filtered.filter(n => {
-            const nameMatch = n.name && n.name.toLowerCase().includes(lowerQuery);
-            const projName = projects[n.project] || '';
-            const projMatch = projName.toLowerCase().includes(lowerQuery);
-            return nameMatch || projMatch;
-          });
-        }
+        let filtered = filterResults(nameNodes, lowerQuery);
+        projectResults = filterResults(projectResults, lowerQuery);
 
-        // Client-side filter for project results too
-        if (lowerQuery) {
-          projectResults = projectResults.filter(n => {
-            const nameMatch = n.name && n.name.toLowerCase().includes(lowerQuery);
-            const projName = projects[n.project] || '';
-            const projMatch = projName.toLowerCase().includes(lowerQuery);
-            return nameMatch || projMatch;
-          });
-        }
-
-        // Merge project results
         const existingIds = new Set(filtered.map(n => n.id));
         for (const node of projectResults) {
           if (!existingIds.has(node.id)) {
@@ -870,8 +858,9 @@ function App() {
         }
 
         setNodes(filtered);
-        setSkip(0);
-        setHasMore((nameResults || []).length === LIMIT);
+        setNextPageToken(nameNextToken);
+        setHasMore(!!nameNextToken);
+        setPaginationTrigger(0);
       } catch (err) {
         console.error('Background device list refresh failed:', err);
         // Silently fail - don't disrupt user experience
@@ -1638,8 +1627,19 @@ function App() {
       .map(([id]) => id);
   };
 
+  // Client-side filter helper: keep only devices where query appears in name or project name
+  const filterResults = (nodes, lowerQuery) => {
+    if (!lowerQuery) return nodes;
+    return nodes.filter(n => {
+      const nameMatch = n.name && n.name.toLowerCase().includes(lowerQuery);
+      const projName = projects[n.project] || '';
+      const projMatch = projName.toLowerCase().includes(lowerQuery);
+      return nameMatch || projMatch;
+    });
+  };
+
+  // Initial search effect — fires on query or projects change
   useEffect(() => {
-    // Abort any in-flight search request
     if (searchAbortRef.current) {
       searchAbortRef.current.abort();
     }
@@ -1648,85 +1648,54 @@ function App() {
     searchAbortRef.current = abortController;
 
     const search = async () => {
-      const isPaginating = skip > 0;
-      if (isPaginating) {
-        setLoadingMore(true);
-      } else {
-        setLoading(true);
-      }
+      setLoading(true);
       searchInFlightRef.current = true;
       setAuthError(false);
       try {
         const matchingProjectIds = resolveMatchingProjectIds(query);
         const lowerQuery = query ? query.toLowerCase() : '';
 
-        // Search by device name via API
-        const namePromise = SearchNodes(query, LIMIT, skip, '');
+        // Search by device name via API (first page)
+        const nameResult = await SearchNodes(query, LIMIT, '', '');
 
-        // For skip=0, also search by matching project IDs (no namePattern)
-        // to find devices whose project name matches the query
+        // Also search by matching project IDs
         let projectResults = [];
-        if (skip === 0 && matchingProjectIds.length > 0) {
+        if (matchingProjectIds.length > 0) {
           const projectPromises = matchingProjectIds.map(pid =>
-            SearchNodes('', LIMIT, 0, pid).catch(() => [])
+            SearchNodes('', LIMIT, '', pid)
+              .then(r => r?.nodes || r || [])
+              .catch(() => [])
           );
           const projectArrays = await Promise.all(projectPromises);
           projectResults = projectArrays.flat();
         }
 
-        const nameResults = await namePromise;
-
-        // If this request was aborted, discard results
         if (abortController.signal.aborted) return;
 
-        // Client-side filter: the API's namePattern may use prefix matching,
-        // so filter to only keep devices where the query appears in the
-        // device name or its project name (substring match)
-        let filteredNameResults = nameResults || [];
-        if (lowerQuery) {
-          filteredNameResults = filteredNameResults.filter(n => {
-            const nameMatch = n.name && n.name.toLowerCase().includes(lowerQuery);
-            const projName = projects[n.project] || '';
-            const projMatch = projName.toLowerCase().includes(lowerQuery);
-            return nameMatch || projMatch;
-          });
-        }
+        const nameNodes = nameResult?.nodes || nameResult || [];
+        const nameNextToken = nameResult?.nextToken || '';
 
-        // Apply the same client-side filter to project results
-        if (lowerQuery) {
-          projectResults = projectResults.filter(n => {
-            const nameMatch = n.name && n.name.toLowerCase().includes(lowerQuery);
-            const projName = projects[n.project] || '';
-            const projMatch = projName.toLowerCase().includes(lowerQuery);
-            return nameMatch || projMatch;
-          });
-        }
+        // Client-side filter
+        let filtered = filterResults(nameNodes, lowerQuery);
+        projectResults = filterResults(projectResults, lowerQuery);
 
-        // Merge and deduplicate name results + project results
-        const existingIds = new Set(filteredNameResults.map(n => n.id));
+        // Merge and deduplicate
+        const existingIds = new Set(filtered.map(n => n.id));
         for (const node of projectResults) {
           if (!existingIds.has(node.id)) {
-            filteredNameResults.push(node);
+            filtered.push(node);
             existingIds.add(node.id);
           }
         }
 
-        if (skip === 0) {
-          setNodes(filteredNameResults);
-        } else {
-          setNodes(prev => {
-            const prevIds = new Set(prev.map(n => n.id));
-            const newNodes = filteredNameResults.filter(n => !prevIds.has(n.id));
-            return [...prev, ...newNodes];
-          });
-        }
-
-        setHasMore((nameResults || []).length === LIMIT);
+        setNodes(filtered);
+        setNextPageToken(nameNextToken);
+        setHasMore(!!nameNextToken);
         setAuthError(false);
       } catch (err) {
         if (abortController.signal.aborted) return;
         console.error(err);
-        if (skip === 0) setNodes([]);
+        setNodes([]);
         if (err.message && (err.message.includes('401') || err.message.includes('unauthorized'))) {
           setAuthError(true);
         }
@@ -1737,20 +1706,65 @@ function App() {
       }
     };
 
-    // Debounce only on fresh search (typing), not pagination
-    const timeoutId = setTimeout(() => {
-      search();
-    }, skip === 0 ? 300 : 0);
-
+    const timeoutId = setTimeout(search, 300);
     return () => {
       clearTimeout(timeoutId);
       abortController.abort();
     };
-  }, [query, skip, projects]);
+  }, [query, projects]);
+
+  // Pagination effect — fires when user scrolls to load more
+  useEffect(() => {
+    if (paginationTrigger === 0 || !nextPageToken) return;
+
+    if (searchAbortRef.current) {
+      searchAbortRef.current.abort();
+    }
+
+    const abortController = new AbortController();
+    searchAbortRef.current = abortController;
+
+    const loadMore = async () => {
+      setLoadingMore(true);
+      searchInFlightRef.current = true;
+      try {
+        const lowerQuery = query ? query.toLowerCase() : '';
+        const result = await SearchNodes(query, LIMIT, nextPageToken, '');
+
+        if (abortController.signal.aborted) return;
+
+        const newNodes = result?.nodes || result || [];
+        const newNextToken = result?.nextToken || '';
+
+        const filtered = filterResults(newNodes, lowerQuery);
+
+        setNodes(prev => {
+          const prevIds = new Set(prev.map(n => n.id));
+          const unique = filtered.filter(n => !prevIds.has(n.id));
+          return [...prev, ...unique];
+        });
+        setNextPageToken(newNextToken);
+        setHasMore(!!newNextToken);
+      } catch (err) {
+        if (abortController.signal.aborted) return;
+        console.error(err);
+      } finally {
+        searchInFlightRef.current = false;
+        setLoadingMore(false);
+      }
+    };
+
+    loadMore();
+    return () => {
+      abortController.abort();
+    };
+  }, [paginationTrigger]);
 
   // Reset pagination when query changes
   useEffect(() => {
-    setSkip(0);
+    setNextPageToken('');
+    setHasMore(true);
+    setPaginationTrigger(0);
   }, [query]);
 
   const handleConnect = async (node) => {
@@ -4257,11 +4271,11 @@ Do you want to try connecting anyway?`)) {
                   onScroll={(e) => {
                     const { scrollTop, scrollHeight, clientHeight } = e.target;
                     if (scrollHeight - scrollTop - clientHeight < 100 && hasMore && !loading && !loadingMore) {
-                      setSkip(prev => prev + LIMIT);
+                      setPaginationTrigger(prev => prev + 1);
                     }
                   }}
                 >
-                  {loading && skip === 0 && (
+                  {loading && !loadingMore && (
                     <div className="loading-state">
                       <Activity className="loading-icon animate-spin" size={24} />
                       <p>Loading nodes...</p>

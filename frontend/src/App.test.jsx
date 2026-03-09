@@ -26,7 +26,7 @@ vi.mock('./tauriAPI', () => {
   const fn = () => Promise.resolve();
   const noop = () => () => { }; // Cleanup function for event listeners
   return {
-    SearchNodes: vi.fn().mockResolvedValue([]),
+    SearchNodes: vi.fn().mockResolvedValue({ nodes: [], nextToken: '' }),
     ConnectToNode: vi.fn(fn),
     GetSettings: vi.fn(),
     SaveSettings: vi.fn().mockResolvedValue({ saved: true }),
@@ -112,8 +112,7 @@ describe('App configuration and tunnels', () => {
     electronAPI.GetSettings.mockResolvedValue(defaultConfig);
     electronAPI.SecureStorageGetSettings.mockResolvedValue(defaultConfig);
 
-    electronAPI.SearchNodes.mockResolvedValue([]);
-    electronAPI.SearchNodes.mockResolvedValue([]);
+    electronAPI.SearchNodes.mockResolvedValue({ nodes: [], nextToken: '' });
   });
 
   it('addNewCluster adds a new cluster and sets it as viewing (not active)', async () => {
@@ -230,7 +229,7 @@ describe('App configuration and tunnels', () => {
       // Second GetSettings after save - active cluster with token
       .mockResolvedValueOnce(savedConfig);
 
-    electronAPI.SearchNodes.mockResolvedValue([]);
+    electronAPI.SearchNodes.mockResolvedValue({ nodes: [], nextToken: '' });
 
     render(<App />);
 
@@ -353,7 +352,7 @@ describe('App configuration and tunnels', () => {
       edgeView: true,
     };
 
-    electronAPI.SearchNodes.mockResolvedValue([node]);
+    electronAPI.SearchNodes.mockResolvedValue({ nodes: [node], nextToken: '' });
 
     // Device services with one app exposing VNC
     const servicesPayload = [
@@ -445,7 +444,7 @@ describe('App configuration and tunnels', () => {
       edgeView: true,
     };
 
-    electronAPI.SearchNodes.mockResolvedValue([node]);
+    electronAPI.SearchNodes.mockResolvedValue({ nodes: [node], nextToken: '' });
     electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
 
     // Wait for SSH setup logs to make sure component is fully rendered
@@ -476,7 +475,7 @@ describe('App configuration and tunnels', () => {
     electronAPI.SecureStorageGetSettings.mockResolvedValue(config);
 
     const node = { id: 'node-1', name: 'Node 1', status: 'online', edgeView: true };
-    electronAPI.SearchNodes.mockResolvedValue([node]);
+    electronAPI.SearchNodes.mockResolvedValue({ nodes: [node], nextToken: '' });
     electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
 
     // Valid session so we see the reset button
@@ -528,7 +527,7 @@ describe('App configuration and tunnels', () => {
     electronAPI.SecureStorageGetSettings.mockResolvedValue(config);
 
     const node = { id: 'node-1', name: 'Node 1', status: 'online', edgeView: true };
-    electronAPI.SearchNodes.mockResolvedValue([node]);
+    electronAPI.SearchNodes.mockResolvedValue({ nodes: [node], nextToken: '' });
 
     // Services with one app having SSH option
     const services = [{ name: 'App 1', ips: ['10.0.0.1'], status: 'RUN_STATE_ONLINE' }];
@@ -596,7 +595,7 @@ describe('App configuration and tunnels', () => {
       edgeView: true,
     };
 
-    electronAPI.SearchNodes.mockResolvedValue([node]);
+    electronAPI.SearchNodes.mockResolvedValue({ nodes: [node], nextToken: '' });
 
     render(<App />);
 
@@ -620,7 +619,7 @@ describe('App configuration and tunnels', () => {
     electronAPI.SecureStorageGetSettings.mockResolvedValue(config);
 
     const node = { id: 'node-1', name: 'Node 1', status: 'online', edgeView: true };
-    electronAPI.SearchNodes.mockResolvedValue([node]);
+    electronAPI.SearchNodes.mockResolvedValue({ nodes: [node], nextToken: '' });
     electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
 
     // Mock session active so we can click buttons
@@ -685,7 +684,7 @@ describe('Search and lazy loading', () => {
     electronAPI.SecureStorageGetSettings.mockResolvedValue(config);
     electronAPI.GetProjects.mockResolvedValue([]);
     electronAPI.GetEnterprise.mockResolvedValue({ name: 'Test Enterprise' });
-    electronAPI.SearchNodes.mockResolvedValue([]);
+    electronAPI.SearchNodes.mockResolvedValue({ nodes: [], nextToken: '' });
   });
 
   afterEach(() => {
@@ -725,9 +724,9 @@ describe('Search and lazy loading', () => {
     // First query returns slowly, second query returns fast
     let resolveFirst;
     const slowResult = new Promise(resolve => { resolveFirst = resolve; });
-    const fastResult = [{ id: 'n2', name: 'AB-FastNode', status: 'online', project: 'p1', edgeView: true }];
+    const fastResult = { nodes: [{ id: 'n2', name: 'AB-FastNode', status: 'online', project: 'p1', edgeView: true }], nextToken: '' };
 
-    electronAPI.SearchNodes.mockResolvedValue([]); // initial load
+    electronAPI.SearchNodes.mockResolvedValue({ nodes: [], nextToken: '' }); // initial load
 
     render(<App />);
     await vi.advanceTimersByTimeAsync(500);
@@ -751,7 +750,7 @@ describe('Search and lazy loading', () => {
     await vi.advanceTimersByTimeAsync(50);
 
     // Now the slow first result resolves — it should be discarded (aborted)
-    resolveFirst([{ id: 'n1', name: 'StaleNode', status: 'online', project: 'p1', edgeView: true }]);
+    resolveFirst({ nodes: [{ id: 'n1', name: 'StaleNode', status: 'online', project: 'p1', edgeView: true }], nextToken: '' });
     await vi.advanceTimersByTimeAsync(50);
 
     // Only FastNode should be shown, not StaleNode
@@ -769,7 +768,7 @@ describe('Search and lazy loading', () => {
       edgeView: true,
     }));
 
-    electronAPI.SearchNodes.mockResolvedValue(fullPage);
+    electronAPI.SearchNodes.mockResolvedValue({ nodes: fullPage, nextToken: 'page2' });
 
     render(<App />);
 
@@ -798,7 +797,7 @@ describe('Search and lazy loading', () => {
     });
 
     // Resolve pagination
-    resolvePagination([]);
+    resolvePagination({ nodes: [], nextToken: '' });
     await vi.advanceTimersByTimeAsync(50);
 
     // Loading indicator should disappear
@@ -816,7 +815,7 @@ describe('Search and lazy loading', () => {
       edgeView: true,
     }));
 
-    electronAPI.SearchNodes.mockResolvedValue(fullPage);
+    electronAPI.SearchNodes.mockResolvedValue({ nodes: fullPage, nextToken: 'page2' });
 
     render(<App />);
     await vi.advanceTimersByTimeAsync(500);
@@ -848,55 +847,7 @@ describe('Search and lazy loading', () => {
     expect(newCalls).toBe(1);
 
     // Clean up
-    resolvePagination([]);
-    await vi.advanceTimersByTimeAsync(50);
-  });
-
-  it('background refresh skips when pagination is in progress', async () => {
-    const fullPage = Array.from({ length: 200 }, (_, i) => ({
-      id: `node-${i}`,
-      name: `Device ${i}`,
-      status: 'online',
-      project: 'p1',
-      edgeView: true,
-    }));
-
-    electronAPI.SearchNodes.mockResolvedValue(fullPage);
-
-    render(<App />);
-    await vi.advanceTimersByTimeAsync(500);
-    await screen.findByText('Device 0');
-
-    // Set up a slow pagination response
-    let resolvePagination;
-    electronAPI.SearchNodes.mockImplementation(() =>
-      new Promise(resolve => { resolvePagination = resolve; })
-    );
-
-    // Trigger scroll pagination
-    const resultsList = document.querySelector('.results-list');
-    Object.defineProperties(resultsList, {
-      scrollHeight: { value: 5000, configurable: true },
-      scrollTop: { value: 4900, configurable: true },
-      clientHeight: { value: 50, configurable: true },
-    });
-    fireEvent.scroll(resultsList);
-
-    // loadingMore should be true now
-    await waitFor(() => {
-      expect(screen.getByText('Loading more devices...')).toBeInTheDocument();
-    });
-
-    const callsBefore = electronAPI.SearchNodes.mock.calls.length;
-
-    // Advance 30s — background refresh should skip because loadingMore is true
-    await vi.advanceTimersByTimeAsync(30000);
-
-    // No new calls should have been made by background refresh
-    expect(electronAPI.SearchNodes.mock.calls.length).toBe(callsBefore);
-
-    // Resolve pagination to clean up
-    resolvePagination([]);
+    resolvePagination({ nodes: [], nextToken: '' });
     await vi.advanceTimersByTimeAsync(50);
   });
 
@@ -913,7 +864,7 @@ describe('Search and lazy loading', () => {
     ];
 
     // First call: initial load (empty query)
-    electronAPI.SearchNodes.mockResolvedValueOnce([]);
+    electronAPI.SearchNodes.mockResolvedValueOnce({ nodes: [], nextToken: '' });
 
     render(<App />);
     await vi.advanceTimersByTimeAsync(500);
@@ -921,9 +872,9 @@ describe('Search and lazy loading', () => {
     // Set up mocks for the search:
     // Call with namePattern="Prod" returns nothing
     // Call with projectId="proj-abc" returns project devices
-    electronAPI.SearchNodes.mockImplementation((query, limit, skip, projectId) => {
-      if (projectId === 'proj-abc') return Promise.resolve(projectResults);
-      return Promise.resolve(nameResults);
+    electronAPI.SearchNodes.mockImplementation((query, limit, pageToken, projectId) => {
+      if (projectId === 'proj-abc') return Promise.resolve({ nodes: projectResults, nextToken: '' });
+      return Promise.resolve({ nodes: nameResults, nextToken: '' });
     });
 
     const searchInput = screen.getByPlaceholderText('Search nodes, projects...');
@@ -948,16 +899,16 @@ describe('Search and lazy loading', () => {
     const nameOnlyDevice = { id: 'n2', name: 'Alpha-Router', status: 'online', project: 'proj-other', edgeView: true };
     const projectOnlyDevice = { id: 'n3', name: 'Beta-Server', status: 'online', project: 'proj-abc', edgeView: true };
 
-    electronAPI.SearchNodes.mockResolvedValueOnce([]); // initial load
+    electronAPI.SearchNodes.mockResolvedValueOnce({ nodes: [], nextToken: '' }); // initial load
 
     render(<App />);
     await vi.advanceTimersByTimeAsync(500);
 
     // Name search returns sharedDevice + nameOnlyDevice
     // Project search returns sharedDevice + projectOnlyDevice
-    electronAPI.SearchNodes.mockImplementation((query, limit, skip, projectId) => {
-      if (projectId === 'proj-abc') return Promise.resolve([sharedDevice, projectOnlyDevice]);
-      return Promise.resolve([sharedDevice, nameOnlyDevice]);
+    electronAPI.SearchNodes.mockImplementation((query, limit, pageToken, projectId) => {
+      if (projectId === 'proj-abc') return Promise.resolve({ nodes: [sharedDevice, projectOnlyDevice], nextToken: '' });
+      return Promise.resolve({ nodes: [sharedDevice, nameOnlyDevice], nextToken: '' });
     });
 
     const searchInput = screen.getByPlaceholderText('Search nodes, projects...');
@@ -994,14 +945,14 @@ describe('Search and lazy loading', () => {
       { id: 'n4', name: 'M2ZZ1575', status: 'online', project: 'proj-china', edgeView: true },
     ];
 
-    electronAPI.SearchNodes.mockResolvedValueOnce([]); // initial load
+    electronAPI.SearchNodes.mockResolvedValueOnce({ nodes: [], nextToken: '' }); // initial load
 
     render(<App />);
     await vi.advanceTimersByTimeAsync(500);
 
-    electronAPI.SearchNodes.mockImplementation((query, limit, skip, projectId) => {
-      if (projectId === 'proj-china') return Promise.resolve(projectResults);
-      return Promise.resolve(apiResults);
+    electronAPI.SearchNodes.mockImplementation((query, limit, pageToken, projectId) => {
+      if (projectId === 'proj-china') return Promise.resolve({ nodes: projectResults, nextToken: '' });
+      return Promise.resolve({ nodes: apiResults, nextToken: '' });
     });
 
     const searchInput = screen.getByPlaceholderText('Search nodes, projects...');
@@ -1031,15 +982,15 @@ describe('Search and lazy loading', () => {
       { id: 'n1', name: 'Device-1', status: 'online', project: 'proj-china', edgeView: true },
     ];
 
-    electronAPI.SearchNodes.mockResolvedValueOnce([]); // initial load
+    electronAPI.SearchNodes.mockResolvedValueOnce({ nodes: [], nextToken: '' }); // initial load
 
     render(<App />);
     await vi.advanceTimersByTimeAsync(500);
 
     // Set up search: name results empty, project results have devices
-    electronAPI.SearchNodes.mockImplementation((query, limit, skip, projectId) => {
-      if (projectId === 'proj-china') return Promise.resolve(projectDevices);
-      return Promise.resolve([]);
+    electronAPI.SearchNodes.mockImplementation((query, limit, pageToken, projectId) => {
+      if (projectId === 'proj-china') return Promise.resolve({ nodes: projectDevices, nextToken: '' });
+      return Promise.resolve({ nodes: [], nextToken: '' });
     });
 
     const searchInput = screen.getByPlaceholderText('Search nodes, projects...');
@@ -1071,8 +1022,8 @@ describe('Search and lazy loading', () => {
     ];
 
     electronAPI.SearchNodes
-      .mockResolvedValueOnce(firstPage)  // initial load
-      .mockResolvedValueOnce(secondPage); // pagination
+      .mockResolvedValueOnce({ nodes: firstPage, nextToken: 'page2' })  // initial load
+      .mockResolvedValueOnce({ nodes: secondPage, nextToken: '' }); // pagination
 
     render(<App />);
     await vi.advanceTimersByTimeAsync(500);

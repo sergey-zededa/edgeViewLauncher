@@ -20,8 +20,8 @@ const apiCall = (endpoint, method = 'GET', body = undefined) =>
 
 // ── Node / Device API ─────────────────────────────────────────────────────────
 
-export const SearchNodes = (query, limit = 200, skip = 0, projectId = '') =>
-    apiCall('/api/search-nodes', 'POST', { query, limit, skip, projectId }).then(r => r?.data);
+export const SearchNodes = (query, limit = 200, pageToken = '', projectId = '') =>
+    apiCall('/api/search-nodes', 'POST', { query, limit, pageToken, projectId }).then(r => r?.data);
 
 export const ConnectToNode = (nodeId, useInApp) =>
     apiCall('/api/connect', 'POST', { nodeId, useInApp }).then(r => r?.data);
