@@ -200,7 +200,14 @@
                 <div id="vnc-details"></div>
             </div>
             <div id="vnc-header-controls">
-                <button class="header-btn" id="btn-close" title="Close Window">
+                <button class="header-btn" id="btn-stop-tunnel" title="Stop Tunnel & Close Window" style="color: #ef4444; display: none;">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path>
+                        <line x1="12" y1="2" x2="12" y2="12"></line>
+                    </svg>
+                </button>
+                <button class="header-btn" id="btn-close" title="Close Window (Leave Tunnel Open)">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                         stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -224,7 +231,7 @@
 
     <script type="module">
         import RFB from '@novnc/novnc/lib/rfb.js';
-        import { resizeWindow, closeCurrentWindow } from './src/tauriAPI.js';
+        import { resizeWindow, closeCurrentWindow, CloseTunnel } from './src/tauriAPI.js';
 
         const urlParams = new URLSearchParams(window.location.search);
         const port = urlParams.get('port');
@@ -442,6 +449,20 @@
                 document.documentElement.requestFullscreen();
             }
         });
+
+        // Stop tunnel & close window button
+        if (tunnelId) {
+            const btnStopTunnel = document.getElementById('btn-stop-tunnel');
+            btnStopTunnel.style.display = 'flex';
+            btnStopTunnel.addEventListener('click', async () => {
+                try {
+                    await CloseTunnel(tunnelId);
+                } catch (err) {
+                    console.error('Failed to close tunnel:', err);
+                }
+                closeCurrentWindow().catch(() => window.close());
+            });
+        }
 
         // Close window button
         document.getElementById('btn-close').addEventListener('click', () => {
