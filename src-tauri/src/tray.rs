@@ -7,7 +7,7 @@ use crate::state::AppState;
 use tauri::{
     AppHandle, Manager,
     menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    tray::TrayIconBuilder,
     Emitter,
 };
 use tokio::time::{Duration, interval};
@@ -18,11 +18,13 @@ pub fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         .icon(tauri::image::Image::from_bytes(include_bytes!("../../assets/trayTemplate.png")).expect("tray icon"))
         .icon_as_template(true)
         .menu(&build_initial_menu(app)?)
-        .show_menu_on_left_click(false)
+        .show_menu_on_left_click(true)
         .on_menu_event(|app, event| {
             let id = event.id.as_ref();
             if id == "show" {
                 if let Some(w) = app.get_webview_window("main") {
+                    #[cfg(target_os = "macos")]
+                    let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
                     let _ = w.show();
                     let _ = w.set_focus();
                 }
@@ -41,20 +43,6 @@ pub fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                     });
                 }
             }
-        })
-        .on_tray_icon_event(|tray, event| match event {
-            TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } => {
-                let app = tray.app_handle();
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.show();
-                    let _ = w.set_focus();
-                }
-            }
-            _ => {}
         })
         .build(app)?;
 
