@@ -30,9 +30,9 @@ type SearchResult struct {
 
 // API Response structures
 type DeviceListResponse struct {
-	List  []Device `json:"list"`
-	Next  string   `json:"next"`  // Cursor token for next page
-	Total int      `json:"totalCount,omitempty"`
+	List    []Device        `json:"list"`
+	Next    json.RawMessage `json:"next"`  // Cursor for next page — may be a string or an object
+	Total   int             `json:"totalCount,omitempty"`
 }
 
 type Device struct {
@@ -136,7 +136,18 @@ func (c *Client) SearchNodesWithToken(query string, limit int, pageToken string,
 		q.Add("top", fmt.Sprintf("%d", limit))
 	}
 	if pageToken != "" {
-		q.Add("next", pageToken)
+		// The next cursor from the API is a JSON object like
+		// {"pageToken":"200","orderBy":["name:ASC"],"pageNum":1,"pageSize":200,"totalPages":24}
+		// Extract the pageToken value and pass as next.pageToken query parameter.
+		var nextObj struct {
+			PageToken string `json:"pageToken"`
+		}
+		if json.Unmarshal([]byte(pageToken), &nextObj) == nil && nextObj.PageToken != "" {
+			q.Add("next.pageToken", nextObj.PageToken)
+		} else {
+			// Plain string token — pass as-is
+			q.Add("next.pageToken", pageToken)
+		}
 	}
 
 	// Add filtering parameters
@@ -186,7 +197,18 @@ func (c *Client) SearchNodesWithToken(query string, limit int, pageToken string,
 			EdgeView: true,
 		})
 	}
-	return &SearchResult{Nodes: results, NextToken: deviceResp.Next}, nil
+	// Extract next-page cursor: the API may return a string, an object, or null.
+	// We store the raw JSON as the opaque cursor token so it can be sent back verbatim.
+	nextToken := ""
+	if len(deviceResp.Next) > 0 && string(deviceResp.Next) != "null" {
+		nextToken = string(deviceResp.Next)
+		// If it's a JSON string (quoted), unwrap the quotes
+		var s string
+		if json.Unmarshal(deviceResp.Next, &s) == nil {
+			nextToken = s
+		}
+	}
+	return &SearchResult{Nodes: results, NextToken: nextToken}, nil
 }
 
 // GetDeviceAppInstances fetches the list of app instances for a specific device

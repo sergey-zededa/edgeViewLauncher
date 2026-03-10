@@ -17,8 +17,8 @@ import (
 type zededaAPI interface {
 	GetEnterprise() (*zededa.Enterprise, error)
 	GetProjects() ([]zededa.Project, error)
-	SearchNodes(query string, limit, skip int, projectID string) (*zededa.SearchResult, error)
-	SearchNodesWithToken(query string, limit int, pageToken string, projectID string) (*zededa.SearchResult, error)
+	SearchNodes(query string, limit, skip int, projectID string) (*zededa.SearchResult, error)          // legacy compat
+	SearchNodesWithToken(query string, limit int, pageToken string, projectID string) (*zededa.SearchResult, error) // cursor-based
 	UpdateConfig(baseURL, token string)
 	InitSession(targetID string) (string, error)
 	ParseEdgeViewScript(script string) (*zededa.SessionConfig, error)
