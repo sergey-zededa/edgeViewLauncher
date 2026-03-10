@@ -2278,6 +2278,11 @@ Do you want to try connecting anyway?`)) {
   const getNodeAtIndex = (index) => displayNodes[index];
 
   const handleKeyDown = (e) => {
+    if (e.key === 'Escape' && showSettings) {
+      e.preventDefault();
+      setShowSettings(false);
+      return;
+    }
     if (showSettings || selectedNode) return;
     if (e.key === 'ArrowDown') {
       setSelectedIndex(prev => Math.min(prev + 1, displayNodes.length - 1));
@@ -2346,9 +2351,18 @@ Do you want to try connecting anyway?`)) {
       await SecureStorageSaveSettings(newConfig);
       setConfig(newConfig);
 
-      // 3. Reload user info for the new active cluster
-      // We need to ensure the backend has received the new config
-      // SecureStorageSaveSettings handles this via IPC->Backend sync
+      // 2b. Update the viewing state so the settings panel reflects the new active cluster
+      setViewingClusterName(target);
+      const targetCluster = newConfig.clusters.find(c => c.name === target);
+      if (targetCluster) {
+        setEditingCluster({ ...targetCluster });
+        fetchViewingUserInfo(targetCluster);
+      }
+
+      // 3. Push updated config to the Go backend so subsequent API calls use the new cluster
+      await InjectSecureConfig().catch(err => console.error('Failed to inject config:', err));
+
+      // Reload user info for the new active cluster
       await loadUserInfo();
 
       // Clear any auth errors since we switched
@@ -2358,7 +2372,8 @@ Do you want to try connecting anyway?`)) {
       try {
         setLoading(true);
         const results = await SearchNodes('');
-        setNodes(results || []);
+        const nodesList = results?.nodes || (Array.isArray(results) ? results : []);
+        setNodes(nodesList);
       } catch (err) {
         console.error('Failed to refresh nodes after switch:', err);
       } finally {
@@ -2493,7 +2508,7 @@ Do you want to try connecting anyway?`)) {
 
         // Clear state before reloading to prevent stale data
         setNodes([]);
-        setProjects([]);
+        setProjects({});
         setEnterprise(null);
 
         // Refresh global active user info if we changed the active cluster
@@ -2523,7 +2538,8 @@ Do you want to try connecting anyway?`)) {
       } else {
         try {
           const results = await SearchNodes('');
-          setNodes(results || []);
+          const nodesList = results?.nodes || (Array.isArray(results) ? results : []);
+          setNodes(nodesList);
         } catch (err) {
           console.error('Failed to fetch nodes after save:', err);
         }
@@ -4182,7 +4198,7 @@ Do you want to try connecting anyway?`)) {
                   )}
 
                   <div style={{ display: 'flex', gap: '12px', marginBottom: '4px' }}>
-                    <div className="form-group" style={{ flex: '3' }}>
+                    <div className="form-group" style={{ flex: '1 1 0' }}>
                       <label>Username</label>
                       <input
                         type="text"
@@ -4191,7 +4207,7 @@ Do you want to try connecting anyway?`)) {
                         placeholder="root"
                       />
                     </div>
-                    <div className="form-group" style={{ flex: '1' }}>
+                    <div className="form-group" style={{ flex: '1 1 0' }}>
                       <label>Port</label>
                       <div style={{ display: 'flex', gap: '8px' }}>
                         <input
@@ -4201,7 +4217,7 @@ Do you want to try connecting anyway?`)) {
                           placeholder="22"
                           min="1"
                           max="65535"
-                          style={{ width: '80px' }}
+                          style={{ width: '70px', flexShrink: 0 }}
                         />
                         <PortSelect
                           exposedPorts={[]}

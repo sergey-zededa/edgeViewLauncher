@@ -170,8 +170,13 @@ func (a *App) SaveSettings(clusters []config.ClusterConfig, activeCluster string
 
 	if found {
 		// Update client with new active cluster settings
-		// Update client with new active cluster settings
 		a.zededaClient.UpdateConfig(activeConfig.BaseURL, activeConfig.APIToken)
+
+		// Clear cached token info and re-fetch for the new cluster
+		a.mu.Lock()
+		a.tokenInfoCache = nil
+		a.mu.Unlock()
+		a.fetchTokenInfo(activeConfig.APIToken)
 	}
 
 	return config.Save(a.config)
