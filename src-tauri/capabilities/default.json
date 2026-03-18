@@ -4,6 +4,7 @@
   "windows": ["main", "terminal-*", "vnc-*"],
   "permissions": [
     "core:default",
+    "core:window:allow-start-dragging",
     "shell:allow-open",
     {
       "identifier": "shell:allow-execute",

@@ -41,6 +41,7 @@ vi.mock('./tauriAPI', () => ({
   SecureStorageMigrate: vi.fn(),
   SecureStorageGetSettings: vi.fn(),
   SecureStorageSaveSettings: vi.fn(),
+  InjectSecureConfig: vi.fn().mockResolvedValue(),
   getElectronAppInfo: vi.fn().mockResolvedValue({
     version: '1.0.0',
     buildNumber: 'test',
@@ -382,7 +383,7 @@ describe('Secure Storage Integration', () => {
 
       // Wait for search results
       await waitFor(() => {
-        expect(tauriAPI.SearchNodes).toHaveBeenCalledWith('Test', 200, 0, '');
+        expect(tauriAPI.SearchNodes).toHaveBeenCalledWith('Test', 200, '', '');
       });
 
       // Connect to node (simulate)

@@ -497,9 +497,18 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 
 	m.RegisterTunnel(tunnel)
 
+	// Send an immediate keepalive to prevent the dispatcher/LB from timing out
+	// the idle WebSocket before the first TCP client connects (which may take
+	// several seconds as the frontend creates and loads the terminal window).
+	keepaliveData := tcpData{Version: 0, MappingID: 1, ChanNum: 0, Data: []byte{}}
+	kaBytes, _ := json.Marshal(keepaliveData)
+	if err := sendWrappedMessage(wsConn, kaBytes, config.Key, websocket.BinaryMessage, config.Enc); err != nil {
+		fmt.Printf("TUNNEL[%s] Initial keepalive failed: %v\n", tunnel.ID, err)
+	}
+
 	// Start the WebSocket reader that dispatches to TCP clients
 	go m.tunnelWSReader(tunnelCtx, tunnel)
-	// Start keep-alive loop
+	// Start keep-alive loop (reduced to 15s to stay well within dispatcher timeouts)
 	go m.tunnelKeepAlive(tunnelCtx, tunnel)
 
 	// Handle protocol-specific logic
@@ -1361,11 +1370,10 @@ func (m *Manager) attemptTunnelReconnect(tunnel *Tunnel) bool {
 // 3. Must use BinaryMessage for TCP data to be processed correctly
 // 4. The DEVICE's keepalive is 90 seconds, but we see ~30s timeouts - cloud may be timing out device connection
 func (m *Manager) tunnelKeepAlive(ctx context.Context, tunnel *Tunnel) {
-	// Less aggressive: 30 seconds. The observed timeout is ~30-40s, so this should be safe
-	// while avoiding flooding the device with keepalives.
-	ticker := time.NewTicker(30 * time.Second)
+	// 15 seconds to stay well within dispatcher/LB idle timeouts.
+	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
-	fmt.Printf("TUNNEL[%s] Keep-alive started (30s BinaryMessage)\n", tunnel.ID)
+	fmt.Printf("TUNNEL[%s] Keep-alive started (15s BinaryMessage)\n", tunnel.ID)
 
 	keepaliveCount := 0
 	for {
@@ -1540,6 +1548,11 @@ func (m *Manager) tunnelWSReader(ctx context.Context, tunnel *Tunnel) {
 				ch, ok := tunnel.channels[td.ChanNum]
 				tunnel.channelMu.RUnlock()
 
+				if !ok {
+					fmt.Printf("TUNNEL[%s] ChanNum=%d: WARNING no channel registered, dropping %d bytes\n",
+						tunnel.ID, td.ChanNum, len(dataCopy))
+				}
+
 				if ok {
 					select {
 					case ch <- dataCopy:
@@ -1631,9 +1644,9 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 	if tunnel.wsConn != nil {
 		if err := sendWrappedMessage(tunnel.wsConn, initBytes, tunnel.config.Key, websocket.BinaryMessage, tunnel.config.Enc); err != nil {
 			fmt.Printf("TUNNEL[%s] ChanNum=%d: Failed to send init packet: %v\n", tunnel.ID, chanNum, err)
-		} else {
-			// fmt.Printf("TUNNEL[%s] ChanNum=%d: Sent init packet (empty tcpData)\n", tunnel.ID, chanNum)
 		}
+	} else {
+		fmt.Printf("TUNNEL[%s] ChanNum=%d: WARNING wsConn is nil, cannot send init packet\n", tunnel.ID, chanNum)
 	}
 	tunnel.wsMu.Unlock()
 

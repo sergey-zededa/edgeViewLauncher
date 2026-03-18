@@ -342,7 +342,7 @@ const TerminalView = ({ port }) => {
             }}
         >
             {/* Toolbar */}
-            <div className="terminal-toolbar" style={{
+            <div className="terminal-toolbar" data-tauri-drag-region style={{
                 padding: '10px',
                 paddingLeft: navigator.userAgent.includes('Mac') ? '80px' : '10px',
                 backgroundColor: 'var(--bg-panel)',
@@ -387,6 +387,14 @@ const TerminalView = ({ port }) => {
                     gap: '10px',
                     WebkitAppRegion: 'no-drag'
                 }}>
+                    <button
+                        onClick={handleClose}
+                        className="icon-btn"
+                        title="Close Window (Leave Tunnel Open)"
+                        style={{ color: 'var(--text-primary)' }}
+                    >
+                        <Unplug size={18} />
+                    </button>
                     {connectionInfo.tunnelId && (
                         <button
                             onClick={handleStopTunnelAndClose}
@@ -394,17 +402,9 @@ const TerminalView = ({ port }) => {
                             title="Stop Tunnel & Close Window"
                             style={{ color: '#ef4444' }}
                         >
-                            <Unplug size={18} />
+                            <X size={20} />
                         </button>
                     )}
-                    <button
-                        onClick={handleClose}
-                        className="icon-btn"
-                        title="Close Window (Leave Tunnel Open)"
-                        style={{ color: 'var(--text-primary)' }}
-                    >
-                        <X size={20} />
-                    </button>
                 </div>
             </div>
 

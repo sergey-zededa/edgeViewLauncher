@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import RFB from '@novnc/novnc/lib/rfb';
-import { Maximize, Minimize, X } from 'lucide-react';
+import { Maximize, Minimize, Unplug, X } from 'lucide-react';
+import { CloseTunnel } from '../tauriAPI';
 
-const VncViewer = ({ url, onClose, password = '' }) => {
+const VncViewer = ({ url, onClose, password = '', tunnelId = null }) => {
     const rfbRef = useRef(null);
     const containerRef = useRef(null);
     const [status, setStatus] = useState('Connecting...');
@@ -96,7 +97,7 @@ const VncViewer = ({ url, onClose, password = '' }) => {
             flexDirection: 'column'
         }}>
             {/* Toolbar */}
-            <div className="vnc-toolbar" style={{
+            <div className="vnc-toolbar" data-tauri-drag-region style={{
                 padding: '10px',
                 paddingLeft: navigator.userAgent.includes('Mac') ? '80px' : '10px',
                 backgroundColor: '#1a1a1a',
@@ -138,11 +139,24 @@ const VncViewer = ({ url, onClose, password = '' }) => {
                     <button
                         onClick={onClose}
                         className="icon-btn"
-                        title="Close Viewer"
+                        title="Close Window (Leave Tunnel Open)"
                         style={{ color: '#fff' }}
                     >
-                        <X size={20} />
+                        <Unplug size={18} />
                     </button>
+                    {tunnelId && (
+                        <button
+                            onClick={async () => {
+                                try { await CloseTunnel(tunnelId); } catch (e) { console.error('Failed to close tunnel:', e); }
+                                onClose();
+                            }}
+                            className="icon-btn danger"
+                            title="Stop Tunnel & Close Window"
+                            style={{ color: '#ef4444' }}
+                        >
+                            <X size={20} />
+                        </button>
+                    )}
                 </div>
             </div>
 

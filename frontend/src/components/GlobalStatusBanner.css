@@ -11,6 +11,8 @@
     font-size: 13px;
     min-height: 40px;
     box-sizing: border-box;
+    position: relative;
+    z-index: 10000;
 }
 
 @keyframes slideDown {

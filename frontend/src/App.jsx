@@ -135,7 +135,7 @@ const PortSelect = ({ exposedPorts = [], selectedValue, onChange, placeholder, s
   const hasResults = filteredExposed.length > 0 || filteredCommon.length > 0;
 
   return (
-    <div className="custom-select-container" ref={dropdownRef} style={{ position: 'relative', flex: 1 }}>
+    <div className="custom-select-container" ref={dropdownRef} style={{ position: 'relative', flex: 1, minWidth: 0, overflow: 'hidden' }}>
       <div
         className="custom-select-trigger"
         onClick={toggleDropdown}
@@ -170,8 +170,8 @@ const PortSelect = ({ exposedPorts = [], selectedValue, onChange, placeholder, s
           <div className="custom-select-options" style={{
             position: 'fixed',
             top: coords.top + 4,
-            left: coords.left,
-            width: coords.width,
+            right: window.innerWidth - (coords.left + coords.width),
+            minWidth: '220px',
             backgroundColor: 'var(--bg-panel)',
             border: '1px solid var(--border-subtle)',
             borderRadius: '4px',
@@ -736,8 +736,14 @@ function App() {
           });
 
           // Merge: keep tunnels for other nodes + updated list for this node
+          // Preserve username from previous tunnel state (not returned by backend)
           const others = prev.filter(t => t.nodeId !== selectedNode.id);
-          return [...others, ...mapped];
+          const prevByIdMap = new Map(prev.map(t => [t.id, t]));
+          const mergedMapped = mapped.map(t => ({
+            ...t,
+            username: prevByIdMap.get(t.id)?.username || ''
+          }));
+          return [...others, ...mergedMapped];
         });
       } catch (err) {
         console.error('Failed to list tunnels:', err);
@@ -2060,8 +2066,14 @@ Do you want to try connecting anyway?`)) {
     setGlobalStatus({ type: 'loading', message: enabled ? "Enabling Console..." : "Disabling Console..." });
     try {
       await SetConsoleEnabled(selectedNode.id, enabled);
-      loadSSHStatus(selectedNode.id);  // Refresh to get updated status
+      // Optimistic UI update — cloud API may not have propagated yet
+      setSshStatus(prev => prev ? { ...prev, consoleEnabled: enabled } : prev);
       addLog(`Console access ${enabled ? 'enabled' : 'disabled'}`, 'success');
+      setLoadingSSH(false);
+      setGlobalStatus({ type: 'success', message: `Console ${enabled ? 'enabled' : 'disabled'}` });
+      setTimeout(() => setGlobalStatus(null), 3000);
+      // Background refresh after cloud propagation delay
+      setTimeout(() => loadSSHStatus(selectedNode.id), 2000);
     } catch (err) {
       console.error(err);
       addLog(`Failed to toggle Console: ${err}`, 'error');
@@ -2558,7 +2570,7 @@ Do you want to try connecting anyway?`)) {
   return (
     <div className="app-container" onKeyDown={handleKeyDown} tabIndex={0}>
       {!selectedNode && (
-        <div className="cluster-info">
+        <div className="cluster-info" data-tauri-drag-region>
           {(() => {
             const active = config.clusters.find(c => c.name === config.activeCluster) ||
               (config.baseUrl ? { baseUrl: config.baseUrl, apiToken: config.apiToken } : null);
@@ -2606,7 +2618,7 @@ Do you want to try connecting anyway?`)) {
           })()}
         </div>
       )}
-      <div className="search-bar" style={selectedNode ? { paddingLeft: '80px' } : {}}>
+      <div className="search-bar" data-tauri-drag-region style={selectedNode ? { paddingLeft: '80px' } : {}}>
         {selectedNode ? (
           <ArrowLeft className="back-icon" size={20} onClick={handleBack} />
         ) : (
@@ -2615,7 +2627,9 @@ Do you want to try connecting anyway?`)) {
 
         {selectedNode ? (
           <div className="selected-node-header">
-            <span className="node-name">{selectedNode.name}</span>
+            <Copyable text={selectedNode.name}>
+              <span className="node-name">{selectedNode.name}</span>
+            </Copyable>
             <span className={`status-dot ${selectedNode.status}`}></span>
           </div>
         ) : (
@@ -4211,9 +4225,9 @@ Do you want to try connecting anyway?`)) {
                         placeholder="root"
                       />
                     </div>
-                    <div className="form-group" style={{ flex: '1 1 0' }}>
+                    <div className="form-group" style={{ flex: '1 1 0', minWidth: 0, overflow: 'hidden' }}>
                       <label>Port</label>
-                      <div style={{ display: 'flex', gap: '8px' }}>
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'nowrap' }}>
                         <input
                           type="number"
                           value={sshPort}
@@ -4240,7 +4254,7 @@ Do you want to try connecting anyway?`)) {
                       type="password"
                       value={sshPassword}
                       onChange={(e) => setSshPassword(e.target.value)}
-                      placeholder="Leave empty if using key-based auth"
+                      placeholder="Leave empty for interactive password prompt"
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') startSshModalTunnel('builtin');
                         if (e.key === 'Escape') setSshTunnelConfig(null);

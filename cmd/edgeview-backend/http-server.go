@@ -844,8 +844,10 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Interactive Auth: try password, keyboard-interactive, then publickey
+		// Auth order: try publickey first (EVE-OS SSH uses key-only auth),
+		// then fall back to interactive methods for app containers.
 		authMethods = []ssh.AuthMethod{
+			ssh.PublicKeys(signer),
 			ssh.PasswordCallback(func() (string, error) {
 				log.Printf("SSH Auth: PasswordCallback called, prompting user")
 				return promptUser("\r\nPassword: ")
@@ -869,7 +871,6 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 				}
 				return answers, nil
 			}),
-			ssh.PublicKeys(signer),
 		}
 	}
 
@@ -889,13 +890,17 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rawConn.Close()
 
-	// Peek at the first few bytes to check for SSH version string vs plaintext error
-	// The standard requires the server to send "SSH-2.0-..."
+	// Peek at the first few bytes to check for SSH version string vs plaintext error.
+	// The standard requires the server to send "SSH-2.0-...".
+	// Use a generous timeout (30s) because for app containers, the EdgeView device
+	// must first dial the target IP:port through container networking, which can
+	// take several seconds (the device has a 30s dial timeout).
 	peekBuf := make([]byte, 4)
-	rawConn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	wsConn.WriteMessage(websocket.TextMessage, []byte("\r\nWaiting for remote SSH server...\r\n"))
+	rawConn.SetReadDeadline(time.Now().Add(30 * time.Second))
 	if _, err := io.ReadFull(rawConn, peekBuf); err != nil {
 		rawConn.SetReadDeadline(time.Time{}) // Reset deadline
-		wsConn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\nFailed to read protocol header: %v\r\n", err)))
+		wsConn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\n\x1b[1;31mSSH server did not respond within 30s.\x1b[0m\r\nThe device may be unable to reach the target host.\r\nCheck that the application is running and its SSH service is accessible.\r\n")))
 		return
 	}
 	rawConn.SetReadDeadline(time.Time{}) // Reset deadline
