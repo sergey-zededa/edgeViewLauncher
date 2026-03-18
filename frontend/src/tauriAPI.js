@@ -16,7 +16,12 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 // ── Generic backend proxy ─────────────────────────────────────────────────────
 
 const apiCall = (endpoint, method = 'GET', body = undefined) =>
-    invoke('api_call', { endpoint, method, body: body ?? null });
+    invoke('api_call', { endpoint, method, body: body ?? null }).then(r => {
+        if (r && r.success === false && r.error) {
+            throw new Error(r.error);
+        }
+        return r;
+    });
 
 // ── Node / Device API ─────────────────────────────────────────────────────────
 

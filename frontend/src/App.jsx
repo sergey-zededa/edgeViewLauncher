@@ -1205,7 +1205,7 @@ function App() {
     } finally {
       if (pollInterval) clearInterval(pollInterval);
       setTunnelLoading(null);
-      setGlobalStatus(null);
+      setGlobalStatus(prev => prev?.type === 'error' ? prev : null);
     }
   };
 
@@ -1251,7 +1251,7 @@ function App() {
     } finally {
       if (pollInterval) clearInterval(pollInterval);
       setTunnelLoading(null);
-      setGlobalStatus(null);
+      setGlobalStatus(prev => prev?.type === 'error' ? prev : null);
     }
   };
 
@@ -1303,7 +1303,7 @@ function App() {
     } finally {
       if (pollInterval) clearInterval(pollInterval);
       setTunnelLoading(null);
-      setGlobalStatus(null);
+      setGlobalStatus(prev => prev?.type === 'error' ? prev : null);
     }
   };
 
@@ -1361,7 +1361,7 @@ function App() {
     } finally {
       if (pollInterval) clearInterval(pollInterval);
       setTunnelLoading(null);
-      setGlobalStatus(null);
+      setGlobalStatus(prev => prev?.type === 'error' ? prev : null);
     }
   };
 
@@ -1450,7 +1450,7 @@ function App() {
     } finally {
       if (pollInterval) clearInterval(pollInterval);
       setTunnelLoading(null);
-      setGlobalStatus(null);
+      setGlobalStatus(prev => prev?.type === 'error' ? prev : null);
     }
   };
 
@@ -1500,6 +1500,10 @@ function App() {
       errorMsg.includes('session expired')) {
       setTunnelConnected(false);
       addLog('EdgeView session is not active. Click the reset button to restart the session.', 'error');
+    }
+    // Detect external policy denial — show persistent banner
+    if (errorMsg.includes('External Connection Policy is disabled')) {
+      setGlobalStatus({ type: 'error', message: errorMsg });
     }
   };
 
@@ -3968,7 +3972,7 @@ Do you want to try connecting anyway?`)) {
                                                 addLog(`Failed to start VNC tunnel: ${err.message}`, 'error');
                                               } finally {
                                                 setTunnelLoading(null);
-                                                setGlobalStatus(null);
+                                                setGlobalStatus(prev => prev?.type === 'error' ? prev : null);
                                               }
                                             }}
                                             style={{
@@ -4011,7 +4015,7 @@ Do you want to try connecting anyway?`)) {
                                                 addLog(`Failed to start VNC tunnel: ${err.message}`, 'error');
                                               } finally {
                                                 setTunnelLoading(null);
-                                                setGlobalStatus(null);
+                                                setGlobalStatus(prev => prev?.type === 'error' ? prev : null);
                                               }
                                             }}
                                             style={{

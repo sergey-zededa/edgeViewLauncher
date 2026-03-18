@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"edgeViewLauncher/internal/config"
+	"errors"
 	"edgeViewLauncher/internal/session"
 	"edgeViewLauncher/internal/ssh"
 	"edgeViewLauncher/internal/zededa"
@@ -587,6 +588,11 @@ func (a *App) StartTunnel(nodeID, targetIP string, targetPort int, protocol stri
 		if err == nil {
 			fmt.Printf("Tunnel started on localhost:%d -> %s (ID: %s)\n", port, target, tunnelID)
 			return port, tunnelID, nil
+		}
+
+		// External policy denial — don't retry, return immediately with user-friendly message
+		if errors.Is(err, session.ErrExternalPolicyDenied) {
+			return 0, "", err
 		}
 
 		// Handle "no device online" specifically (or timeouts which might be same cause)

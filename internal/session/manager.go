@@ -243,6 +243,10 @@ var (
 	// ErrBusyInstance is returned when EdgeView reports that the
 	// instance limit has been reached ("can't have more than 2 peers").
 	ErrBusyInstance = errors.New("device instance limit reached (can't have more than 2 peers)")
+
+	// ErrExternalPolicyDenied is returned when the device rejects the
+	// connection because the External Connection Policy is disabled.
+	ErrExternalPolicyDenied = errors.New("The target IP is not recognized as an internal EVE-OS address and the device's External Connection Policy is disabled. Enable it using the \"Enable Ext. Policy\" button in Device Configuration below, or in the device's EdgeView settings on ZEDEDA Cloud.")
 )
 
 // envelopeMsg matches original EdgeView crypto.go:30-33
@@ -401,6 +405,11 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 			seenNoDeviceOnline = true
 			fmt.Printf("DEBUG: Device is not online (attempt %d/%d). The device may not be connected to EdgeView yet.\n", attempt, maxRetries)
 			reportProgress(fmt.Sprintf("Device not online yet (attempt %d/%d)...", attempt, maxRetries))
+		} else if setupErr == ErrExternalPolicyDenied {
+			fmt.Printf("DEBUG: External connection policy denied — not retrying\n")
+			wsConn.Close()
+			listener.Close()
+			return 0, "", ErrExternalPolicyDenied
 		} else {
 			fmt.Printf("DEBUG: Tunnel setup failed: %v (attempt %d/%d)\n", setupErr, attempt, maxRetries)
 		}
@@ -597,7 +606,11 @@ func (m *Manager) waitForTcpSetupOK(wsConn *websocket.Conn, key string, timeout 
 				return
 			}
 			if strings.Contains(payloadStr, "cmd policy check failed") {
-				setupDone <- fmt.Errorf("device rejected tunnel: %s", payloadStr)
+				if strings.Contains(payloadStr, "External policy not allow") {
+					setupDone <- ErrExternalPolicyDenied
+				} else {
+					setupDone <- fmt.Errorf("device rejected tunnel: %s", payloadStr)
+				}
 				return
 			}
 			if strings.Contains(payloadStr, "Error:") {
