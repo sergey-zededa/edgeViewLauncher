@@ -171,6 +171,9 @@ export const resizeWindow = (width, height) =>
 export const closeCurrentWindow = () =>
     invoke('close_current_window');
 
+export const quitApp = () =>
+    invoke('quit_app');
+
 export const getBackendPort = () =>
     invoke('get_backend_port');
 

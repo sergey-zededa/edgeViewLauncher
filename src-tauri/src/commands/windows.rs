@@ -113,6 +113,13 @@ pub async fn close_current_window(window: Window) -> Result<bool, String> {
     Ok(true)
 }
 
+/// Quit the entire application.
+#[tauri::command]
+pub async fn quit_app(app: AppHandle) -> Result<bool, String> {
+    app.exit(0);
+    Ok(true)
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn dev_or_prod_url(_app: &AppHandle, dev_path: &str, prod_file: &str, query: &str) -> WebviewUrl {

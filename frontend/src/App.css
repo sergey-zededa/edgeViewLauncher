@@ -340,6 +340,8 @@ body {
     overflow-y: auto;
     -webkit-app-region: no-drag;
     /* Allow normal input behavior */
+    display: flex;
+    flex-direction: column;
 }
 
 .settings-header {
@@ -356,7 +358,9 @@ body {
 .clusters-container {
     display: flex;
     gap: 20px;
-    height: 400px;
+    flex: 1;
+    min-height: 300px;
+    max-height: calc(100vh - 160px);
 }
 
 .cluster-list {
@@ -366,7 +370,7 @@ body {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    overflow-y: auto;
+    overflow: hidden;
 }
 
 .cluster-item {

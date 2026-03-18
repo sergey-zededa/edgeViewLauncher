@@ -42,6 +42,7 @@ pub fn run() {
             windows::open_vnc_window,
             windows::resize_window,
             windows::close_current_window,
+            windows::quit_app,
             // System
             system::open_external,
             system::open_external_terminal,

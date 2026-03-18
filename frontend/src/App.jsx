@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { SearchNodes, ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, EnableExternalPolicy, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo, CheckForUpdates, openTerminalWindow, openVncWindow, openExternalTerminal, getElectronAppInfo, startContainerShell, getSystemTimeFormat, openExternal, InjectSecureConfig } from './tauriAPI';
-import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers, Shield, Moon, Sun } from 'lucide-react';
+import { SearchNodes, ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, EnableExternalPolicy, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo, CheckForUpdates, openTerminalWindow, openVncWindow, openExternalTerminal, getElectronAppInfo, startContainerShell, getSystemTimeFormat, openExternal, InjectSecureConfig, closeCurrentWindow, quitApp } from './tauriAPI';
+import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers, Shield, Moon, Sun, Power } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
 import Tooltip from './components/Tooltip';
 import About from './components/About';
@@ -357,6 +357,10 @@ function App() {
   const [authError, setAuthError] = useState(false); // Track authentication failures
   const [showSettings, setShowSettings] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
+  const [showClusterDropdown, setShowClusterDropdown] = useState(false);
+  const clusterDropdownRef = useRef(null);
+  const [showCloseMenu, setShowCloseMenu] = useState(false);
+  const closeMenuRef = useRef(null);
   const [selectedNode, setSelectedNode] = useState(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [enterprise, setEnterprise] = useState(null);
@@ -394,6 +398,30 @@ function App() {
       return () => mediaQuery.removeEventListener('change', handleChange);
     }
   }, [theme]);
+
+  // Click-outside handler for cluster dropdown
+  useEffect(() => {
+    if (!showClusterDropdown) return;
+    const handleClickOutside = (e) => {
+      if (clusterDropdownRef.current && !clusterDropdownRef.current.contains(e.target)) {
+        setShowClusterDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showClusterDropdown]);
+
+  // Click-outside handler for close menu
+  useEffect(() => {
+    if (!showCloseMenu) return;
+    const handleClickOutside = (e) => {
+      if (closeMenuRef.current && !closeMenuRef.current.contains(e.target)) {
+        setShowCloseMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showCloseMenu]);
 
   const toggleTheme = () => {
     // Cycle: dark -> light -> auto -> dark
@@ -2294,6 +2322,16 @@ Do you want to try connecting anyway?`)) {
   const getNodeAtIndex = (index) => displayNodes[index];
 
   const handleKeyDown = (e) => {
+    if (e.key === 'Escape' && showCloseMenu) {
+      e.preventDefault();
+      setShowCloseMenu(false);
+      return;
+    }
+    if (e.key === 'Escape' && showClusterDropdown) {
+      e.preventDefault();
+      setShowClusterDropdown(false);
+      return;
+    }
     if (e.key === 'Escape' && showSettings) {
       e.preventDefault();
       setShowSettings(false);
@@ -2395,6 +2433,9 @@ Do you want to try connecting anyway?`)) {
       } finally {
         setLoading(false);
       }
+      // Auto-close settings panel after successful cluster switch
+      setShowSettings(false);
+      setShowClusterDropdown(false);
     } catch (err) {
       console.error("Failed to switch cluster:", err);
       setSettingsError("Failed to switch cluster: " + (err.message || String(err)));
@@ -2605,7 +2646,29 @@ Do you want to try connecting anyway?`)) {
 
             return (
               <>
-                <span>{entName} • {url}</span>
+                <span
+                  onClick={() => {
+                    const configured = config.clusters.filter(c => c.baseUrl && c.apiToken);
+                    if (configured.length > 1) setShowClusterDropdown(!showClusterDropdown);
+                  }}
+                  style={{
+                    cursor: config.clusters.filter(c => c.baseUrl && c.apiToken).length > 1 ? 'pointer' : 'default',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    padding: '2px 6px',
+                    borderRadius: '4px',
+                    transition: 'background 0.15s',
+                    WebkitAppRegion: 'no-drag',
+                  }}
+                  onMouseEnter={(e) => { if (config.clusters.filter(c => c.baseUrl && c.apiToken).length > 1) e.currentTarget.style.background = 'var(--bg-hover)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                >
+                  {entName} • {url}
+                  {config.clusters.filter(c => c.baseUrl && c.apiToken).length > 1 && (
+                    <ChevronDown size={12} style={{ transition: 'transform 0.2s', transform: showClusterDropdown ? 'rotate(180deg)' : 'none' }} />
+                  )}
+                </span>
                 {tokenOwner && (
                   <Tooltip text={expiryText || 'Token expiry unknown'} simple={true}>
                     <span className={`user-email ${isExpiringSoon ? 'expiring-soon' : ''}`}>
@@ -2643,8 +2706,144 @@ Do you want to try connecting anyway?`)) {
           />
         )}
         <div className="header-actions">
+          {config.clusters.filter(c => c.baseUrl && c.apiToken).length > 1 && (
+            <div ref={clusterDropdownRef} style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+              <Layers
+                className="settings-icon"
+                size={20}
+                onClick={() => setShowClusterDropdown(!showClusterDropdown)}
+                title="Switch Cluster"
+              />
+              {showClusterDropdown && (
+                <div style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 8px)',
+                  right: 0,
+                  background: 'var(--bg-secondary)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: '8px',
+                  boxShadow: '0 4px 16px rgba(0, 0, 0, 0.3)',
+                  minWidth: '220px',
+                  maxWidth: '280px',
+                  maxHeight: '320px',
+                  overflowY: 'auto',
+                  zIndex: 1000,
+                  animation: 'slideIn 0.15s ease-out',
+                }}>
+                  <div style={{
+                    padding: '8px 12px',
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    color: 'var(--text-secondary)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.5px',
+                    borderBottom: '1px solid var(--border-color)',
+                  }}>
+                    Switch Cluster
+                  </div>
+                  {config.clusters.filter(c => c.baseUrl && c.apiToken).map((cluster) => {
+                    const isActive = cluster.name === config.activeCluster;
+                    return (
+                      <div
+                        key={cluster.name}
+                        onClick={() => {
+                          if (!isActive) activateCluster(cluster.name);
+                          setShowClusterDropdown(false);
+                        }}
+                        style={{
+                          padding: '8px 12px',
+                          fontSize: '13px',
+                          cursor: isActive ? 'default' : 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          color: isActive ? 'var(--color-accent, var(--accent-color))' : 'var(--text-primary)',
+                          fontWeight: isActive ? 500 : 400,
+                          transition: 'background 0.1s',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                        }}
+                        onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = 'var(--bg-hover)'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                      >
+                        <Check size={14} style={{ flexShrink: 0, visibility: isActive ? 'visible' : 'hidden' }} />
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{cluster.name}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
           <Info className="settings-icon" size={20} onClick={() => setShowAbout(true)} />
           <Settings className="settings-icon" size={20} onClick={() => setShowSettings(!showSettings)} />
+          <div ref={closeMenuRef} style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+            <Power
+              className="settings-icon"
+              size={20}
+              onClick={() => setShowCloseMenu(!showCloseMenu)}
+              title="Close"
+            />
+            {showCloseMenu && (
+              <div style={{
+                position: 'absolute',
+                top: 'calc(100% + 8px)',
+                right: 0,
+                background: 'var(--bg-secondary)',
+                border: '1px solid var(--border-color)',
+                borderRadius: '8px',
+                boxShadow: '0 4px 16px rgba(0, 0, 0, 0.3)',
+                minWidth: '180px',
+                zIndex: 1000,
+                overflow: 'hidden',
+                animation: 'slideIn 0.15s ease-out',
+              }}>
+                <div
+                  onClick={() => {
+                    setShowCloseMenu(false);
+                    closeCurrentWindow();
+                  }}
+                  style={{
+                    padding: '10px 14px',
+                    fontSize: '13px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    color: 'var(--text-primary)',
+                    transition: 'background 0.1s',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                >
+                  <X size={14} />
+                  <span>Hide to Tray</span>
+                </div>
+                <div
+                  onClick={() => {
+                    setShowCloseMenu(false);
+                    quitApp();
+                  }}
+                  style={{
+                    padding: '10px 14px',
+                    fontSize: '13px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    color: 'var(--color-danger)',
+                    transition: 'background 0.1s',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                >
+                  <Power size={14} />
+                  <span>Quit Application</span>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -2753,41 +2952,97 @@ Do you want to try connecting anyway?`)) {
                     <Plus size={12} /> Add
                   </button>
                 </div>
-                {config.clusters.map((cluster, idx) => (
+                <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {config.clusters.map((cluster, idx) => (
+                    <div
+                      key={idx}
+                      className={`cluster-item ${cluster.name === viewingClusterName ? 'active' : ''}`}
+                      onClick={() => handleClusterSelect(cluster.name)}
+                    >
+                      <div className="cluster-name">{cluster.name}</div>
+                      {cluster.name === config.activeCluster && <div className="active-badge">Active</div>}
+                      {cluster.name !== config.activeCluster && (
+                        <button
+                          className="switch-cluster-btn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            activateCluster(cluster.name);
+                          }}
+                          title="Switch to this Cluster"
+                        >
+                          <Play size={12} />
+                        </button>
+                      )}
+                      {config.clusters.length > 1 && (
+                        <button
+                          className="delete-cluster-btn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteCluster(cluster.name);
+                          }}
+                          title="Delete Cluster"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                {/* APP section pinned at bottom */}
+                <div style={{ flexShrink: 0, borderTop: '1px solid var(--border-color)', paddingTop: '12px', marginTop: '8px' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>APP</div>
                   <div
-                    key={idx}
-                    className={`cluster-item ${cluster.name === viewingClusterName ? 'active' : ''}`}
-                    onClick={() => handleClusterSelect(cluster.name)}
+                    onClick={toggleTheme}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      padding: '6px 8px',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                      transition: 'background 0.15s',
+                      gap: '8px',
+                      fontSize: '12px',
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
                   >
-                    <div className="cluster-name">{cluster.name}</div>
-                    {cluster.name === config.activeCluster && <div className="active-badge">Active</div>}
-                    {cluster.name !== config.activeCluster && (
-                      <button
-                        className="switch-cluster-btn"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          // Explicitly switch to this cluster without saving current form
-                          activateCluster(cluster.name);
-                        }}
-                        title="Switch to this Cluster"
-                      >
-                        <Play size={12} />
-                      </button>
-                    )}
-                    {config.clusters.length > 1 && (
-                      <button
-                        className="delete-cluster-btn"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          deleteCluster(cluster.name);
-                        }}
-                        title="Delete Cluster"
-                      >
-                        <Trash2 size={12} />
-                      </button>
-                    )}
+                    {theme === 'dark' ? <Moon size={14} /> : theme === 'light' ? <Sun size={14} /> : <Monitor size={14} />}
+                    <span style={{ color: 'var(--text-primary)' }}>
+                      {theme === 'dark' ? 'Dark' : theme === 'light' ? 'Light' : 'Auto'}
+                    </span>
                   </div>
-                ))}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    <span>v<VersionDisplay /></span>
+                    <button
+                      onClick={async () => {
+                        try { await CheckForUpdates(); } catch (err) { console.error('Failed to check for updates:', err); }
+                      }}
+                      disabled={updateState.status === 'downloading'}
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: 'var(--accent-color)',
+                        cursor: updateState.status === 'downloading' ? 'not-allowed' : 'pointer',
+                        fontSize: '11px',
+                        padding: '2px 4px',
+                        borderRadius: '3px',
+                        opacity: updateState.status === 'downloading' ? 0.5 : 1,
+                      }}
+                    >
+                      {updateState.status === 'downloading' ? 'Checking...' : 'Check for Updates'}
+                    </button>
+                  </div>
+                  {updateState.status === 'available' && (
+                    <div style={{ padding: '4px 8px', fontSize: '11px', color: 'var(--color-accent, var(--accent-color))', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <AlertCircle size={12} /> Update available: {updateState.version}
+                    </div>
+                  )}
+                  {updateState.status === 'downloaded' && (
+                    <div style={{ padding: '4px 8px', fontSize: '11px', color: 'var(--color-success)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <Check size={12} /> Update ready to install
+                    </div>
+                  )}
+                </div>
               </div>
               <div className="cluster-details">
                 {viewingClusterName !== config.activeCluster && (
@@ -2933,33 +3188,6 @@ Do you want to try connecting anyway?`)) {
                   </div>
                 )}
 
-                {/* Theme Toggle */}
-                <div className="form-group">
-                  <label>Theme</label>
-                  <div
-                    onClick={toggleTheme}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      padding: '10px 12px',
-                      backgroundColor: 'var(--bg-secondary)',
-                      border: '1px solid var(--border-color)',
-                      borderRadius: '6px',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s',
-                      gap: '8px'
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'; }}
-                  >
-                    {theme === 'dark' ? <Moon size={16} /> : theme === 'light' ? <Sun size={16} /> : <Monitor size={16} />}
-                    <span style={{ flex: 1, color: 'var(--text-primary)' }}>
-                      {theme === 'dark' ? 'Dark Theme' : theme === 'light' ? 'Light Theme' : 'System (Auto)'}
-                    </span>
-                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Click to toggle</span>
-                  </div>
-                </div>
-
                 <div className="settings-actions">
                   {saveStatus && (
                     <span className={`status-text ${saveStatus.includes('Success') ? 'success' : 'muted'}`}>
@@ -2969,47 +3197,6 @@ Do you want to try connecting anyway?`)) {
                   <button className="save-btn" onClick={() => saveSettings(null)}>
                     <Save size={16} /> Save Changes
                   </button>
-                </div>
-
-                <div className="settings-separator"></div>
-
-                {/* Version Info and Update Check */}
-                <div className="version-info-section">
-                  <label>Application Version</label>
-                  <div className="version-info-content">
-                    <div className="version-row">
-                      <span className="version-label">Version:</span>
-                      <span className="version-value">
-                        <VersionDisplay />
-                      </span>
-                    </div>
-                    {updateState.status === 'available' && (
-                      <div className="version-row update-available-row">
-                        <AlertCircle size={14} />
-                        <span>Update available: {updateState.version}</span>
-                      </div>
-                    )}
-                    {updateState.status === 'downloaded' && (
-                      <div className="version-row update-ready-row">
-                        <Check size={14} />
-                        <span>Update ready to install</span>
-                      </div>
-                    )}
-                    <button
-                      className="check-updates-btn"
-                      onClick={async () => {
-                        try {
-                          await CheckForUpdates();
-                        } catch (err) {
-                          console.error('Failed to check for updates:', err);
-                        }
-                      }}
-                      disabled={updateState.status === 'downloading'}
-                    >
-                      <RefreshCw size={14} />
-                      {updateState.status === 'downloading' ? 'Checking...' : 'Check for Updates'}
-                    </button>
-                  </div>
                 </div>
               </div>
             </div>
