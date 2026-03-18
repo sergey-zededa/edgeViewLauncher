@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { SearchNodes, ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, EnableExternalPolicy, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo, CheckForUpdates, openTerminalWindow, openVncWindow, openExternalTerminal, getElectronAppInfo, startContainerShell, getSystemTimeFormat, openExternal, InjectSecureConfig, closeCurrentWindow, quitApp } from './tauriAPI';
-import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers, Shield, Moon, Sun, Power } from 'lucide-react';
+import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers, Shield, Moon, Sun, Power, HelpCircle } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
 import Tooltip from './components/Tooltip';
 import About from './components/About';
@@ -11,6 +11,7 @@ import Modal from './components/Modal';
 import Button from './components/Button';
 import Badge from './components/Badge';
 import './components/Tooltip.css';
+import TokenGuide from './components/TokenGuide';
 import './App.css';
 
 // Simple component to display version info
@@ -652,6 +653,7 @@ function App() {
   const [viewingUserInfo, setViewingUserInfo] = useState(null);
   const [loadingTokenInfo, setLoadingTokenInfo] = useState(false);
   const [showTokenStatus, setShowTokenStatus] = useState(false);
+  const [showTokenGuide, setShowTokenGuide] = useState(false);
   const [saveStatus, setSaveStatus] = useState('');
   const [tokenStatus, setTokenStatus] = useState(null);
   const [settingsError, setSettingsError] = useState(null); // Track settings save errors
@@ -2934,6 +2936,7 @@ Do you want to try connecting anyway?`)) {
       {/* Collect Info Modal - Removed in favor of GlobalStatusBanner */}
 
       {showAbout && <About onClose={() => setShowAbout(false)} />}
+      <TokenGuide isOpen={showTokenGuide} onClose={() => setShowTokenGuide(false)} />
 
       <div className="main-content">
         {showSettings ? (
@@ -3074,11 +3077,19 @@ Do you want to try connecting anyway?`)) {
                     type="text"
                     value={editingCluster.baseUrl}
                     onChange={(e) => setEditingCluster({ ...editingCluster, baseUrl: e.target.value })}
-                    placeholder="https://..."
+                    placeholder="https://zedcontrol.zededa.net"
                   />
                 </div>
                 <div className="form-group">
-                  <label>API Token</label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    API Token
+                    <HelpCircle
+                      size={14}
+                      style={{ cursor: 'pointer', color: 'var(--text-tertiary)' }}
+                      onClick={() => setShowTokenGuide(true)}
+                      title="How to get your API token"
+                    />
+                  </label>
                   <textarea
                     className="token-input"
                     rows="3"
