@@ -3589,13 +3589,13 @@ Do you want to try connecting anyway?`)) {
                                                     ? `App is not online (${app.status?.replace('RUN_STATE_', '') || 'Unknown'})`
                                                     : `SSH as ${savedUser}@${ip} — click to connect`}
                                                 style={{
-                                                  backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                                                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                                                  backgroundColor: 'var(--bg-tertiary)',
+                                                  border: '1px solid var(--border-subtle)',
                                                   borderRadius: '4px',
                                                   padding: '2px 6px',
                                                   fontSize: '11px',
                                                   fontFamily: 'monospace',
-                                                  color: '#ccc',
+                                                  color: 'var(--text-secondary)',
                                                   cursor: 'pointer',
                                                   display: 'flex',
                                                   alignItems: 'center',
@@ -3695,13 +3695,13 @@ Do you want to try connecting anyway?`)) {
                                                   ? `App is not online (${app.status?.replace('RUN_STATE_', '') || 'Unknown'})`
                                                   : `Click to start VNC on port ${app.vncPort}`}
                                               style={{
-                                                backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                                                border: '1px solid rgba(255, 255, 255, 0.1)',
+                                                backgroundColor: 'var(--bg-tertiary)',
+                                                border: '1px solid var(--border-subtle)',
                                                 borderRadius: '4px',
                                                 padding: '2px 6px',
                                                 fontSize: '11px',
                                                 fontFamily: 'monospace',
-                                                color: '#ccc',
+                                                color: 'var(--text-secondary)',
                                                 cursor: 'pointer',
                                                 display: 'flex',
                                                 alignItems: 'center',
@@ -4055,10 +4055,11 @@ Do you want to try connecting anyway?`)) {
                                         return;
                                       }
                                       if (tunnelLoading) return;
-                                      const ip = app.ips && app.ips.length > 0 ? app.ips[0] : '10.2.255.254';
+                                      const allIps = app.ips && app.ips.length > 0 ? app.ips : ['10.2.255.254'];
+                                      const ip = allIps[0];
                                       const savedUser = getSavedSshUsername(app.name);
                                       setSshUser(savedUser);
-                                      setSshTunnelConfig({ ip, appName: app.name });
+                                      setSshTunnelConfig({ ip, allIps, appName: app.name });
                                     }}
                                   >
                                     {tunnelLoading === 'ssh' ? <Activity size={20} className="option-icon animate-spin" /> : <Terminal size={20} className="option-icon" />}
@@ -4193,8 +4194,30 @@ Do you want to try connecting anyway?`)) {
                   }}
                   size="small"
                 >
-                  <div style={{ fontSize: '13px', marginBottom: '20px', color: 'var(--text-secondary)', textAlign: 'center' }}>
-                    {selectedNode?.name} • <span className="data-value-code">{sshTunnelConfig.ip}</span>
+                  <div style={{ fontSize: '13px', marginBottom: '20px', color: 'var(--text-secondary)', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                    <span>{selectedNode?.name} •</span>
+                    {sshTunnelConfig.allIps && sshTunnelConfig.allIps.length > 1 ? (
+                      <select
+                        value={sshTunnelConfig.ip}
+                        onChange={(e) => setSshTunnelConfig(prev => ({ ...prev, ip: e.target.value }))}
+                        style={{
+                          background: 'var(--bg-surface)',
+                          color: 'var(--text-primary)',
+                          border: '1px solid var(--border-subtle)',
+                          borderRadius: '4px',
+                          padding: '2px 6px',
+                          fontSize: '13px',
+                          fontFamily: 'monospace',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        {sshTunnelConfig.allIps.map(ip => (
+                          <option key={ip} value={ip}>{ip}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="data-value-code">{sshTunnelConfig.ip}</span>
+                    )}
                   </div>
 
                   {sshError && (

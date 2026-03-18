@@ -3,7 +3,23 @@
     "allow": [
       "Bash(cargo build:*)",
       "Bash(npm run:*)",
-      "Bash(npm test:*)"
+      "Bash(npm test:*)",
+      "Bash(go build:*)",
+      "Bash(go vet:*)",
+      "Bash(go test:*)",
+      "Bash(lsof:*)",
+      "Bash(curl:*)",
+      "Bash(do echo:*)",
+      "Bash(pkill:*)",
+      "Bash(# Read the config to get the API token and base URL\ncat ~/.edgeview-launcher/config.json 2>/dev/null | python3 -c \"\nimport json, sys\nc = json.load\\(sys.stdin\\)\nclusters = c.get\\('clusters', []\\)\nactive = c.get\\('activeCluster', ''\\)\nfor cl in clusters:\n    if cl.get\\('name'\\) == active:\n        print\\('baseUrl:', cl.get\\('baseUrl'\\)\\)\n        print\\('token \\(first 20\\):', cl.get\\('apiToken',''\\)[:20] + '...'\\)\n        break\n\" 2>&1)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(length\" errors by removing frames mid-stream:*)",
+      "WebFetch(domain:docs.rs)",
+      "WebSearch",
+      "WebFetch(domain:v2.tauri.app)",
+      "Bash(cargo check:*)",
+      "Bash(prompt\":*)"
     ]
   }
 }
