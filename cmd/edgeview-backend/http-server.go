@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"edgeViewLauncher/internal/config"
@@ -1007,13 +1008,19 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	// Mutex to protect concurrent WebSocket writes from stdout/stderr goroutines.
+	// gorilla/websocket does not support concurrent writers.
+	var wsMu sync.Mutex
+
 	// SSH -> WebSocket (Stdout)
 	go func() {
 		buf := make([]byte, 4096)
 		for {
 			n, err := stdout.Read(buf)
 			if n > 0 {
+				wsMu.Lock()
 				wsConn.WriteMessage(websocket.BinaryMessage, buf[:n])
+				wsMu.Unlock()
 			}
 			if err != nil {
 				wsConn.Close()
@@ -1028,7 +1035,9 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 		for {
 			n, err := stderr.Read(buf)
 			if n > 0 {
+				wsMu.Lock()
 				wsConn.WriteMessage(websocket.TextMessage, buf[:n])
+				wsMu.Unlock()
 			}
 			if err != nil {
 				return

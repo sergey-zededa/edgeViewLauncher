@@ -1530,6 +1530,11 @@ func (m *Manager) tunnelWSReader(ctx context.Context, tunnel *Tunnel) {
 			if len(td.Data) > 0 {
 				tunnel.AddBytesReceived(len(td.Data))
 
+				// Copy td.Data so the next WebSocket read cannot overwrite it
+				// while it sits in the channel buffer waiting to be consumed.
+				dataCopy := make([]byte, len(td.Data))
+				copy(dataCopy, td.Data)
+
 				// Dispatch to the appropriate channel
 				tunnel.channelMu.RLock()
 				ch, ok := tunnel.channels[td.ChanNum]
@@ -1537,11 +1542,12 @@ func (m *Manager) tunnelWSReader(ctx context.Context, tunnel *Tunnel) {
 
 				if ok {
 					select {
-					case ch <- td.Data:
+					case ch <- dataCopy:
 					case <-ctx.Done():
 						return
-					default:
-						// Channel full, drop data
+					case <-time.After(10 * time.Second):
+						fmt.Printf("TUNNEL[%s] ChanNum=%d: WARNING channel full for 10s, dropping %d bytes (queue=%d/%d)\n",
+							tunnel.ID, td.ChanNum, len(dataCopy), len(ch), cap(ch))
 					}
 				}
 			}
@@ -1573,8 +1579,9 @@ func (m *Manager) tunnelAcceptLoop(ctx context.Context, listener net.Listener, t
 			// Allocate a channel number for this TCP client
 			chanNum := uint16(atomic.AddUint32(&tunnel.nextChan, 1))
 
-			// Create a channel for incoming data from WebSocket
-			dataChan := make(chan []byte, 100)
+			// Create a channel for incoming data from WebSocket.
+			// Use a large buffer to avoid dropping SSH packets under load.
+			dataChan := make(chan []byte, 1000)
 			tunnel.channelMu.Lock()
 			if tunnel.channels == nil {
 				tunnel.channels = make(map[uint16]chan []byte)
@@ -1746,8 +1753,9 @@ func (m *Manager) handleWSClient(ctx context.Context, wsConn *websocket.Conn, tu
 	// Allocate a channel number for this client
 	chanNum := uint16(atomic.AddUint32(&tunnel.nextChan, 1))
 
-	// Create a channel for incoming data from WebSocket
-	dataChan := make(chan []byte, 100)
+	// Create a channel for incoming data from WebSocket.
+	// Use a large buffer to avoid dropping SSH packets under load.
+	dataChan := make(chan []byte, 1000)
 	tunnel.channelMu.Lock()
 	if tunnel.channels == nil {
 		tunnel.channels = make(map[uint16]chan []byte)
