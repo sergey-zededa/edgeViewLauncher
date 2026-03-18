@@ -816,63 +816,59 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 		}))
 		authMethods = append(authMethods, ssh.PublicKeys(signer))
 	} else {
-		// New Logic: Interactive Auth
-		authMethods = []ssh.AuthMethod{
-			ssh.PublicKeys(signer),
-			ssh.KeyboardInteractive(func(user, instruction string, questions []string, echos []bool) (answers []string, err error) {
-				// Log the request for debugging
-				log.Printf("SSH Auth: KeyboardInteractive called. Instruction: %q, Questions: %v", instruction, questions)
+		// Helper to prompt user for input via WebSocket
+		promptUser := func(prompt string) (string, error) {
+			wsConn.WriteMessage(websocket.TextMessage, []byte(prompt))
+			var answerBuf []rune
+			for {
+				select {
+				case chunk := <-authResponseChan:
+					for _, r := range chunk {
+						switch r {
+						case '\r', '\n':
+							wsConn.WriteMessage(websocket.TextMessage, []byte("\r\n"))
+							return string(answerBuf), nil
+						case 127, 8: // Backspace (DEL) or BS
+							if len(answerBuf) > 0 {
+								answerBuf = answerBuf[:len(answerBuf)-1]
+							}
+						default:
+							answerBuf = append(answerBuf, r)
+						}
+					}
+				case <-time.After(60 * time.Second):
+					log.Printf("SSH Auth: Timeout waiting for user input")
+					return "", fmt.Errorf("authentication timed out")
+				}
+			}
+		}
 
-				// If no questions, just return
+		// Interactive Auth: try password, keyboard-interactive, then publickey
+		authMethods = []ssh.AuthMethod{
+			ssh.PasswordCallback(func() (string, error) {
+				log.Printf("SSH Auth: PasswordCallback called, prompting user")
+				return promptUser("\r\nPassword: ")
+			}),
+			ssh.KeyboardInteractive(func(user, instruction string, questions []string, echos []bool) (answers []string, err error) {
+				log.Printf("SSH Auth: KeyboardInteractive called. Instruction: %q, Questions: %v", instruction, questions)
 				if len(questions) == 0 {
 					return nil, nil
 				}
-
-				// Prompt user for each question
 				answers = make([]string, len(questions))
 				for i, question := range questions {
-					// Format prompt cleanly
 					prompt := fmt.Sprintf("\r\n%s", question)
 					if instruction != "" {
 						prompt = fmt.Sprintf("\r\n%s\r\n%s", instruction, question)
 					}
-
-					// Send prompt to frontend
-					wsConn.WriteMessage(websocket.TextMessage, []byte(prompt))
-
-					// Wait for response - buffer input until newline
-					var answerBuf []rune
-				inputLoop:
-					for {
-						select {
-						case chunk := <-authResponseChan:
-							for _, r := range chunk {
-								switch r {
-								case '\r', '\n':
-									// Enter pressed, we're done
-									// Echo a newline so the user sees the prompt move down
-									wsConn.WriteMessage(websocket.TextMessage, []byte("\r\n"))
-									break inputLoop
-								case 127, 8: // Backspace (DEL) or BS
-									if len(answerBuf) > 0 {
-										answerBuf = answerBuf[:len(answerBuf)-1]
-									}
-								default:
-									// Append regular character
-									answerBuf = append(answerBuf, r)
-									// Do NOT echo password characters
-								}
-							}
-						case <-time.After(60 * time.Second):
-							log.Printf("SSH Auth: Timeout waiting for user input")
-							return nil, fmt.Errorf("authentication timed out")
-						}
+					answers[i], err = promptUser(prompt)
+					if err != nil {
+						return nil, err
 					}
-					answers[i] = string(answerBuf)
 					log.Printf("SSH Auth: Received answer length %d", len(answers[i]))
 				}
 				return answers, nil
 			}),
+			ssh.PublicKeys(signer),
 		}
 	}
 
@@ -932,9 +928,16 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 		log.Printf("SSH: Authentication failed: %v", err)
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "unexpected message type 51") || strings.Contains(errMsg, "handshake failed") {
-			wsConn.WriteMessage(websocket.TextMessage, []byte("\r\n\x1b[1;33mAuthentication Failed: The device rejected the SSH key.\x1b[0m\r\n"))
-			wsConn.WriteMessage(websocket.TextMessage, []byte("If you recently updated the key, the device may still be applying the configuration.\r\n"))
-			wsConn.WriteMessage(websocket.TextMessage, []byte("Please wait 1-2 minutes and try again.\r\n"))
+			if password != "" {
+				// Password was provided upfront - likely a key issue
+				wsConn.WriteMessage(websocket.TextMessage, []byte("\r\n\x1b[1;33mAuthentication Failed: The device rejected the credentials.\x1b[0m\r\n"))
+				wsConn.WriteMessage(websocket.TextMessage, []byte("Please check your password and try again.\r\n"))
+			} else {
+				// Interactive auth was attempted
+				wsConn.WriteMessage(websocket.TextMessage, []byte("\r\n\x1b[1;33mAuthentication Failed: The device rejected all authentication methods.\x1b[0m\r\n"))
+				wsConn.WriteMessage(websocket.TextMessage, []byte("The device may not support interactive login, or the credentials were incorrect.\r\n"))
+				wsConn.WriteMessage(websocket.TextMessage, []byte("If using SSH key auth, the device may still be applying the configuration — wait 1-2 minutes and try again.\r\n"))
+			}
 		} else if strings.Contains(err.Error(), "unable to authenticate") {
 			wsConn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\n\x1b[1;31mAuthentication failed:\x1b[0m %v\r\n", err)))
 		} else {
