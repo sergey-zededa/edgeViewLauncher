@@ -19,7 +19,9 @@
       "WebSearch",
       "WebFetch(domain:v2.tauri.app)",
       "Bash(cargo check:*)",
-      "Bash(prompt\":*)"
+      "Bash(prompt\":*)",
+      "Bash(npx vitest:*)",
+      "Bash(cargo test:*)"
     ]
   }
 }
