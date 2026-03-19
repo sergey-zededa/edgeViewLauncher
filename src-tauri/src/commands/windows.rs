@@ -9,6 +9,8 @@
 use serde::Deserialize;
 use serde_json::Value;
 use tauri::{AppHandle, LogicalSize, WebviewUrl, WebviewWindowBuilder, Window};
+#[cfg(target_os = "macos")]
+use tauri::TitleBarStyle;
 
 // ── Data types ────────────────────────────────────────────────────────────────
 
@@ -149,11 +151,18 @@ fn build_child_window(
     width: u32,
     height: u32,
 ) -> Result<(), String> {
-    WebviewWindowBuilder::new(app, label, url)
+    let builder = WebviewWindowBuilder::new(app, label, url)
         .title(title)
         .inner_size(width as f64, height as f64)
-        .decorations(false)
-        .visible(false)
+        .decorations(true)
+        .visible(false);
+
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .title_bar_style(TitleBarStyle::Overlay)
+        .hidden_title(true);
+
+    builder
         .build()
         .map_err(|e| format!("Failed to create window: {e}"))?
         .show()

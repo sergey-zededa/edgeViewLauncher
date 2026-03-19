@@ -1074,10 +1074,10 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 	var dockerRuntimeIPs []string
 
 	for _, app := range apps {
-		// fmt.Printf("DEBUG: Fetching Cloud API status for app %s...\n", app.Name)
+		fmt.Printf("DEBUG: Fetching Cloud API status for app %s (ID: %s)...\n", app.Name, app.ID)
 		status, err := a.zededaClient.GetAppInstanceDetails(app.ID)
 		if err != nil {
-			// fmt.Printf("DEBUG: Failed to get status for app %s: %v\n", app.Name, err)
+			fmt.Printf("DEBUG: Failed to get status for app %s: %v\n", app.Name, err)
 			continue
 		}
 		appDetails[app.ID] = (*zededa.AppInstanceStatus)(status)
@@ -1166,25 +1166,52 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 				svc.DockerCompose = config.DockerCompose
 			}
 
-			// Identify internal IPs by checking Network Instance kind
+			// Identify internal (airgapped) IPs by correlating:
+			//   config.Interfaces[i].netinstid → GetNetworkInstanceDetails → kind
+			//   config.Interfaces[i].intfname  → status.NetStatusList[j].ifName → ipAddrs
 			var internalIPs []string
-			for _, ns := range status.NetStatusList {
-				if ns.NetworkID != "" {
-					ni, err := a.zededaClient.GetNetworkInstanceDetails(ns.NetworkID)
-					if err == nil && ni != nil {
-						// Debug log to identify the correct Kind
-						fmt.Printf("DEBUG-NET: App %s, NetID %s, Kind=%s, Type=%s, Name=%s\n", app.Name, ns.NetworkID, ni.Kind, ni.Type, ni.Name)
+			if hasConfig {
+				for _, iface := range config.Interfaces {
+					netInstID, _ := iface["netinstid"].(string)
+					if netInstID == "" {
+						continue
+					}
+					ni, err := a.zededaClient.GetNetworkInstanceDetails(netInstID)
+					if err != nil {
+						fmt.Printf("DEBUG-NET: App %s, failed to get NetInst %s: %v\n", app.Name, netInstID, err)
+						continue
+					}
+					fmt.Printf("DEBUG-NET: App %s, NetInst %s, Kind=%s, Name=%s\n", app.Name, netInstID, ni.Kind, ni.Name)
 
-						// Kind "NETWORK_INSTANCE_KIND_LOCAL" indicates an airgapped/local network
-						if ni.Kind == "NETWORK_INSTANCE_KIND_LOCAL" {
+					if ni.Kind != "NETWORK_INSTANCE_KIND_LOCAL" {
+						continue
+					}
+
+					// Find matching status entry by interface name
+					intfName, _ := iface["intfname"].(string)
+					for _, ns := range status.NetStatusList {
+						if ns.IfName == intfName && intfName != "" {
+							fmt.Printf("DEBUG-NET: App %s, LOCAL network %s matched ifName=%s, IPs=%v\n", app.Name, ni.Name, intfName, ns.IPs)
 							internalIPs = append(internalIPs, ns.IPs...)
+							break
 						}
-					} else if err != nil {
-						fmt.Printf("DEBUG-NET: Failed to get NI details for %s: %v\n", ns.NetworkID, err)
+					}
+
+					// Fallback: if interface name didn't match, try by index
+					if len(internalIPs) == 0 {
+						for i, cfgIf := range config.Interfaces {
+							cfgNetInstID, _ := cfgIf["netinstid"].(string)
+							if cfgNetInstID == netInstID && i < len(status.NetStatusList) {
+								fmt.Printf("DEBUG-NET: App %s, LOCAL network %s matched by index=%d, IPs=%v\n", app.Name, ni.Name, i, status.NetStatusList[i].IPs)
+								internalIPs = append(internalIPs, status.NetStatusList[i].IPs...)
+								break
+							}
+						}
 					}
 				}
 			}
 			svc.InternalIPs = uniqueStrings(internalIPs)
+			fmt.Printf("DEBUG-NET: App %s final IPs=%v, InternalIPs=%v\n", app.Name, svc.IPs, svc.InternalIPs)
 
 			// Extract VNC info (from Config)
 			if hasConfig && config.VMInfo.VNC {

@@ -204,14 +204,16 @@ export const startContainerShell = (nodeId, appName, containerName, shell, appTy
     }).then(async res => {
         if (!res?.success) throw new Error(res?.error || 'Failed to start container shell');
         const { port, tunnelId, execCommand } = res.data;
-        // Open the terminal window
+        // Open the terminal window with SSH credentials
         await openTerminalWindow({
             port,
             nodeName: appName || 'Container',
             targetInfo: containerName,
             tunnelId: tunnelId || '',
             initialCommand: execCommand,
-            mode: 'terminal'
+            mode: 'terminal',
+            username: username || 'root',
+            password: password || ''
         });
         return res.data;
     });

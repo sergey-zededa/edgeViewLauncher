@@ -92,6 +92,7 @@ body {
     color: var(--text-primary);
 }
 
+
 .back-icon {
     color: var(--text-secondary);
     cursor: pointer;

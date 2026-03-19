@@ -264,10 +264,9 @@ type VMInfo struct {
 }
 
 type NetStatus struct {
-	Up        bool     `json:"up"`
-	IfName    string   `json:"ifName"`
-	IPs       []string `json:"ipAddrs"`
-	NetworkID string   `json:"networkId"`
+	Up     bool     `json:"up"`
+	IfName string   `json:"ifName"`
+	IPs    []string `json:"ipAddrs"`
 }
 
 type PortMap struct {
@@ -334,7 +333,7 @@ func (c *Client) GetAppInstanceDetails(appInstanceID string) (*AppInstanceDetail
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %v", err)
 	}
@@ -361,13 +360,15 @@ type NetworkInstanceStatus struct {
 	Type string `json:"type"`
 }
 
-// GetNetworkInstanceDetails fetches detailed network instance status information
+// GetNetworkInstanceDetails fetches network instance configuration to determine its kind.
+// Uses the config endpoint (/api/v1/netinsts/id/{id}) because the 'kind' field
+// (e.g. NETWORK_INSTANCE_KIND_LOCAL) is a configuration property, not a runtime status field.
 func (c *Client) GetNetworkInstanceDetails(niID string) (*NetworkInstanceStatus, error) {
 	if c.Token == "" {
 		return nil, fmt.Errorf("API token not configured")
 	}
 
-	url := fmt.Sprintf("%s/api/v1/netinsts/id/%s/status", c.BaseURL, niID)
+	url := fmt.Sprintf("%s/api/v1/netinsts/id/%s", c.BaseURL, niID)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %v", err)
@@ -376,7 +377,7 @@ func (c *Client) GetNetworkInstanceDetails(niID string) (*NetworkInstanceStatus,
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %v", err)
 	}
@@ -410,7 +411,7 @@ func (c *Client) GetAppInstanceConfig(appInstanceID string) (*AppInstanceConfig,
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %v", err)
 	}

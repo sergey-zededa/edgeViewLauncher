@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { SearchNodes, ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, EnableExternalPolicy, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo, CheckForUpdates, openTerminalWindow, openVncWindow, openExternalTerminal, getElectronAppInfo, startContainerShell, getSystemTimeFormat, openExternal, InjectSecureConfig, closeCurrentWindow, quitApp } from './tauriAPI';
-import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers, Shield, Moon, Sun, Power, HelpCircle } from 'lucide-react';
+import { SearchNodes, ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, EnableExternalPolicy, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo, CheckForUpdates, openTerminalWindow, openVncWindow, openExternalTerminal, getElectronAppInfo, startContainerShell, getSystemTimeFormat, openExternal, InjectSecureConfig } from './tauriAPI';
+import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers, Shield, Moon, Sun, HelpCircle } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
 import Tooltip from './components/Tooltip';
 import About from './components/About';
@@ -360,8 +360,6 @@ function App() {
   const [showAbout, setShowAbout] = useState(false);
   const [showClusterDropdown, setShowClusterDropdown] = useState(false);
   const clusterDropdownRef = useRef(null);
-  const [showCloseMenu, setShowCloseMenu] = useState(false);
-  const closeMenuRef = useRef(null);
   const [selectedNode, setSelectedNode] = useState(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [enterprise, setEnterprise] = useState(null);
@@ -412,17 +410,6 @@ function App() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showClusterDropdown]);
 
-  // Click-outside handler for close menu
-  useEffect(() => {
-    if (!showCloseMenu) return;
-    const handleClickOutside = (e) => {
-      if (closeMenuRef.current && !closeMenuRef.current.contains(e.target)) {
-        setShowCloseMenu(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showCloseMenu]);
 
   const toggleTheme = () => {
     // Cycle: dark -> light -> auto -> dark
@@ -513,65 +500,82 @@ function App() {
     // PortMaps often contain the External IP (e.g. 192.168.x.x) which is not reachable via SSH tunnel.
     if (app.appType === 'APP_TYPE_DOCKER_COMPOSE') {
       console.log('[DEBUG-SHELL] Accessing correlation logic for Docker Compose app (PRIORITY)');
+
+      // First, check if this Docker Compose app itself has internal IPs (airgapped network)
+      if (app.internalIps && app.internalIps.length > 0) {
+        targetAppIp = app.internalIps[0];
+        console.log('[DEBUG-SHELL] Found Internal IP directly on Docker Compose app:', targetAppIp);
+        addLog(`Using Docker Compose app's own Internal IP: ${targetAppIp}`, 'info');
+      }
+
       const appExternalIps = app.ips || [];
       console.log('[DEBUG-SHELL] App External IPs:', appExternalIps);
 
-      // Find sibling app that:
+      // If no self-internal IP, find sibling app that:
       // - Shares at least one External IP with this app
       // - Has an Internal IP (identified by backend via airgapped network)
-      const runtimeApp = servicesList.find(otherApp => {
-        if (otherApp.id === app.id) return false;
-
-        const otherIps = otherApp.ips || [];
-        const hasSharedIp = otherIps.some(ip => appExternalIps.includes(ip));
-        const hasInternalIps = otherApp.internalIps && otherApp.internalIps.length > 0;
-
-        // Log candidates for debugging
-        if (hasSharedIp) {
-          console.log('[DEBUG-SHELL] Candidate Sibling:', {
-            name: otherApp.name,
-            sharedIp: true,
-            hasInternalIps: hasInternalIps,
-            internalIps: otherApp.internalIps
-          });
-        }
-
-        return hasSharedIp && hasInternalIps;
-      });
-
-      if (runtimeApp) {
-        targetAppIp = runtimeApp.internalIps[0];
-        console.log('[DEBUG-SHELL] Found deterministic Runtime IP via correlation:', targetAppIp, 'from app:', runtimeApp.name);
-        addLog(`Found deterministic Runtime IP via correlation: ${targetAppIp}`, 'info');
-      } else {
-        console.log('[DEBUG-SHELL] Correlation failed: No matching sibling app found with Internal IPs. Trying heuristic fallback...');
-
-        // Fallback: Find sibling that shares IP, and pick its OTHER ip (heuristic)
-        const fallbackApp = servicesList.find(otherApp => {
+      if (!targetAppIp) {
+        const runtimeApp = servicesList.find(otherApp => {
           if (otherApp.id === app.id) return false;
+
           const otherIps = otherApp.ips || [];
-          return otherIps.some(ip => appExternalIps.includes(ip));
+          const hasSharedIp = otherIps.some(ip => appExternalIps.includes(ip));
+          const hasInternalIps = otherApp.internalIps && otherApp.internalIps.length > 0;
+
+          // Log candidates for debugging
+          if (hasSharedIp) {
+            console.log('[DEBUG-SHELL] Candidate Sibling:', {
+              name: otherApp.name,
+              sharedIp: true,
+              hasInternalIps: hasInternalIps,
+              internalIps: otherApp.internalIps
+            });
+          }
+
+          return hasSharedIp && hasInternalIps;
         });
 
-        if (fallbackApp) {
-          const otherIps = fallbackApp.ips || [];
-          // Find IP that is NOT in appExternalIps
-          const uniqueIps = otherIps.filter(ip => !appExternalIps.includes(ip));
-          if (uniqueIps.length > 0) {
-            targetAppIp = uniqueIps[0];
-            console.log('[DEBUG-SHELL] Found Runtime IP via Heuristic (Non-Shared IP):', targetAppIp, 'from app:', fallbackApp.name);
-            addLog(`Found Runtime IP via Heuristic: ${targetAppIp}`, 'info');
-          }
-        }
+        if (runtimeApp) {
+          targetAppIp = runtimeApp.internalIps[0];
+          console.log('[DEBUG-SHELL] Found deterministic Runtime IP via correlation:', targetAppIp, 'from app:', runtimeApp.name);
+          addLog(`Found deterministic Runtime IP via correlation: ${targetAppIp}`, 'info');
+        } else {
+          console.log('[DEBUG-SHELL] Correlation failed: No matching sibling app found with Internal IPs. Trying heuristic fallback...');
 
-        if (!targetAppIp) {
-          console.log('[DEBUG-SHELL] Heuristic fallback failed.');
-          // Log all services for deep debugging
-          console.log('[DEBUG-SHELL] All Available Services:', servicesList.map(s => ({
-            name: s.name,
-            ips: s.ips,
-            internalIps: s.internalIps
-          })));
+          // Fallback: Find sibling that shares IP, and pick its OTHER ip (heuristic)
+          const fallbackApp = servicesList.find(otherApp => {
+            if (otherApp.id === app.id) return false;
+            const otherIps = otherApp.ips || [];
+            return otherIps.some(ip => appExternalIps.includes(ip));
+          });
+
+          if (fallbackApp) {
+            // Check if fallback app has internalIps from backend
+            if (fallbackApp.internalIps && fallbackApp.internalIps.length > 0) {
+              targetAppIp = fallbackApp.internalIps[0];
+              console.log('[DEBUG-SHELL] Found Runtime IP via fallback app internalIps:', targetAppIp, 'from app:', fallbackApp.name);
+              addLog(`Found Runtime IP via fallback: ${targetAppIp}`, 'info');
+            } else {
+              const otherIps = fallbackApp.ips || [];
+              // Find IP that is NOT in appExternalIps
+              const uniqueIps = otherIps.filter(ip => !appExternalIps.includes(ip));
+              if (uniqueIps.length > 0) {
+                targetAppIp = uniqueIps[0];
+                console.log('[DEBUG-SHELL] Found Runtime IP via Heuristic (Non-Shared IP):', targetAppIp, 'from app:', fallbackApp.name, 'candidates:', uniqueIps);
+                addLog(`Found Runtime IP via Heuristic: ${targetAppIp}`, 'info');
+              }
+            }
+          }
+
+          if (!targetAppIp) {
+            console.log('[DEBUG-SHELL] Heuristic fallback failed.');
+            // Log all services for deep debugging
+            console.log('[DEBUG-SHELL] All Available Services:', servicesList.map(s => ({
+              name: s.name,
+              ips: s.ips,
+              internalIps: s.internalIps
+            })));
+          }
         }
       }
 
@@ -2324,11 +2328,6 @@ Do you want to try connecting anyway?`)) {
   const getNodeAtIndex = (index) => displayNodes[index];
 
   const handleKeyDown = (e) => {
-    if (e.key === 'Escape' && showCloseMenu) {
-      e.preventDefault();
-      setShowCloseMenu(false);
-      return;
-    }
     if (e.key === 'Escape' && showClusterDropdown) {
       e.preventDefault();
       setShowClusterDropdown(false);
@@ -2780,72 +2779,6 @@ Do you want to try connecting anyway?`)) {
           )}
           <Info className="settings-icon" size={20} onClick={() => setShowAbout(true)} />
           <Settings className="settings-icon" size={20} onClick={() => setShowSettings(!showSettings)} />
-          <div ref={closeMenuRef} style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-            <Power
-              className="settings-icon"
-              size={20}
-              onClick={() => setShowCloseMenu(!showCloseMenu)}
-              title="Close"
-            />
-            {showCloseMenu && (
-              <div style={{
-                position: 'absolute',
-                top: 'calc(100% + 8px)',
-                right: 0,
-                background: 'var(--bg-secondary)',
-                border: '1px solid var(--border-color)',
-                borderRadius: '8px',
-                boxShadow: '0 4px 16px rgba(0, 0, 0, 0.3)',
-                minWidth: '180px',
-                zIndex: 1000,
-                overflow: 'hidden',
-                animation: 'slideIn 0.15s ease-out',
-              }}>
-                <div
-                  onClick={() => {
-                    setShowCloseMenu(false);
-                    closeCurrentWindow();
-                  }}
-                  style={{
-                    padding: '10px 14px',
-                    fontSize: '13px',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px',
-                    color: 'var(--text-primary)',
-                    transition: 'background 0.1s',
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                >
-                  <X size={14} />
-                  <span>Hide to Tray</span>
-                </div>
-                <div
-                  onClick={() => {
-                    setShowCloseMenu(false);
-                    quitApp();
-                  }}
-                  style={{
-                    padding: '10px 14px',
-                    fontSize: '13px',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px',
-                    color: 'var(--color-danger)',
-                    transition: 'background 0.1s',
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                >
-                  <Power size={14} />
-                  <span>Quit Application</span>
-                </div>
-              </div>
-            )}
-          </div>
         </div>
       </div>
 
