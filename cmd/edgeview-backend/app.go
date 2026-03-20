@@ -18,8 +18,8 @@ import (
 type zededaAPI interface {
 	GetEnterprise() (*zededa.Enterprise, error)
 	GetProjects() ([]zededa.Project, error)
-	SearchNodes(query string, limit, skip int, projectID string) (*zededa.SearchResult, error)          // legacy compat
-	SearchNodesWithToken(query string, limit int, pageToken string, projectID string) (*zededa.SearchResult, error) // cursor-based
+	SearchNodes(query string, limit, skip int, projectID string) (*zededa.SearchResult, error)                                      // legacy compat
+	SearchNodesWithToken(query string, limit int, pageToken string, projectID string, nodeID string) (*zededa.SearchResult, error) // cursor-based
 	UpdateConfig(baseURL, token string)
 	InitSession(targetID string) (string, error)
 	ParseEdgeViewScript(script string) (*zededa.SessionConfig, error)
@@ -268,8 +268,11 @@ func (a *App) GetProjects() ([]zededa.Project, error) {
 }
 
 // SearchNodes searches for nodes matching the query
-func (a *App) SearchNodes(query string, limit int, pageToken string, projectID string) (*zededa.SearchResult, error) {
-	return a.zededaClient.SearchNodesWithToken(query, limit, pageToken, projectID)
+func (a *App) SearchNodes(query string, limit int, pageToken string, projectID string, nodeID string) (*zededa.SearchResult, error) {
+	if nodeID != "" {
+		return a.zededaClient.SearchNodesWithToken("", 1, "", "", nodeID)
+	}
+	return a.zededaClient.SearchNodesWithToken(query, limit, pageToken, projectID, "")
 }
 
 // AddRecentDevice adds a device ID to the recent list

@@ -114,10 +114,10 @@ func (c *Client) UpdateConfig(baseURL, token string) {
 }
 
 func (c *Client) SearchNodes(query string, limit, skip int, projectID string) (*SearchResult, error) {
-	return c.SearchNodesWithToken(query, limit, "", projectID)
+	return c.SearchNodesWithToken(query, limit, "", projectID, "")
 }
 
-func (c *Client) SearchNodesWithToken(query string, limit int, pageToken string, projectID string) (*SearchResult, error) {
+func (c *Client) SearchNodesWithToken(query string, limit int, pageToken string, projectID string, nodeID string) (*SearchResult, error) {
 	if c.Token == "" {
 		return nil, fmt.Errorf("API token not configured")
 	}
@@ -156,6 +156,9 @@ func (c *Client) SearchNodesWithToken(query string, limit int, pageToken string,
 	}
 	if query != "" {
 		q.Add("namePattern", query)
+	}
+	if nodeID != "" {
+		q.Add("id", nodeID)
 	}
 
 	req.URL.RawQuery = q.Encode()

@@ -1716,6 +1716,18 @@ function App() {
           projectResults = projectArrays.flat();
         }
 
+        // Fetch recent devices by ID explicitly if query is empty and we have recents
+        let recentResults = [];
+        if (!query && config.recentDevices && config.recentDevices.length > 0) {
+          const recentPromises = config.recentDevices.map(nodeId =>
+            SearchNodes('', LIMIT, '', '', nodeId)
+              .then(r => r?.nodes || r || [])
+              .catch(() => [])
+          );
+          const recentArrays = await Promise.all(recentPromises);
+          recentResults = recentArrays.flat();
+        }
+
         if (abortController.signal.aborted) return;
 
         const nameNodes = nameResult?.nodes || nameResult || [];
@@ -1728,6 +1740,12 @@ function App() {
         // Merge and deduplicate
         const existingIds = new Set(filtered.map(n => n.id));
         for (const node of projectResults) {
+          if (!existingIds.has(node.id)) {
+            filtered.push(node);
+            existingIds.add(node.id);
+          }
+        }
+        for (const node of recentResults) {
           if (!existingIds.has(node.id)) {
             filtered.push(node);
             existingIds.add(node.id);

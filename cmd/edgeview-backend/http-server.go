@@ -43,6 +43,7 @@ type SearchNodesRequest struct {
 	Skip      int    `json:"skip,omitempty"`      // Deprecated: kept for compatibility
 	PageToken string `json:"pageToken,omitempty"` // Cursor for next page
 	ProjectID string `json:"projectId,omitempty"`
+	NodeID    string `json:"nodeId,omitempty"`    // Fetch a specific node
 }
 
 type ConnectRequest struct {
@@ -99,7 +100,7 @@ func (s *HTTPServer) handleSearchNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.app.SearchNodes(req.Query, req.Limit, req.PageToken, req.ProjectID)
+	result, err := s.app.SearchNodes(req.Query, req.Limit, req.PageToken, req.ProjectID, req.NodeID)
 	if err != nil {
 		s.sendError(w, err)
 		return
