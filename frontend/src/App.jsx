@@ -1745,10 +1745,12 @@ function App() {
             existingIds.add(node.id);
           }
         }
-        for (const node of recentResults) {
-          if (!existingIds.has(node.id)) {
-            filtered.push(node);
-            existingIds.add(node.id);
+        if (!query) {
+          for (const node of recentResults) {
+            if (!existingIds.has(node.id)) {
+              filtered.push(node);
+              existingIds.add(node.id);
+            }
           }
         }
 
@@ -2640,8 +2642,8 @@ Do you want to try connecting anyway?`)) {
         try {
           // Fetch recent devices by ID explicitly if query is empty and we have recents
           let recentResults = [];
-          if (newConfig.recentDevices && newConfig.recentDevices.length > 0) {
-            const recentPromises = newConfig.recentDevices.map(nodeId =>
+          if (configToSave.recentDevices && configToSave.recentDevices.length > 0) {
+            const recentPromises = configToSave.recentDevices.map(nodeId =>
               SearchNodes('', LIMIT, '', '', nodeId)
                 .then(r => r?.nodes || r || [])
                 .catch(() => [])
