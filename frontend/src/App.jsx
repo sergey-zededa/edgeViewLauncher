@@ -889,7 +889,6 @@ function App() {
         }
 
         let filtered = filterResults(nameNodes, lowerQuery);
-        projectResults = filterResults(projectResults, lowerQuery);
 
         const existingIds = new Set(filtered.map(n => n.id));
         for (const node of projectResults) {
@@ -1693,6 +1692,9 @@ function App() {
     const abortController = new AbortController();
     searchAbortRef.current = abortController;
 
+    // Reset so "No results found" doesn't flash during the debounce window
+    setInitialLoadComplete(false);
+
     const search = async () => {
       setLoading(true);
       searchInFlightRef.current = true;
@@ -1733,9 +1735,10 @@ function App() {
         const nameNodes = nameResult?.nodes || nameResult || [];
         const nameNextToken = nameResult?.nextToken || '';
 
-        // Client-side filter
+        // Client-side filter for name-search results only.
+        // Project results are already scoped by resolveMatchingProjectIds,
+        // so they don't need a second client-side filter.
         let filtered = filterResults(nameNodes, lowerQuery);
-        projectResults = filterResults(projectResults, lowerQuery);
 
         // Merge and deduplicate
         const existingIds = new Set(filtered.map(n => n.id));
