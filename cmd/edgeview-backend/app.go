@@ -19,7 +19,7 @@ type zededaAPI interface {
 	GetEnterprise() (*zededa.Enterprise, error)
 	GetProjects() ([]zededa.Project, error)
 	SearchNodes(query string, limit, skip int, projectID string) (*zededa.SearchResult, error)                                      // legacy compat
-	SearchNodesWithToken(query string, limit int, pageToken string, projectID string, nodeID string) (*zededa.SearchResult, error) // cursor-based
+	SearchNodesWithToken(query string, limit int, pageToken string, projectID string) (*zededa.SearchResult, error) // cursor-based
 	UpdateConfig(baseURL, token string)
 	InitSession(targetID string) (string, error)
 	ParseEdgeViewScript(script string) (*zededa.SessionConfig, error)
@@ -270,9 +270,34 @@ func (a *App) GetProjects() ([]zededa.Project, error) {
 // SearchNodes searches for nodes matching the query
 func (a *App) SearchNodes(query string, limit int, pageToken string, projectID string, nodeID string) (*zededa.SearchResult, error) {
 	if nodeID != "" {
-		return a.zededaClient.SearchNodesWithToken("", 1, "", "", nodeID)
+		// Fetch a specific node using its status endpoint
+		status, err := a.zededaClient.GetDeviceStatus(nodeID)
+		if err != nil || status == nil {
+			// Not found or error -> return empty search result
+			return &zededa.SearchResult{Nodes: []zededa.Node{}}, nil
+		}
+		
+		// Convert DeviceStatus to Node format for the frontend
+		runState := strings.TrimSpace(status.RunState)
+		nodeStatus := "offline"
+		if runState == "RUN_STATE_ONLINE" || runState == "ONLINE" {
+			nodeStatus = "online"
+		} else {
+			nodeStatus = strings.TrimPrefix(runState, "RUN_STATE_")
+			nodeStatus = strings.ToLower(nodeStatus)
+		}
+		
+		return &zededa.SearchResult{
+			Nodes: []zededa.Node{{
+				ID:       status.ID,
+				Name:     status.Name,
+				Project:  status.ProjectID,
+				Status:   nodeStatus,
+				EdgeView: true,
+			}},
+		}, nil
 	}
-	return a.zededaClient.SearchNodesWithToken(query, limit, pageToken, projectID, "")
+	return a.zededaClient.SearchNodesWithToken(query, limit, pageToken, projectID)
 }
 
 // AddRecentDevice adds a device ID to the recent list
