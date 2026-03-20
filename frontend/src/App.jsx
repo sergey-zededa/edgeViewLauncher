@@ -2447,8 +2447,30 @@ Do you want to try connecting anyway?`)) {
       // 4. Refresh the device list for the new cluster
       try {
         setLoading(true);
+        // Fetch recent devices by ID explicitly if query is empty and we have recents
+        let recentResults = [];
+        if (newConfig.recentDevices && newConfig.recentDevices.length > 0) {
+          const recentPromises = newConfig.recentDevices.map(nodeId =>
+            SearchNodes('', LIMIT, '', '', nodeId)
+              .then(r => r?.nodes || r || [])
+              .catch(() => [])
+          );
+          const recentArrays = await Promise.all(recentPromises);
+          recentResults = recentArrays.flat();
+        }
+
         const results = await SearchNodes('');
-        const nodesList = results?.nodes || (Array.isArray(results) ? results : []);
+        let nodesList = results?.nodes || (Array.isArray(results) ? results : []);
+
+        // Merge recent devices into nodes list uniquely
+        const existingIds = new Set(nodesList.map(n => n.id));
+        for (const node of recentResults) {
+          if (!existingIds.has(node.id)) {
+            nodesList.push(node);
+            existingIds.add(node.id);
+          }
+        }
+        
         setNodes(nodesList);
       } catch (err) {
         console.error('Failed to refresh nodes after switch:', err);
@@ -2616,8 +2638,30 @@ Do you want to try connecting anyway?`)) {
         setTimeout(() => setQuery(currentQuery), 100);
       } else {
         try {
+          // Fetch recent devices by ID explicitly if query is empty and we have recents
+          let recentResults = [];
+          if (newConfig.recentDevices && newConfig.recentDevices.length > 0) {
+            const recentPromises = newConfig.recentDevices.map(nodeId =>
+              SearchNodes('', LIMIT, '', '', nodeId)
+                .then(r => r?.nodes || r || [])
+                .catch(() => [])
+            );
+            const recentArrays = await Promise.all(recentPromises);
+            recentResults = recentArrays.flat();
+          }
+
           const results = await SearchNodes('');
-          const nodesList = results?.nodes || (Array.isArray(results) ? results : []);
+          let nodesList = results?.nodes || (Array.isArray(results) ? results : []);
+
+          // Merge recent devices into nodes list uniquely
+          const existingIds = new Set(nodesList.map(n => n.id));
+          for (const node of recentResults) {
+            if (!existingIds.has(node.id)) {
+              nodesList.push(node);
+              existingIds.add(node.id);
+            }
+          }
+
           setNodes(nodesList);
         } catch (err) {
           console.error('Failed to fetch nodes after save:', err);
@@ -4488,10 +4532,10 @@ Do you want to try connecting anyway?`)) {
                   {displayNodes.length === 0 && !loading && initialLoadComplete && (
                     <div className="empty-state">No results found</div>
                   )}
-                  {recentNodes.length > 0 && (
+                  {(!loading || displayNodes.length > 0) && recentNodes.length > 0 && (
                     <div className="section-header">Recent Devices</div>
                   )}
-                  {recentNodes.map((node, index) => (
+                  {(!loading || displayNodes.length > 0) && recentNodes.map((node, index) => (
                     <div
                       key={node.id}
                       className={`result-item ${index === selectedIndex ? 'selected' : ''} ${node.status !== 'online' ? 'disabled' : ''}`}
@@ -4520,10 +4564,10 @@ Do you want to try connecting anyway?`)) {
                       )}
                     </div>
                   ))}
-                  {(recentNodes.length > 0 && otherNodes.length > 0) && (
+                  {(!loading || displayNodes.length > 0) && (recentNodes.length > 0 && otherNodes.length > 0) && (
                     <div className="section-header">All Devices</div>
                   )}
-                  {otherNodes.map((node, index) => {
+                  {(!loading || displayNodes.length > 0) && otherNodes.map((node, index) => {
                     const globalIndex = index + recentNodes.length;
                     return (
                       <div
