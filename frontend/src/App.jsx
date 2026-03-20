@@ -12,6 +12,7 @@ import Button from './components/Button';
 import Badge from './components/Badge';
 import './components/Tooltip.css';
 import TokenGuide from './components/TokenGuide';
+import { DeviceListSkeleton, ServicesListSkeleton, SshDetailsSkeleton } from './components/Skeleton';
 import './App.css';
 
 // Simple component to display version info
@@ -354,6 +355,7 @@ function App() {
   const [query, setQuery] = useState('');
   const [nodes, setNodes] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [error, setError] = useState(null);
   const [authError, setAuthError] = useState(false); // Track authentication failures
   const [showSettings, setShowSettings] = useState(false);
@@ -1747,6 +1749,7 @@ function App() {
         searchInFlightRef.current = false;
         setLoading(false);
         setLoadingMore(false);
+        setInitialLoadComplete(true);
       }
     };
 
@@ -3147,8 +3150,8 @@ Do you want to try connecting anyway?`)) {
           </div>
         ) : (
           <div className="content-area">
-            {selectedNode && activeTunnels.filter(t => t.nodeId === selectedNode.id && t.status !== 'failed').length > 0 && (
-              <div className={`active-tunnels-section ${highlightTunnels ? 'highlight' : ''}`}>
+            {selectedNode && (
+              <div className={`active-tunnels-section ${activeTunnels.filter(t => t.nodeId === selectedNode.id && t.status !== 'failed').length > 0 ? 'expanded' : 'collapsed'} ${highlightTunnels ? 'highlight' : ''}`}>
                 <div className="section-title">Active Tunnels</div>
                 <div className="tunnel-list">
                   {activeTunnels.filter(t => t.nodeId === selectedNode.id && t.status !== 'failed').map(tunnel => (
@@ -3320,9 +3323,10 @@ Do you want to try connecting anyway?`)) {
                     </div>
                   </div>
 
-                  <div className="ssh-details-wrapper" style={{ position: 'relative', minHeight: '80px' }}>
+                  <div className="ssh-details-wrapper" style={{ position: 'relative', minHeight: '200px' }}>
+                    {!sshStatus && loadingSSH && <SshDetailsSkeleton />}
                     {sshStatus ? (
-                      <div className="ssh-details" style={{ opacity: loadingSSH ? 0.3 : 1, transition: 'opacity 0.2s' }}>
+                      <div className="ssh-details" style={{ opacity: loadingSSH ? 0.6 : 1, transition: 'opacity 0.2s' }}>
                         <div className="status-grid">
                           {(sshStatus.instID !== undefined || sshStatus.maxInst !== undefined) && (
                             <div className="status-item">
@@ -3571,9 +3575,8 @@ Do you want to try connecting anyway?`)) {
 
             {
               loadingServices ? (
-                <div className="loading-state">
-                  <Activity className="loading-icon animate-spin" size={24} />
-                  <p>Scanning services...</p>
+                <div className="services-list">
+                  <ServicesListSkeleton count={3} />
                 </div>
               ) : error ? (
                 <div
@@ -4463,13 +4466,8 @@ Do you want to try connecting anyway?`)) {
                     }
                   }}
                 >
-                  {loading && !loadingMore && (
-                    <div className="loading-state">
-                      <Activity className="loading-icon animate-spin" size={24} />
-                      <p>Loading nodes...</p>
-                    </div>
-                  )}
-                  {displayNodes.length === 0 && !loading && (
+                  {loading && !loadingMore && <DeviceListSkeleton count={6} />}
+                  {displayNodes.length === 0 && !loading && initialLoadComplete && (
                     <div className="empty-state">No results found</div>
                   )}
                   {recentNodes.length > 0 && (

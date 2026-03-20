@@ -1,0 +1,113 @@
+@keyframes skeleton-pulse {
+  0%, 100% { background-color: var(--bg-secondary); }
+  50% { background-color: var(--bg-hover); }
+}
+
+.skeleton {
+  border-radius: 4px;
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+.skeleton-text {
+  height: 14px;
+  width: 100%;
+}
+
+.skeleton-text-short {
+  width: 30%;
+}
+
+.skeleton-circle {
+  border-radius: 50%;
+}
+
+/* Device list skeleton */
+.skeleton-device-item {
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  gap: 12px;
+}
+
+.skeleton-device-item .skeleton-avatar {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+}
+
+.skeleton-device-item .skeleton-lines {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.skeleton-device-item .skeleton-status {
+  width: 48px;
+  height: 20px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* Section header skeleton */
+.skeleton-section-header {
+  padding: 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.skeleton-section-header .skeleton {
+  height: 14px;
+  width: 120px;
+}
+
+/* Service item skeleton — matches real .service-item with name, status, meta, IPs, actions */
+.skeleton-service-item {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 100px;
+  margin-bottom: 8px;
+}
+
+.skeleton-service-item .skeleton-service-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.skeleton-service-item .skeleton-service-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* SSH details skeleton */
+.skeleton-ssh-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 20px;
+  padding: 4px 0;
+  margin-bottom: 12px;
+}
+
+.skeleton-ssh-grid .skeleton-status-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.skeleton-config-section {
+  margin-top: 15px;
+  padding-top: 15px;
+  border-top: 1px solid var(--border-color);
+}
+
+.skeleton-config-chips {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}

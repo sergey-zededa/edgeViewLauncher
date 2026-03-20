@@ -31,6 +31,7 @@ body {
     flex-direction: column;
     align-items: center;
     gap: 2px;
+    min-height: 71px;
 }
 
 .cluster-info .user-email {
@@ -558,8 +559,21 @@ body {
 .active-tunnels-section {
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border-color);
+    transition: max-height 0.3s ease, padding 0.3s ease, opacity 0.3s ease, border-bottom-width 0.3s ease;
+    overflow: hidden;
+}
+
+.active-tunnels-section.expanded {
+    max-height: 500px;
     padding: 16px;
-    transition: all 0.5s;
+    opacity: 1;
+}
+
+.active-tunnels-section.collapsed {
+    max-height: 0;
+    padding: 0 16px;
+    opacity: 0;
+    border-bottom-width: 0;
 }
 
 .active-tunnels-section.highlight {
