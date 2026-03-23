@@ -367,6 +367,7 @@ function App() {
   const [enterprise, setEnterprise] = useState(null);
   const [userInfo, setUserInfo] = useState(null);
   const [projects, setProjects] = useState({});
+  const projectsLoadedRef = useRef(false);
   const [nextPageToken, setNextPageToken] = useState('');
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -1558,6 +1559,7 @@ function App() {
         projList.forEach(p => { map[p.id] = p.name; });
         setProjects(map);
       }
+      projectsLoadedRef.current = true;
       // Fetch user info (token owner)
       const info = await GetUserInfo();
       setUserInfo(info);
@@ -1696,18 +1698,21 @@ function App() {
     setInitialLoadComplete(false);
 
     const search = async () => {
+      // If the user has typed a query but the projects map hasn't loaded yet,
+      // stay in loading state.  The effect will re-fire once setProjects()
+      // runs inside loadUserInfo(), at which point we can properly resolve
+      // project-name matches.
+      if (query && !projectsLoadedRef.current) {
+        setLoading(true);
+        return; // exits before try — finally block does NOT run
+      }
+
       setLoading(true);
       searchInFlightRef.current = true;
       setAuthError(false);
       try {
         const matchingProjectIds = resolveMatchingProjectIds(query);
         const lowerQuery = query ? query.toLowerCase() : '';
-
-        if (query) {
-          console.log('[Search] query:', JSON.stringify(query),
-            'matchingProjects:', matchingProjectIds.length,
-            'projectsLoaded:', Object.keys(projects).length);
-        }
 
         // Run name search and project search in parallel
         const nameResultPromise = SearchNodes(query, LIMIT, '', '');
@@ -1718,7 +1723,7 @@ function App() {
             matchingProjectIds.map(pid =>
               SearchNodes('', LIMIT, '', pid)
                 .then(r => r?.nodes || r || [])
-                .catch(err => { console.warn('[Search] project search failed for', pid, err); return []; })
+                .catch(() => [])
             )
           ).then(arrays => arrays.flat());
         }
@@ -1743,12 +1748,6 @@ function App() {
 
         const nameNodes = nameResult?.nodes || nameResult || [];
         const nameNextToken = nameResult?.nextToken || '';
-
-        if (query) {
-          console.log('[Search] results — nameNodes:', nameNodes.length,
-            'projectResults:', projectResults.length,
-            'aborted:', abortController.signal.aborted);
-        }
 
         // Client-side filter for name-search results only.
         // Project results are already scoped by resolveMatchingProjectIds,
@@ -1780,7 +1779,7 @@ function App() {
         setAuthError(false);
       } catch (err) {
         if (abortController.signal.aborted) return;
-        console.error('[Search] error:', err);
+        console.error(err);
         setNodes([]);
         if (err.message && (err.message.includes('401') || err.message.includes('unauthorized'))) {
           setAuthError(true);
@@ -2448,6 +2447,7 @@ Do you want to try connecting anyway?`)) {
       setSshStatus(null);
       setSessionStatus(null);
       setProjects({}); // Clear old projects map
+      projectsLoadedRef.current = false;
 
       // 2. Update active cluster in config/storage
       const newConfig = { ...config, activeCluster: target };
@@ -2637,6 +2637,7 @@ Do you want to try connecting anyway?`)) {
         // Clear state before reloading to prevent stale data
         setNodes([]);
         setProjects({});
+        projectsLoadedRef.current = false;
         setEnterprise(null);
 
         // Refresh global active user info if we changed the active cluster
