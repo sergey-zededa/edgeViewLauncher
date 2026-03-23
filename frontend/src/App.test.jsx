@@ -47,6 +47,8 @@ vi.mock('./tauriAPI', () => {
     ListTunnels: vi.fn().mockResolvedValue([]),
     AddRecentDevice: vi.fn(fn),
     VerifyToken: vi.fn().mockResolvedValue({ valid: true }),
+    GetDeviceCache: vi.fn().mockResolvedValue({ devices: [], projects: [], updatedAt: new Date().toISOString(), isRefreshing: false }),
+    RefreshDeviceCache: vi.fn().mockResolvedValue({ started: true }),
     // Auto-update API mocks
     OnUpdateAvailable: vi.fn(noop),
     OnUpdateNotAvailable: vi.fn(noop),
@@ -81,12 +83,21 @@ vi.mock('./tauriAPI', () => {
     }),
     getSystemTimeFormat: vi.fn().mockResolvedValue(false),
     startContainerShell: vi.fn(),
-    openExternal: vi.fn()
+    openExternal: vi.fn(),
+    SaveCollectInfo: vi.fn().mockResolvedValue({ success: true, filePath: '/tmp/test.tar.gz' }),
   };
 });
 
 import * as electronAPI from './tauriAPI';
 import App, { ActivityLog } from './App';
+
+// Helper to create a standard cache response
+const makeCache = (devices = [], projects = []) => ({
+  devices,
+  projects,
+  updatedAt: new Date().toISOString(),
+  isRefreshing: false,
+});
 
 describe('App configuration and tunnels', () => {
   beforeEach(() => {
@@ -94,6 +105,8 @@ describe('App configuration and tunnels', () => {
     // Reset specific mocks that use mockResolvedValueOnce to prevent test pollution
     electronAPI.GetSettings.mockReset();
     electronAPI.SecureStorageGetSettings.mockReset();
+    electronAPI.GetDeviceCache.mockReset();
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache());
 
     // Mock global window.electronAPI is no longer needed since we use tauriAPI imports
     Object.defineProperty(window, 'electronAPI', {
@@ -111,8 +124,6 @@ describe('App configuration and tunnels', () => {
     };
     electronAPI.GetSettings.mockResolvedValue(defaultConfig);
     electronAPI.SecureStorageGetSettings.mockResolvedValue(defaultConfig);
-
-    electronAPI.SearchNodes.mockResolvedValue({ nodes: [], nextToken: '' });
   });
 
   it('addNewCluster adds a new cluster and sets it as viewing (not active)', async () => {
@@ -127,19 +138,13 @@ describe('App configuration and tunnels', () => {
     const newCluster = await screen.findByText('Cluster 1');
     expect(newCluster).toBeInTheDocument();
 
-    // The new cluster should be selected (viewing) but NOT active yet
-    // Check for the "Switch to this Cluster" button which appears for non-active clusters
-    // Use getAllByRole because we now have two buttons (icon in list + main button)
-    // We check that at least one exists
     const switchButtons = await screen.findAllByRole('button', { name: /switch to this cluster/i });
     expect(switchButtons.length).toBeGreaterThan(0);
 
-    // Should not have the active badge
     expect(screen.queryByText('Active')).not.toBeInTheDocument();
   });
 
   it('deleteCluster removes a cluster and updates active cluster', async () => {
-    // Initial settings with two clusters, first active
     const config = {
       baseUrl: '',
       apiToken: '',
@@ -181,27 +186,16 @@ describe('App configuration and tunnels', () => {
     const tokenTextarea = screen.getByPlaceholderText(/paste token from zededa cloud/i);
 
     const validKey = 'A'.repeat(171);
-    const validToken = `ENT1234:${validKey}`; // 7-char name + base64-ish key
+    const validToken = `ENT1234:${validKey}`;
 
-    // Token verification is currently disabled in the UI (see handleTokenPaste in App.jsx)
-    // So we expect the validation logic to NOT trigger messages yet, or just check basic behavior.
-    // If we want to test disabled verification, we should assert that no status message appears.
-
-    // Valid token
     fireEvent.change(tokenTextarea, { target: { value: validToken } });
-    // await screen.findByText('Valid token format'); // Disabled in code
-
-    // Invalid token (wrong format)
     fireEvent.change(tokenTextarea, { target: { value: 'invalid-token' } });
-    // await screen.findByText(/invalid format/i); // Disabled in code
 
-    // Since verification is disabled, we just check that no error/success message is shown
     expect(screen.queryByText('Valid token format')).not.toBeInTheDocument();
     expect(screen.queryByText(/invalid format/i)).not.toBeInTheDocument();
   });
 
-  it('saveSettings persists clusters and reloads user and nodes', async () => {
-    // First GetSettings call - empty config so settings open
+  it('saveSettings persists clusters and reloads user info', async () => {
     const emptyConfig = {
       baseUrl: '',
       apiToken: '',
@@ -226,32 +220,24 @@ describe('App configuration and tunnels', () => {
     electronAPI.GetSettings.mockResolvedValue(emptyConfig);
     electronAPI.SecureStorageGetSettings
       .mockResolvedValueOnce(emptyConfig)
-      // Second GetSettings after save - active cluster with token
       .mockResolvedValueOnce(savedConfig);
-
-    electronAPI.SearchNodes.mockResolvedValue({ nodes: [], nextToken: '' });
 
     render(<App />);
 
     await screen.findByRole('heading', { name: 'Configuration' });
 
-    // Add a new cluster so we have something to save
     const addButton = screen.getByRole('button', { name: /add/i });
     fireEvent.click(addButton);
 
-    // Activate it so it becomes the active cluster on save
     const switchButton = screen.queryByText('Switch to this Cluster');
 
-    // If we're adding the first cluster, it might auto-activate
     if (switchButton) {
       fireEvent.click(switchButton);
     } else {
-      // If auto-activated (or button missing), we need to save manually
       const saveButton = screen.getByRole('button', { name: /save changes/i });
       fireEvent.click(saveButton);
     }
 
-    // No need to click save button, switch activates it immediately
     await waitFor(() => {
       expect(electronAPI.SecureStorageSaveSettings).toHaveBeenCalledTimes(1);
     });
@@ -261,20 +247,13 @@ describe('App configuration and tunnels', () => {
     expect(configArg.clusters[0].name).toBe('Cluster 1');
     expect(configArg.activeCluster).toBe('Cluster 1');
 
-    // After reloading settings with a token, loadUserInfo should run
     await waitFor(() => {
       expect(electronAPI.GetEnterprise).toHaveBeenCalled();
       expect(electronAPI.GetProjects).toHaveBeenCalled();
     });
-
-    // Node data reload via SearchNodes
-    await waitFor(() => {
-      expect(electronAPI.SearchNodes).toHaveBeenCalled();
-    });
   });
 
   it('saveSettings persists edits to an existing cluster', async () => {
-    // Initial settings with one cluster
     const config = {
       baseUrl: 'https://original.example',
       apiToken: 'original-token',
@@ -289,28 +268,20 @@ describe('App configuration and tunnels', () => {
 
     render(<App />);
 
-    // Wait for async initialization to complete before opening settings.
-    // Without this, fireEvent runs before SecureStorageGetSettings resolves,
-    // so config.activeCluster is still '' when the [showSettings] effect sets
-    // viewingClusterName.
     await waitFor(() => {
       expect(electronAPI.SecureStorageGetSettings).toHaveBeenCalled();
     });
 
-    // Use keyboard shortcut to open settings
     const appContainer = document.querySelector('.app-container');
     fireEvent.keyDown(appContainer, { key: ',', metaKey: true });
 
     await screen.findByRole('heading', { name: 'Configuration' });
 
-    // Find the token input - updated regex
     const tokenInput = screen.getByPlaceholderText(/paste token from zededa cloud/i);
 
-    // Change the token
     const newToken = 'new-token-value';
     fireEvent.change(tokenInput, { target: { value: newToken } });
 
-    // Click save
     const saveButton = screen.getByRole('button', { name: /save changes/i });
     fireEvent.click(saveButton);
 
@@ -318,7 +289,6 @@ describe('App configuration and tunnels', () => {
       expect(electronAPI.SecureStorageSaveSettings).toHaveBeenCalledTimes(1);
     });
 
-    // Verify the saved data contains the NEW token
     const [configArg] = electronAPI.SecureStorageSaveSettings.mock.calls[0];
     expect(configArg.clusters).toHaveLength(1);
 
@@ -328,7 +298,6 @@ describe('App configuration and tunnels', () => {
   });
 
   it('starting a VNC tunnel calls StartTunnel and adds an active tunnel without auto-launching VNC client', async () => {
-    // Settings with token so main view shows directly
     const validKey = 'A'.repeat(171);
     const validToken = `ENT1234:${validKey}`;
 
@@ -349,12 +318,10 @@ describe('App configuration and tunnels', () => {
       name: 'Node 1',
       status: 'online',
       project: 'proj-1',
-      edgeView: true,
     };
 
-    electronAPI.SearchNodes.mockResolvedValue({ nodes: [node], nextToken: '' });
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([node], [{ id: 'proj-1', name: 'Project 1' }]));
 
-    // Device services with one app exposing VNC
     const servicesPayload = [
       {
         name: 'App 1',
@@ -366,7 +333,6 @@ describe('App configuration and tunnels', () => {
     ];
     electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify(servicesPayload));
 
-    // Mock active session so Connect button is enabled
     electronAPI.GetSessionStatus.mockResolvedValue({
       active: true,
       expiresAt: new Date(Date.now() + 3600000).toISOString()
@@ -376,20 +342,15 @@ describe('App configuration and tunnels', () => {
       expiry: Math.floor(Date.now() / 1000) + 3600
     });
 
-    // Stub window.electronAPI for openExternal used when launching VNC
-    // Note: getSystemTimeFormat and other methods are already mocked in beforeEach
     const openExternal = electronAPI.openExternal;
 
     render(<App />);
 
-    // Wait for node to appear from initial search
     const nodeItem = await screen.findByText('Node 1');
     fireEvent.click(nodeItem);
 
-    // Wait until Running Applications header appears (services loaded)
     await screen.findByText('Running Applications');
 
-    // Expand service options
     const connectButton = screen.getByRole('button', { name: /connect/i });
     fireEvent.click(connectButton);
 
@@ -406,10 +367,8 @@ describe('App configuration and tunnels', () => {
       expect(electronAPI.StartTunnel).toHaveBeenCalledWith('node-1', 'localhost', 5900, 'vnc');
     });
 
-    // We no longer auto-launch the native VNC client; openExternal should not be called here.
     expect(openExternal).not.toHaveBeenCalled();
 
-    // Active tunnel should be rendered in the UI (scope queries to the Active Tunnels section)
     const activeTunnelsHeading = await screen.findByText('Active Tunnels');
     const activeTunnelsSection = activeTunnelsHeading.closest('.active-tunnels-section');
     expect(activeTunnelsSection).not.toBeNull();
@@ -441,13 +400,10 @@ describe('App configuration and tunnels', () => {
       name: 'Node 1',
       status: 'online',
       project: 'proj-1',
-      edgeView: true,
     };
 
-    electronAPI.SearchNodes.mockResolvedValue({ nodes: [node], nextToken: '' });
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([node]));
     electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
-
-    // Wait for SSH setup logs to make sure component is fully rendered
     electronAPI.GetSSHStatus.mockResolvedValue({ status: 'enabled' });
 
     render(<App />);
@@ -461,7 +417,6 @@ describe('App configuration and tunnels', () => {
   });
 
   it('shows GlobalStatusBanner during EdgeView reset', async () => {
-    // Setup authenticated user with a node
     const validKey = 'A'.repeat(171);
     const validToken = `ENT1234:${validKey}`;
     const config = {
@@ -474,11 +429,10 @@ describe('App configuration and tunnels', () => {
     electronAPI.GetSettings.mockResolvedValue(config);
     electronAPI.SecureStorageGetSettings.mockResolvedValue(config);
 
-    const node = { id: 'node-1', name: 'Node 1', status: 'online', edgeView: true };
-    electronAPI.SearchNodes.mockResolvedValue({ nodes: [node], nextToken: '' });
+    const node = { id: 'node-1', name: 'Node 1', status: 'online' };
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([node]));
     electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
 
-    // Valid session so we see the reset button
     electronAPI.GetSSHStatus.mockResolvedValue({
       status: 'enabled',
       expiry: Math.floor(Date.now() / 1000) + 3600
@@ -490,30 +444,22 @@ describe('App configuration and tunnels', () => {
 
     render(<App />);
 
-    // Select node
     const nodeItem = await screen.findByText('Node 1');
     fireEvent.click(nodeItem);
 
-    // Wait for details to load
     await screen.findByText('EdgeView Session');
 
-    // Click reset button
     const resetButton = await screen.findByTitle('Restart EdgeView session');
     fireEvent.click(resetButton);
 
-    // Verify global status banner appears with loading message
-    // Note: Since ResetEdgeView is mocked to resolve immediately, we might see the success message
-    // But since we are testing async state updates, we can check for the banner presence
     await waitFor(() => {
       expect(screen.getByTestId('global-status-banner-mock')).toBeInTheDocument();
     });
 
-    // Verify ResetEdgeView was called
     expect(electronAPI.ResetEdgeView).toHaveBeenCalledWith('node-1');
   });
 
   it('shows inline error in SSH modal on connection failure', async () => {
-    // Setup authenticated user with a node
     const validKey = 'A'.repeat(171);
     const validToken = `ENT1234:${validKey}`;
     const config = {
@@ -526,48 +472,37 @@ describe('App configuration and tunnels', () => {
     electronAPI.GetSettings.mockResolvedValue(config);
     electronAPI.SecureStorageGetSettings.mockResolvedValue(config);
 
-    const node = { id: 'node-1', name: 'Node 1', status: 'online', edgeView: true };
-    electronAPI.SearchNodes.mockResolvedValue({ nodes: [node], nextToken: '' });
+    const node = { id: 'node-1', name: 'Node 1', status: 'online' };
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([node]));
 
-    // Services with one app having SSH option
     const services = [{ name: 'App 1', ips: ['10.0.0.1'], status: 'RUN_STATE_ONLINE' }];
     electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify(services));
 
-    // Mock session active so we can click buttons
     electronAPI.GetSessionStatus.mockResolvedValue({ active: true, expiresAt: new Date(Date.now() + 3600000).toISOString() });
     electronAPI.GetSSHStatus.mockResolvedValue({ status: 'enabled' });
 
-    // Mock StartTunnel to fail
     electronAPI.StartTunnel.mockRejectedValue(new Error('Connection timed out'));
 
     render(<App />);
 
-    // Select node
     const nodeItem = await screen.findByText('Node 1');
     fireEvent.click(nodeItem);
 
-    // Wait for services
     await screen.findByText('Running Applications');
 
-    // Expand service
     const connectButton = screen.getByRole('button', { name: /connect/i });
     fireEvent.click(connectButton);
 
-    // Click Launch SSH to open modal
     const launchSshButton = await screen.findByText('Launch SSH');
     fireEvent.click(launchSshButton.closest('.option-btn'));
 
-    // Wait for modal to appear
     await screen.findByText('Start SSH Session');
 
-    // Click "Open Built-in Terminal" in the modal
     const openBuiltinBtn = screen.getByText('Open Built-in Terminal').closest('button');
     fireEvent.click(openBuiltinBtn);
 
-    // Wait for inline error to appear
     await screen.findByText('Connection timed out');
 
-    // Verify error is visible (we added a unique class or icon, but text check is sufficient)
     expect(screen.getByText('Connection timed out')).toBeInTheDocument();
   });
 
@@ -592,10 +527,9 @@ describe('App configuration and tunnels', () => {
       name: 'Node 1',
       status: 'online',
       project: 'proj-1',
-      edgeView: true,
     };
 
-    electronAPI.SearchNodes.mockResolvedValue({ nodes: [node], nextToken: '' });
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([node]));
 
     render(<App />);
 
@@ -605,7 +539,6 @@ describe('App configuration and tunnels', () => {
   });
 
   it('shows Collect Info modal and tracks progress', async () => {
-    // Setup authenticated user with a node
     const validKey = 'A'.repeat(171);
     const validToken = `ENT1234:${validKey}`;
     const config = {
@@ -618,55 +551,45 @@ describe('App configuration and tunnels', () => {
     electronAPI.GetSettings.mockResolvedValue(config);
     electronAPI.SecureStorageGetSettings.mockResolvedValue(config);
 
-    const node = { id: 'node-1', name: 'Node 1', status: 'online', edgeView: true };
-    electronAPI.SearchNodes.mockResolvedValue({ nodes: [node], nextToken: '' });
+    const node = { id: 'node-1', name: 'Node 1', status: 'online' };
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([node]));
     electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
 
-    // Mock session active so we can click buttons
     electronAPI.GetSessionStatus.mockResolvedValue({ active: true, expiresAt: new Date(Date.now() + 3600000).toISOString() });
     electronAPI.GetSSHStatus.mockResolvedValue({ status: 'enabled' });
 
-    // Mock Collect Info API
     electronAPI.StartCollectInfo.mockResolvedValue({ jobId: 'job-1' });
     electronAPI.GetCollectInfoStatus
       .mockResolvedValueOnce({ status: 'starting', progress: 0, totalSize: 0 })
       .mockResolvedValueOnce({ status: 'downloading', progress: 50, totalSize: 100 })
       .mockResolvedValue({ status: 'completed', progress: 100, totalSize: 100, filename: 'test.tar.gz' });
-    // Mock Save
     electronAPI.SaveCollectInfo = vi.fn().mockResolvedValue({ success: true, filePath: '/tmp/test.tar.gz' });
 
     render(<App />);
 
-    // Select node
     const nodeItem = await screen.findByText('Node 1');
     fireEvent.click(nodeItem);
 
-    // Wait for services
     await screen.findByText('Running Applications');
 
-    // Click Collect Info button
     const collectButton = screen.getByText('Collect Info');
     fireEvent.click(collectButton);
 
-    // Should see Global Status Banner with loading
     await screen.findByText('Initiating system info collection for Node 1...');
 
-    // Should verify progress updates
     await waitFor(() => {
       expect(screen.getByTestId('global-status-banner-mock')).toHaveTextContent(/Collecting info/);
     }, { timeout: 3000 });
 
-    // Should see completion and save
     await waitFor(() => {
       expect(electronAPI.SaveCollectInfo).toHaveBeenCalledWith('job-1', 'test.tar.gz');
     }, { timeout: 3000 });
 
-    // Should show success
     await screen.findByText(/File saved successfully/);
   });
 });
 
-describe('Search and lazy loading', () => {
+describe('Search with local cache filtering', () => {
   const validKey = 'A'.repeat(171);
   const validToken = `ENT1234:${validKey}`;
   const config = {
@@ -679,371 +602,131 @@ describe('Search and lazy loading', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.useFakeTimers({ shouldAdvanceTime: true });
     electronAPI.GetSettings.mockResolvedValue(config);
     electronAPI.SecureStorageGetSettings.mockResolvedValue(config);
     electronAPI.GetProjects.mockResolvedValue([]);
     electronAPI.GetEnterprise.mockResolvedValue({ name: 'Test Enterprise' });
-    electronAPI.SearchNodes.mockResolvedValue({ nodes: [], nextToken: '' });
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it('debounces search requests while typing and only sends the final query', async () => {
-    render(<App />);
-
-    // Wait for initial load to settle
-    await vi.advanceTimersByTimeAsync(500);
-
-    const callCountAfterInit = electronAPI.SearchNodes.mock.calls.length;
-
-    const searchInput = screen.getByPlaceholderText('Search nodes, projects...');
-
-    // Type rapidly: T, TO, TOK
-    fireEvent.change(searchInput, { target: { value: 'T' } });
-    await vi.advanceTimersByTimeAsync(100);
-    fireEvent.change(searchInput, { target: { value: 'TO' } });
-    await vi.advanceTimersByTimeAsync(100);
-    fireEvent.change(searchInput, { target: { value: 'TOK' } });
-
-    // Before debounce fires, no new calls should have been made
-    expect(electronAPI.SearchNodes.mock.calls.length).toBe(callCountAfterInit);
-
-    // After 300ms debounce, only the final query should fire
-    await vi.advanceTimersByTimeAsync(350);
-
-    const callsAfterDebounce = electronAPI.SearchNodes.mock.calls.slice(callCountAfterInit);
-    // Should have exactly one call with the final query
-    expect(callsAfterDebounce.length).toBe(1);
-    expect(callsAfterDebounce[0][0]).toBe('TOK');
-  });
-
-  it('discards stale search results when a newer query is issued', async () => {
-    // First query returns slowly, second query returns fast
-    let resolveFirst;
-    const slowResult = new Promise(resolve => { resolveFirst = resolve; });
-    const fastResult = { nodes: [{ id: 'n2', name: 'AB-FastNode', status: 'online', project: 'p1', edgeView: true }], nextToken: '' };
-
-    electronAPI.SearchNodes.mockResolvedValue({ nodes: [], nextToken: '' }); // initial load
-
-    render(<App />);
-    await vi.advanceTimersByTimeAsync(500);
-
-    // Set up mock sequence: slow response for "A", fast response for "AB"
-    electronAPI.SearchNodes
-      .mockImplementationOnce(() => slowResult)
-      .mockResolvedValueOnce(fastResult);
-
-    const searchInput = screen.getByPlaceholderText('Search nodes, projects...');
-
-    // Type "A", wait for debounce
-    fireEvent.change(searchInput, { target: { value: 'A' } });
-    await vi.advanceTimersByTimeAsync(350);
-
-    // Type "AB" before first resolves, wait for debounce
-    fireEvent.change(searchInput, { target: { value: 'AB' } });
-    await vi.advanceTimersByTimeAsync(350);
-
-    // Fast result resolves first
-    await vi.advanceTimersByTimeAsync(50);
-
-    // Now the slow first result resolves — it should be discarded (aborted)
-    resolveFirst({ nodes: [{ id: 'n1', name: 'StaleNode', status: 'online', project: 'p1', edgeView: true }], nextToken: '' });
-    await vi.advanceTimersByTimeAsync(50);
-
-    // Only FastNode should be shown, not StaleNode
-    expect(screen.queryByText('StaleNode')).not.toBeInTheDocument();
-    expect(screen.getByText('AB-FastNode')).toBeInTheDocument();
-  });
-
-  it('shows loading-more indicator when paginating via scroll', async () => {
-    // Return full page (LIMIT=200) so hasMore is true
-    const fullPage = Array.from({ length: 200 }, (_, i) => ({
-      id: `node-${i}`,
-      name: `Device ${i}`,
-      status: 'online',
-      project: 'p1',
-      edgeView: true,
-    }));
-
-    electronAPI.SearchNodes.mockResolvedValue({ nodes: fullPage, nextToken: 'page2' });
-
-    render(<App />);
-
-    // Wait for initial load
-    await vi.advanceTimersByTimeAsync(500);
-    await screen.findByText('Device 0');
-
-    // Set up a slow response for the pagination request
-    let resolvePagination;
-    electronAPI.SearchNodes.mockImplementationOnce(() =>
-      new Promise(resolve => { resolvePagination = resolve; })
-    );
-
-    // Simulate scroll to bottom
-    const resultsList = document.querySelector('.results-list');
-    Object.defineProperties(resultsList, {
-      scrollHeight: { value: 5000, configurable: true },
-      scrollTop: { value: 4900, configurable: true },
-      clientHeight: { value: 50, configurable: true },
-    });
-    fireEvent.scroll(resultsList);
-
-    // The loading more indicator should appear
-    await waitFor(() => {
-      expect(screen.getByText('Loading more devices...')).toBeInTheDocument();
-    });
-
-    // Resolve pagination
-    resolvePagination({ nodes: [], nextToken: '' });
-    await vi.advanceTimersByTimeAsync(50);
-
-    // Loading indicator should disappear
-    await waitFor(() => {
-      expect(screen.queryByText('Loading more devices...')).not.toBeInTheDocument();
-    });
-  });
-
-  it('does not trigger multiple pagination requests on repeated scroll events', async () => {
-    const fullPage = Array.from({ length: 200 }, (_, i) => ({
-      id: `node-${i}`,
-      name: `Device ${i}`,
-      status: 'online',
-      project: 'p1',
-      edgeView: true,
-    }));
-
-    electronAPI.SearchNodes.mockResolvedValue({ nodes: fullPage, nextToken: 'page2' });
-
-    render(<App />);
-    await vi.advanceTimersByTimeAsync(500);
-    await screen.findByText('Device 0');
-
-    // Set up a slow response for pagination
-    let resolvePagination;
-    electronAPI.SearchNodes.mockImplementation(() =>
-      new Promise(resolve => { resolvePagination = resolve; })
-    );
-
-    const callsBefore = electronAPI.SearchNodes.mock.calls.length;
-
-    // Simulate multiple scroll events to bottom
-    const resultsList = document.querySelector('.results-list');
-    Object.defineProperties(resultsList, {
-      scrollHeight: { value: 5000, configurable: true },
-      scrollTop: { value: 4900, configurable: true },
-      clientHeight: { value: 50, configurable: true },
-    });
-    fireEvent.scroll(resultsList);
-    fireEvent.scroll(resultsList);
-    fireEvent.scroll(resultsList);
-
-    await vi.advanceTimersByTimeAsync(50);
-
-    // Only one additional SearchNodes call should have been made
-    const newCalls = electronAPI.SearchNodes.mock.calls.length - callsBefore;
-    expect(newCalls).toBe(1);
-
-    // Clean up
-    resolvePagination({ nodes: [], nextToken: '' });
-    await vi.advanceTimersByTimeAsync(50);
   });
 
   it('search by partial project name returns devices from matching projects', async () => {
-    electronAPI.GetProjects.mockResolvedValue([
+    const devices = [
+      { id: 'n1', name: 'Server-1', status: 'online', project: 'proj-abc' },
+      { id: 'n2', name: 'Server-2', status: 'online', project: 'proj-abc' },
+      { id: 'n3', name: 'Other-1', status: 'online', project: 'proj-def' },
+    ];
+    const projects = [
       { id: 'proj-abc', name: 'Production' },
       { id: 'proj-def', name: 'Staging' },
-    ]);
-
-    const nameResults = []; // No device names match "Prod"
-    const projectResults = [
-      { id: 'n1', name: 'Server-1', status: 'online', project: 'proj-abc', edgeView: true },
-      { id: 'n2', name: 'Server-2', status: 'online', project: 'proj-abc', edgeView: true },
     ];
 
-    // First call: initial load (empty query)
-    electronAPI.SearchNodes.mockResolvedValueOnce({ nodes: [], nextToken: '' });
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache(devices, projects));
 
     render(<App />);
-    await vi.advanceTimersByTimeAsync(500);
 
-    // Set up mocks for the search:
-    // Call with namePattern="Prod" returns nothing
-    // Call with projectId="proj-abc" returns project devices
-    electronAPI.SearchNodes.mockImplementation((query, limit, pageToken, projectId) => {
-      if (projectId === 'proj-abc') return Promise.resolve({ nodes: projectResults, nextToken: '' });
-      return Promise.resolve({ nodes: nameResults, nextToken: '' });
-    });
+    // Wait for cache to load
+    await screen.findByText('Server-1');
 
     const searchInput = screen.getByPlaceholderText('Search nodes, projects...');
     fireEvent.change(searchInput, { target: { value: 'Prod' } });
 
-    // Wait for debounce + search
-    await vi.advanceTimersByTimeAsync(500);
-
-    // Devices from the Production project should appear
+    // Local filtering is instant (useMemo)
     await waitFor(() => {
       expect(screen.getByText('Server-1')).toBeInTheDocument();
       expect(screen.getByText('Server-2')).toBeInTheDocument();
     });
+
+    // Non-matching devices should not appear
+    expect(screen.queryByText('Other-1')).not.toBeInTheDocument();
   });
 
-  it('search merges and deduplicates device name and project name results', async () => {
-    electronAPI.GetProjects.mockResolvedValue([
-      { id: 'proj-abc', name: 'Alpha' },
-    ]);
-
-    const sharedDevice = { id: 'n1', name: 'Alpha-Server', status: 'online', project: 'proj-abc', edgeView: true };
-    const nameOnlyDevice = { id: 'n2', name: 'Alpha-Router', status: 'online', project: 'proj-other', edgeView: true };
-    const projectOnlyDevice = { id: 'n3', name: 'Beta-Server', status: 'online', project: 'proj-abc', edgeView: true };
-
-    electronAPI.SearchNodes.mockResolvedValueOnce({ nodes: [], nextToken: '' }); // initial load
-
-    render(<App />);
-    await vi.advanceTimersByTimeAsync(500);
-
-    // Name search returns sharedDevice + nameOnlyDevice
-    // Project search returns sharedDevice + projectOnlyDevice
-    electronAPI.SearchNodes.mockImplementation((query, limit, pageToken, projectId) => {
-      if (projectId === 'proj-abc') return Promise.resolve({ nodes: [sharedDevice, projectOnlyDevice], nextToken: '' });
-      return Promise.resolve({ nodes: [sharedDevice, nameOnlyDevice], nextToken: '' });
-    });
-
-    const searchInput = screen.getByPlaceholderText('Search nodes, projects...');
-    fireEvent.change(searchInput, { target: { value: 'Alpha' } });
-
-    await vi.advanceTimersByTimeAsync(500);
-
-    // All three should appear, with sharedDevice not duplicated
-    await waitFor(() => {
-      expect(screen.getByText('Alpha-Server')).toBeInTheDocument();
-      expect(screen.getByText('Alpha-Router')).toBeInTheDocument();
-      expect(screen.getByText('Beta-Server')).toBeInTheDocument();
-    });
-
-    // sharedDevice should appear exactly once
-    const alphaServers = screen.getAllByText('Alpha-Server');
-    expect(alphaServers).toHaveLength(1);
-  });
-
-  it('filters out API results that do not match query in device name or project name', async () => {
-    electronAPI.GetProjects.mockResolvedValue([
+  it('search filters by device name', async () => {
+    const devices = [
+      { id: 'n1', name: 'CHINA-Device', status: 'online', project: 'proj-dev' },
+      { id: 'n2', name: 'UNRELATED123', status: 'online', project: 'proj-dev' },
+      { id: 'n3', name: 'INTTST445843', status: 'online', project: 'proj-china' },
+    ];
+    const projects = [
       { id: 'proj-china', name: 'BOBST-staging-no-tpm-china' },
       { id: 'proj-dev', name: 'BOBST-develop' },
-    ]);
-
-    // API namePattern returns prefix-matched results that don't contain "china"
-    const apiResults = [
-      { id: 'n1', name: 'CHINA-Device', status: 'online', project: 'proj-dev', edgeView: true },
-      { id: 'n2', name: 'UNRELATED123', status: 'online', project: 'proj-dev', edgeView: true },
-      { id: 'n3', name: 'INTTST445843', status: 'online', project: 'proj-china', edgeView: true },
-    ];
-    const projectResults = [
-      { id: 'n3', name: 'INTTST445843', status: 'online', project: 'proj-china', edgeView: true },
-      { id: 'n4', name: 'M2ZZ1575', status: 'online', project: 'proj-china', edgeView: true },
     ];
 
-    electronAPI.SearchNodes.mockResolvedValueOnce({ nodes: [], nextToken: '' }); // initial load
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache(devices, projects));
 
     render(<App />);
-    await vi.advanceTimersByTimeAsync(500);
 
-    electronAPI.SearchNodes.mockImplementation((query, limit, pageToken, projectId) => {
-      if (projectId === 'proj-china') return Promise.resolve({ nodes: projectResults, nextToken: '' });
-      return Promise.resolve({ nodes: apiResults, nextToken: '' });
-    });
+    await screen.findByText('CHINA-Device');
 
     const searchInput = screen.getByPlaceholderText('Search nodes, projects...');
     fireEvent.change(searchInput, { target: { value: 'china' } });
 
-    await vi.advanceTimersByTimeAsync(500);
-
     await waitFor(() => {
-      // CHINA-Device matches by device name (contains "china")
+      // CHINA-Device matches by device name
       expect(screen.getByText('CHINA-Device')).toBeInTheDocument();
-      // INTTST445843 matches by project name (BOBST-staging-no-tpm-china)
+      // INTTST445843 matches by project name (contains "china")
       expect(screen.getByText('INTTST445843')).toBeInTheDocument();
-      // M2ZZ1575 matches via project search
-      expect(screen.getByText('M2ZZ1575')).toBeInTheDocument();
     });
 
-    // UNRELATED123 should be filtered out — no "china" in device name or project name
+    // UNRELATED123 should be filtered out
     expect(screen.queryByText('UNRELATED123')).not.toBeInTheDocument();
   });
 
-  it('background refresh preserves project-matched results', async () => {
-    electronAPI.GetProjects.mockResolvedValue([
-      { id: 'proj-china', name: 'staging-china' },
-    ]);
-
-    const projectDevices = [
-      { id: 'n1', name: 'Device-1', status: 'online', project: 'proj-china', edgeView: true },
+  it('shows all devices when search is empty', async () => {
+    const devices = [
+      { id: 'n1', name: 'Device-A', status: 'online', project: 'p1' },
+      { id: 'n2', name: 'Device-B', status: 'offline', project: 'p1' },
     ];
-
-    electronAPI.SearchNodes.mockResolvedValueOnce({ nodes: [], nextToken: '' }); // initial load
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache(devices));
 
     render(<App />);
-    await vi.advanceTimersByTimeAsync(500);
 
-    // Set up search: name results empty, project results have devices
-    electronAPI.SearchNodes.mockImplementation((query, limit, pageToken, projectId) => {
-      if (projectId === 'proj-china') return Promise.resolve({ nodes: projectDevices, nextToken: '' });
-      return Promise.resolve({ nodes: [], nextToken: '' });
-    });
-
-    const searchInput = screen.getByPlaceholderText('Search nodes, projects...');
-    fireEvent.change(searchInput, { target: { value: 'china' } });
-    await vi.advanceTimersByTimeAsync(500);
-
-    await waitFor(() => {
-      expect(screen.getByText('Device-1')).toBeInTheDocument();
-    });
-
-    // Advance 30s for background refresh — results should persist
-    await vi.advanceTimersByTimeAsync(30000);
-
-    // Device should still be visible after background refresh
-    expect(screen.getByText('Device-1')).toBeInTheDocument();
-    expect(screen.queryByText('No results found')).not.toBeInTheDocument();
+    await screen.findByText('Device-A');
+    expect(screen.getByText('Device-B')).toBeInTheDocument();
   });
 
-  it('pagination appends results instead of replacing', async () => {
-    const firstPage = Array.from({ length: 200 }, (_, i) => ({
-      id: `node-${i}`,
-      name: `Device ${i}`,
-      status: 'online',
-      project: 'p1',
-      edgeView: true,
-    }));
-    const secondPage = [
-      { id: 'node-200', name: 'Device 200', status: 'online', project: 'p1', edgeView: true },
+  it('clicking offline device opens details with cloud data and offline banner', async () => {
+    const devices = [
+      { id: 'n1', name: 'Offline-Dev', status: 'offline', project: 'p1' },
     ];
-
-    electronAPI.SearchNodes
-      .mockResolvedValueOnce({ nodes: firstPage, nextToken: 'page2' })  // initial load
-      .mockResolvedValueOnce({ nodes: secondPage, nextToken: '' }); // pagination
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache(devices));
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify({ services: [{ name: 'test-app', status: 'HALTED' }] }));
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'enabled', managementIPs: ['10.0.0.1'] });
 
     render(<App />);
-    await vi.advanceTimersByTimeAsync(500);
-    await screen.findByText('Device 0');
 
-    // Trigger scroll pagination
-    const resultsList = document.querySelector('.results-list');
-    Object.defineProperties(resultsList, {
-      scrollHeight: { value: 5000, configurable: true },
-      scrollTop: { value: 4900, configurable: true },
-      clientHeight: { value: 50, configurable: true },
-    });
-    fireEvent.scroll(resultsList);
-    await vi.advanceTimersByTimeAsync(100);
+    const nodeItem = await screen.findByText('Offline-Dev');
+    fireEvent.click(nodeItem);
 
-    // Both first page and second page items should be present
+    // Should show the device details with cloud data
     await waitFor(() => {
-      expect(screen.getByText('Device 200')).toBeInTheDocument();
+      expect(screen.getByText('Activity Log')).toBeInTheDocument();
     });
-    expect(screen.getByText('Device 0')).toBeInTheDocument();
+
+    // Should show the offline banner
+    await waitFor(() => {
+      expect(screen.getByText(/EdgeView tunnel operations are unavailable/)).toBeInTheDocument();
+    });
+
+    // Should have called cloud APIs even though device is offline
+    expect(electronAPI.GetDeviceServices).toHaveBeenCalledWith('n1', 'Offline-Dev');
+    expect(electronAPI.GetSSHStatus).toHaveBeenCalledWith('n1');
+  });
+
+  it('refresh button calls RefreshDeviceCache', async () => {
+    const devices = [
+      { id: 'n1', name: 'Device-1', status: 'online', project: 'p1' },
+    ];
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache(devices));
+
+    render(<App />);
+
+    await screen.findByText('Device-1');
+
+    const refreshButton = screen.getByTitle('Refresh device list');
+    fireEvent.click(refreshButton);
+
+    await waitFor(() => {
+      expect(electronAPI.RefreshDeviceCache).toHaveBeenCalled();
+    });
   });
 });
 

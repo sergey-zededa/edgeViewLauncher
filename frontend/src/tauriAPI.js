@@ -48,6 +48,14 @@ export const GetAppInfo = (nodeId) =>
 export const AddRecentDevice = (nodeId) =>
     apiCall('/api/recent-device', 'POST', { nodeId }).then(r => r?.data);
 
+// ── Device Cache ─────────────────────────────────────────────────────────────
+
+export const GetDeviceCache = () =>
+    apiCall('/api/device-cache', 'GET').then(r => r?.data);
+
+export const RefreshDeviceCache = () =>
+    apiCall('/api/device-cache/refresh', 'POST').then(r => r?.data);
+
 // ── SSH / EdgeView ────────────────────────────────────────────────────────────
 
 export const SetupSSH = (nodeId) =>

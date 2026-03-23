@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { SearchNodes, ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, EnableExternalPolicy, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo, CheckForUpdates, openTerminalWindow, openVncWindow, openExternalTerminal, getElectronAppInfo, startContainerShell, getSystemTimeFormat, openExternal, InjectSecureConfig } from './tauriAPI';
+import { ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, EnableExternalPolicy, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo, CheckForUpdates, openTerminalWindow, openVncWindow, openExternalTerminal, getElectronAppInfo, startContainerShell, getSystemTimeFormat, openExternal, InjectSecureConfig, GetDeviceCache, RefreshDeviceCache } from './tauriAPI';
 import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers, Shield, Moon, Sun, HelpCircle } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
 import Tooltip from './components/Tooltip';
@@ -354,10 +354,11 @@ function App() {
   const [config, setConfig] = useState({ baseUrl: '', apiToken: '', clusters: [], activeCluster: '' });
   const [query, setQuery] = useState('');
   const [nodes, setNodes] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [initialLoadComplete, setInitialLoadComplete] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [authError, setAuthError] = useState(false); // Track authentication failures
+  const [deviceCache, setDeviceCache] = useState(null); // { devices, projects, updatedAt, isRefreshing }
+  const [cacheLoaded, setCacheLoaded] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
   const [showClusterDropdown, setShowClusterDropdown] = useState(false);
@@ -368,13 +369,6 @@ function App() {
   const [userInfo, setUserInfo] = useState(null);
   const [projects, setProjects] = useState({});
   const projectsLoadedRef = useRef(false);
-  const [nextPageToken, setNextPageToken] = useState('');
-  const [hasMore, setHasMore] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [paginationTrigger, setPaginationTrigger] = useState(0); // incremented to trigger pagination
-  const LIMIT = 200;
-  const searchAbortRef = useRef(null);
-  const searchInFlightRef = useRef(false);
 
   // Theme State
   // Default to 'auto' if no theme is set
@@ -805,18 +799,20 @@ function App() {
       return;
     }
 
+    let cancelled = false;
     let intervalId = null;
     let currentInterval = 15000;
 
     const pollServices = async () => {
       try {
         const result = await GetDeviceServices(selectedNode.id, selectedNode.name);
-        if (!result) return;
+        if (!result || cancelled) return;
 
         try {
           const parsed = JSON.parse(result);
           const servicesList = parsed.services || [];
 
+          if (cancelled) return;
           setServices(prev => {
             if (!prev) return parsed;
             const currentStr = JSON.stringify(prev);
@@ -853,66 +849,44 @@ function App() {
     intervalId = setInterval(pollServices, currentInterval);
 
     return () => {
+      cancelled = true;
       if (intervalId) clearInterval(intervalId);
     };
   }, [selectedNode, showSettings]);
 
-  // Background device list refresh (every 30 seconds)
+  // Cache polling effect — fetches device cache from backend periodically.
+  // Runs independently of showSettings so cluster switches populate data
+  // immediately while the settings panel is still closing.
   useEffect(() => {
-    // Only refresh when viewing the device list (not in settings, not viewing a device)
-    if (showSettings || selectedNode) {
-      return;
-    }
+    if (!config.activeCluster) return;
+    let cancelled = false;
 
-    // Set up interval to refresh device list every 30 seconds
-    const refreshInterval = setInterval(async () => {
-      // Don't refresh while a search/pagination request is in flight
-      if (searchInFlightRef.current) return;
+    const fetchCache = async () => {
       try {
-        // Silent refresh — replicate the same search logic as the main effect
-        const matchingProjectIds = resolveMatchingProjectIds(query);
-        const lowerQuery = query ? query.toLowerCase() : '';
-
-        const nameResult = await SearchNodes(query, LIMIT, '', '');
-        const nameNodes = nameResult?.nodes || nameResult || [];
-        const nameNextToken = nameResult?.nextToken || '';
-
-        let projectResults = [];
-        if (matchingProjectIds.length > 0) {
-          const projectArrays = await Promise.all(
-            matchingProjectIds.map(pid =>
-              SearchNodes('', LIMIT, '', pid)
-                .then(r => r?.nodes || r || [])
-                .catch(() => [])
-            )
-          );
-          projectResults = projectArrays.flat();
+        const data = await GetDeviceCache();
+        if (cancelled || !data) return;
+        setDeviceCache(data);
+        if (!cacheLoaded && (data.devices?.length > 0 || !data.isRefreshing)) {
+          setCacheLoaded(true);
         }
-
-        let filtered = filterResults(nameNodes, lowerQuery);
-
-        const existingIds = new Set(filtered.map(n => n.id));
-        for (const node of projectResults) {
-          if (!existingIds.has(node.id)) {
-            filtered.push(node);
-            existingIds.add(node.id);
-          }
-        }
-
-        setNodes(filtered);
-        setNextPageToken(nameNextToken);
-        setHasMore(!!nameNextToken);
-        setPaginationTrigger(0);
+        // Derive projects map
+        const map = {};
+        (data.projects || []).forEach(p => { map[p.id] = p.name; });
+        setProjects(map);
+        projectsLoadedRef.current = true;
       } catch (err) {
-        console.error('Background device list refresh failed:', err);
-        // Silently fail - don't disrupt user experience
+        if (err.message?.includes('401')) setAuthError(true);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-    }, 30000); // 30 seconds
-
-    return () => {
-      clearInterval(refreshInterval);
     };
-  }, [query, showSettings, selectedNode, projects]);
+
+    // Only show skeleton on first load, not on every poll cycle
+    if (!cacheLoaded) setLoading(true);
+    fetchCache();
+    const interval = setInterval(fetchCache, 15000); // poll every 15s for status updates
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [config.activeCluster]);
 
 
   const fetchViewingUserInfo = async (cluster) => {
@@ -1050,6 +1024,7 @@ function App() {
   // Session is connected if we have a valid active session (non-expired with timestamp)
   // tunnelConnected is just a bonus verification, not required
   const isSessionConnected = !sessionExpired && expiryInfo.timestamp !== null;
+  const isDeviceOnline = selectedNode?.status === 'online';
 
   // State for time format preference
   const [use24HourTime, setUse24HourTime] = useState(false);
@@ -1634,9 +1609,11 @@ function App() {
             // Inject secure config to backend now that we have tokens
             InjectSecureConfig().catch(err => console.error("Failed to inject config:", err));
           } else {
+            setLoading(false);
             setShowSettings(true);
           }
         } else {
+          setLoading(false);
           setShowSettings(true);
         }
       } catch (err) {
@@ -1655,6 +1632,7 @@ function App() {
           }
         } catch (fallbackErr) {
           console.error('Fallback GetSettings also failed:', fallbackErr);
+          setLoading(false);
           setShowSettings(true);
         }
       }
@@ -1665,201 +1643,25 @@ function App() {
 
   // Removed loadSettingsAndUnlock as we are back to auto-init
 
-  // Resolve query to matching project IDs (partial/substring match)
-  const resolveMatchingProjectIds = (searchQuery) => {
-    if (!searchQuery) return [];
-    const lowerQuery = searchQuery.toLowerCase();
-    return Object.entries(projects)
-      .filter(([, name]) => name.toLowerCase().includes(lowerQuery))
-      .map(([id]) => id);
-  };
-
-  // Client-side filter helper: keep only devices where query appears in name or project name
-  const filterResults = (nodes, lowerQuery) => {
-    if (!lowerQuery) return nodes;
-    return nodes.filter(n => {
-      const nameMatch = n.name && n.name.toLowerCase().includes(lowerQuery);
-      const projName = projects[n.project] || '';
-      const projMatch = projName.toLowerCase().includes(lowerQuery);
-      return nameMatch || projMatch;
+  // Local filtering with useMemo — instant search over cached devices
+  const filteredDevices = useMemo(() => {
+    const devices = deviceCache?.devices || [];
+    if (!query.trim()) return devices;
+    const q = query.toLowerCase().trim();
+    return devices.filter(d => {
+      if (d.name?.toLowerCase().includes(q)) return true;
+      const projName = projects[d.project] || '';
+      if (projName.toLowerCase().includes(q)) return true;
+      return false;
     });
-  };
+  }, [deviceCache?.devices, query, projects]);
 
-  // Initial search effect — fires on query or projects change
+  // Sync filteredDevices into nodes state for compatibility with existing rendering
   useEffect(() => {
-    if (searchAbortRef.current) {
-      searchAbortRef.current.abort();
-    }
-
-    const abortController = new AbortController();
-    searchAbortRef.current = abortController;
-
-    // Reset so "No results found" doesn't flash while a new search is pending.
-    setInitialLoadComplete(false);
-
-    const search = async () => {
-      // If the user has typed a query but the projects map hasn't loaded yet,
-      // stay in loading state.  The effect will re-fire once setProjects()
-      // runs inside loadUserInfo(), at which point we can properly resolve
-      // project-name matches.
-      if (query && !projectsLoadedRef.current) {
-        setLoading(true);
-        return; // exits before try — finally block does NOT run
-      }
-
-      setLoading(true);
-      searchInFlightRef.current = true;
-      setAuthError(false);
-      try {
-        const matchingProjectIds = resolveMatchingProjectIds(query);
-        const lowerQuery = query ? query.toLowerCase() : '';
-
-        // Run name search and project search in parallel
-        const nameResultPromise = SearchNodes(query, LIMIT, '', '');
-
-        let projectResultsPromise = Promise.resolve([]);
-        if (matchingProjectIds.length > 0) {
-          projectResultsPromise = Promise.all(
-            matchingProjectIds.map(pid =>
-              SearchNodes('', LIMIT, '', pid)
-                .then(r => r?.nodes || r || [])
-                .catch(() => [])
-            )
-          ).then(arrays => arrays.flat());
-        }
-
-        // Fetch recent devices by ID explicitly if query is empty and we have recents
-        let recentResultsPromise = Promise.resolve([]);
-        if (!query && config.recentDevices && config.recentDevices.length > 0) {
-          recentResultsPromise = Promise.all(
-            config.recentDevices.map(nodeId =>
-              SearchNodes('', LIMIT, '', '', nodeId)
-                .then(r => r?.nodes || r || [])
-                .catch(() => [])
-            )
-          ).then(arrays => arrays.flat());
-        }
-
-        const [nameResult, projectResults, recentResults] = await Promise.all([
-          nameResultPromise, projectResultsPromise, recentResultsPromise
-        ]);
-
-        if (abortController.signal.aborted) return;
-
-        const nameNodes = nameResult?.nodes || nameResult || [];
-        const nameNextToken = nameResult?.nextToken || '';
-
-        // Client-side filter for name-search results only.
-        // Project results are already scoped by resolveMatchingProjectIds,
-        // so they don't need a second client-side filter.
-        let filtered = filterResults(nameNodes, lowerQuery);
-
-        // Merge and deduplicate
-        const existingIds = new Set(filtered.map(n => n.id));
-        for (const node of projectResults) {
-          if (!existingIds.has(node.id)) {
-            filtered.push(node);
-            existingIds.add(node.id);
-          }
-        }
-        if (!query) {
-          for (const node of recentResults) {
-            if (!existingIds.has(node.id)) {
-              filtered.push(node);
-              existingIds.add(node.id);
-            }
-          }
-        }
-
-        if (abortController.signal.aborted) return;
-
-        setNodes(filtered);
-        setNextPageToken(nameNextToken);
-        setHasMore(!!nameNextToken);
-        setAuthError(false);
-      } catch (err) {
-        if (abortController.signal.aborted) return;
-        console.error(err);
-        setNodes([]);
-        if (err.message && (err.message.includes('401') || err.message.includes('unauthorized'))) {
-          setAuthError(true);
-        }
-      } finally {
-        // Only update loading/completion state if this search wasn't aborted.
-        // An aborted search's finally block must NOT stomp on the replacement
-        // search's state — that causes "No results found" flashes.
-        if (!abortController.signal.aborted) {
-          searchInFlightRef.current = false;
-          setLoading(false);
-          setLoadingMore(false);
-          setInitialLoadComplete(true);
-        }
-      }
-    };
-
-    const timeoutId = setTimeout(search, 300);
-    return () => {
-      clearTimeout(timeoutId);
-      abortController.abort();
-    };
-  }, [query, projects]);
-
-  // Pagination effect — fires when user scrolls to load more
-  useEffect(() => {
-    if (paginationTrigger === 0 || !nextPageToken) return;
-
-    if (searchAbortRef.current) {
-      searchAbortRef.current.abort();
-    }
-
-    const abortController = new AbortController();
-    searchAbortRef.current = abortController;
-
-    const loadMore = async () => {
-      setLoadingMore(true);
-      searchInFlightRef.current = true;
-      try {
-        const lowerQuery = query ? query.toLowerCase() : '';
-        const result = await SearchNodes(query, LIMIT, nextPageToken, '');
-
-        if (abortController.signal.aborted) return;
-
-        const newNodes = result?.nodes || result || [];
-        const newNextToken = result?.nextToken || '';
-
-        const filtered = filterResults(newNodes, lowerQuery);
-
-        setNodes(prev => {
-          const prevIds = new Set(prev.map(n => n.id));
-          const unique = filtered.filter(n => !prevIds.has(n.id));
-          return [...prev, ...unique];
-        });
-        setNextPageToken(newNextToken);
-        setHasMore(!!newNextToken);
-      } catch (err) {
-        if (abortController.signal.aborted) return;
-        console.error(err);
-      } finally {
-        searchInFlightRef.current = false;
-        setLoadingMore(false);
-      }
-    };
-
-    loadMore();
-    return () => {
-      abortController.abort();
-    };
-  }, [paginationTrigger]);
-
-  // Reset pagination when query changes
-  useEffect(() => {
-    setNextPageToken('');
-    setHasMore(true);
-    setPaginationTrigger(0);
-  }, [query]);
+    setNodes(filteredDevices);
+  }, [filteredDevices]);
 
   const handleConnect = async (node) => {
-    if (node.status !== 'online') return;
     try {
       await AddRecentDevice(node.id);
       const newConfig = await SecureStorageGetSettings();
@@ -1871,12 +1673,11 @@ function App() {
     setServices(null);
     setSshStatus(null);
     setLogs([]);
+    setShowTerminal(false);
     setLoadingServices(true);
     setLoadingSSH(true);
-    // Use global status for SSH connection progress
     setGlobalStatus({ type: 'loading', message: "Fetching device services..." });
-    addLog(`Connecting to ${node.name}...`);
-    setShowTerminal(false);
+    addLog(`Opening ${node.name} details...`);
 
     GetDeviceServices(node.id, node.name).then(result => {
       try {
@@ -1894,17 +1695,6 @@ function App() {
       setServices({ error: err.toString() });
     }).finally(() => {
       setLoadingServices(false);
-      // Clear global status if it was "Fetching device services..."
-      // But loadSSHStatus might have set it to something else, so be careful.
-      // However, loadSSHStatus is called in parallel, so this might be tricky.
-      // Let's rely on loadSSHStatus to update it or clear it.
-      // If loadSSHStatus finishes first, we don't want it to clear status if loadSSHStatus set it to something else.
-      // But loadSSHStatus sets globalStatus on start.
-      // Given the overlap, maybe we just don't clear it here? 
-      // Or we check if message is "Fetching device services..."?
-      // Since we can't check current state easily in closure, let's assume loadSSHStatus will handle it.
-      // Actually, handleConnect logic is a bit messy with parallel calls.
-      // Let's just not clear it here, as loadSSHStatus is likely still running or will run.
       GetSessionStatus(node.id).then(status => {
         if (status.active) {
           setSessionStatus(status);
@@ -2365,6 +2155,13 @@ Do you want to try connecting anyway?`)) {
     setServices(null);
     setSshStatus(null);
     setShowTerminal(false);
+    setExpandedServiceId(null);
+    setSessionStatus(null);
+    setTunnelConnected(false);
+    setLoadingServices(false);
+    setLoadingSSH(false);
+    setGlobalStatus(null);
+    setSshPopover(null);
   };
 
   const recentIds = config.recentDevices || [];
@@ -2448,6 +2245,8 @@ Do you want to try connecting anyway?`)) {
       setSessionStatus(null);
       setProjects({}); // Clear old projects map
       projectsLoadedRef.current = false;
+      setDeviceCache(null);
+      setCacheLoaded(false);
 
       // 2. Update active cluster in config/storage
       const newConfig = { ...config, activeCluster: target };
@@ -2462,51 +2261,35 @@ Do you want to try connecting anyway?`)) {
         fetchViewingUserInfo(targetCluster);
       }
 
-      // 3. Push updated config to the Go backend so subsequent API calls use the new cluster
+      // 3. Close settings panel immediately so the user sees the device list
+      setShowSettings(false);
+      setShowClusterDropdown(false);
+
+      // 4. Push updated config to the Go backend (triggers cache switch + refresh)
       await InjectSecureConfig().catch(err => console.error('Failed to inject config:', err));
 
-      // Reload user info for the new active cluster
-      await loadUserInfo();
+      // 5. Immediately fetch the new cluster's cache (may have disk-cached data)
+      try {
+        const data = await GetDeviceCache();
+        if (data) {
+          setDeviceCache(data);
+          if (data.devices?.length > 0 || !data.isRefreshing) {
+            setCacheLoaded(true);
+          }
+          const map = {};
+          (data.projects || []).forEach(p => { map[p.id] = p.name; });
+          setProjects(map);
+          projectsLoadedRef.current = true;
+        }
+      } catch (err) {
+        console.error('Failed to fetch cache after cluster switch:', err);
+      }
+
+      // 6. Reload user info (non-blocking for device list)
+      loadUserInfo().catch(err => console.error('Failed to load user info:', err));
 
       // Clear any auth errors since we switched
       setAuthError(false);
-
-      // 4. Refresh the device list for the new cluster
-      try {
-        setLoading(true);
-        // Fetch recent devices by ID explicitly if query is empty and we have recents
-        let recentResults = [];
-        if (newConfig.recentDevices && newConfig.recentDevices.length > 0) {
-          const recentPromises = newConfig.recentDevices.map(nodeId =>
-            SearchNodes('', LIMIT, '', '', nodeId)
-              .then(r => r?.nodes || r || [])
-              .catch(() => [])
-          );
-          const recentArrays = await Promise.all(recentPromises);
-          recentResults = recentArrays.flat();
-        }
-
-        const results = await SearchNodes('');
-        let nodesList = results?.nodes || (Array.isArray(results) ? results : []);
-
-        // Merge recent devices into nodes list uniquely
-        const existingIds = new Set(nodesList.map(n => n.id));
-        for (const node of recentResults) {
-          if (!existingIds.has(node.id)) {
-            nodesList.push(node);
-            existingIds.add(node.id);
-          }
-        }
-        
-        setNodes(nodesList);
-      } catch (err) {
-        console.error('Failed to refresh nodes after switch:', err);
-      } finally {
-        setLoading(false);
-      }
-      // Auto-close settings panel after successful cluster switch
-      setShowSettings(false);
-      setShowClusterDropdown(false);
     } catch (err) {
       console.error("Failed to switch cluster:", err);
       setSettingsError("Failed to switch cluster: " + (err.message || String(err)));
@@ -2660,40 +2443,11 @@ Do you want to try connecting anyway?`)) {
         }
       }
 
-      if (query) {
-        const currentQuery = query;
-        setQuery('');
-        setTimeout(() => setQuery(currentQuery), 100);
-      } else {
-        try {
-          // Fetch recent devices by ID explicitly if query is empty and we have recents
-          let recentResults = [];
-          if (configToSave.recentDevices && configToSave.recentDevices.length > 0) {
-            const recentPromises = configToSave.recentDevices.map(nodeId =>
-              SearchNodes('', LIMIT, '', '', nodeId)
-                .then(r => r?.nodes || r || [])
-                .catch(() => [])
-            );
-            const recentArrays = await Promise.all(recentPromises);
-            recentResults = recentArrays.flat();
-          }
-
-          const results = await SearchNodes('');
-          let nodesList = results?.nodes || (Array.isArray(results) ? results : []);
-
-          // Merge recent devices into nodes list uniquely
-          const existingIds = new Set(nodesList.map(n => n.id));
-          for (const node of recentResults) {
-            if (!existingIds.has(node.id)) {
-              nodesList.push(node);
-              existingIds.add(node.id);
-            }
-          }
-
-          setNodes(nodesList);
-        } catch (err) {
-          console.error('Failed to fetch nodes after save:', err);
-        }
+      // Trigger a cache refresh so the device list updates
+      try {
+        await RefreshDeviceCache();
+      } catch (err) {
+        console.error('Failed to trigger cache refresh after save:', err);
       }
     } catch (err) {
       console.error("Failed to save settings:", err);
@@ -2740,29 +2494,31 @@ Do you want to try connecting anyway?`)) {
 
             return (
               <>
-                <span
-                  onClick={() => {
-                    const configured = config.clusters.filter(c => c.baseUrl && c.apiToken);
-                    if (configured.length > 1) setShowClusterDropdown(!showClusterDropdown);
-                  }}
-                  style={{
-                    cursor: config.clusters.filter(c => c.baseUrl && c.apiToken).length > 1 ? 'pointer' : 'default',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '4px',
-                    padding: '2px 6px',
-                    borderRadius: '4px',
-                    transition: 'background 0.15s',
-                    WebkitAppRegion: 'no-drag',
-                  }}
-                  onMouseEnter={(e) => { if (config.clusters.filter(c => c.baseUrl && c.apiToken).length > 1) e.currentTarget.style.background = 'var(--bg-hover)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                >
-                  {entName} • {url}
-                  {config.clusters.filter(c => c.baseUrl && c.apiToken).length > 1 && (
-                    <ChevronDown size={12} style={{ transition: 'transform 0.2s', transform: showClusterDropdown ? 'rotate(180deg)' : 'none' }} />
-                  )}
-                </span>
+                <Tooltip text={config.clusters.filter(c => c.baseUrl && c.apiToken).length > 1 ? "Switch cluster" : "Active cluster"} simple position="bottom">
+                  <span
+                    onClick={() => {
+                      const configured = config.clusters.filter(c => c.baseUrl && c.apiToken);
+                      if (configured.length > 1) setShowClusterDropdown(!showClusterDropdown);
+                    }}
+                    style={{
+                      cursor: config.clusters.filter(c => c.baseUrl && c.apiToken).length > 1 ? 'pointer' : 'default',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      padding: '2px 6px',
+                      borderRadius: '4px',
+                      transition: 'background 0.15s',
+                      WebkitAppRegion: 'no-drag',
+                    }}
+                    onMouseEnter={(e) => { if (config.clusters.filter(c => c.baseUrl && c.apiToken).length > 1) e.currentTarget.style.background = 'var(--bg-hover)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                  >
+                    {entName} • {url}
+                    {config.clusters.filter(c => c.baseUrl && c.apiToken).length > 1 && (
+                      <ChevronDown size={12} style={{ transition: 'transform 0.2s', transform: showClusterDropdown ? 'rotate(180deg)' : 'none' }} />
+                    )}
+                  </span>
+                </Tooltip>
                 {tokenOwner && (
                   <Tooltip text={expiryText || 'Token expiry unknown'} simple={true}>
                     <span className={`user-email ${isExpiringSoon ? 'expiring-soon' : ''}`}>
@@ -2870,8 +2626,26 @@ Do you want to try connecting anyway?`)) {
               )}
             </div>
           )}
-          <Info className="settings-icon" size={20} onClick={() => setShowAbout(true)} />
-          <Settings className="settings-icon" size={20} onClick={() => setShowSettings(!showSettings)} />
+          {!selectedNode && (
+            <Tooltip text="Refresh device list" simple position="bottom">
+              <RefreshCw
+                className={`settings-icon ${deviceCache?.isRefreshing ? 'spinning' : ''}`}
+                size={20}
+                title="Refresh device list"
+                onClick={async () => {
+                  await RefreshDeviceCache();
+                  const data = await GetDeviceCache();
+                  if (data) setDeviceCache(data);
+                }}
+              />
+            </Tooltip>
+          )}
+          <Tooltip text="About" simple position="bottom">
+            <Info className="settings-icon" size={20} title="About" onClick={() => setShowAbout(true)} />
+          </Tooltip>
+          <Tooltip text="Settings" simple position="bottom">
+            <Settings className="settings-icon" size={20} title="Settings" onClick={() => setShowSettings(!showSettings)} />
+          </Tooltip>
         </div>
       </div>
 
@@ -3355,6 +3129,13 @@ Do you want to try connecting anyway?`)) {
               </div>
             )}
 
+            {selectedNode && !isDeviceOnline && (
+              <div className="device-offline-banner">
+                <AlertTriangle size={14} />
+                Device is {selectedNode.status} — EdgeView tunnel operations are unavailable.
+                Cloud configuration and last-known status are shown below.
+              </div>
+            )}
 
             {
               selectedNode && (
@@ -3365,12 +3146,14 @@ Do you want to try connecting anyway?`)) {
                       <button
                         className={`connect-btn primary split-main`}
                         onClick={() => setShowTerminalMenu(!showTerminalMenu)}
-                        disabled={!sshStatus || sshStatus.status !== 'enabled' || !isSessionConnected}
-                        title={(!sshStatus || sshStatus.status !== 'enabled')
-                          ? "SSH must be enabled first"
-                          : !isSessionConnected
-                            ? "Session is not connected"
-                            : "Open SSH Terminal"}
+                        disabled={!sshStatus || sshStatus.status !== 'enabled' || !isSessionConnected || !isDeviceOnline}
+                        title={!isDeviceOnline
+                          ? "Device is offline"
+                          : (!sshStatus || sshStatus.status !== 'enabled')
+                            ? "SSH must be enabled first"
+                            : !isSessionConnected
+                              ? "Session is not connected"
+                              : "Open SSH Terminal"}
                         style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', fontSize: '12px' }}
                       >
                         <Terminal size={16} />
@@ -3380,7 +3163,7 @@ Do you want to try connecting anyway?`)) {
                       <button
                         className={`connect-btn primary split-arrow`}
                         onClick={() => setShowTerminalMenu(!showTerminalMenu)}
-                        disabled={!sshStatus || sshStatus.status !== 'enabled' || !isSessionConnected}
+                        disabled={!sshStatus || sshStatus.status !== 'enabled' || !isSessionConnected || !isDeviceOnline}
                         style={{ padding: '6px 8px' }}
                       >
                         <ChevronDown size={14} />
@@ -3464,8 +3247,9 @@ Do you want to try connecting anyway?`)) {
                               ) : '-'}
                               <button
                                 className="inline-icon-btn"
-                                title="Restart EdgeView session"
+                                title={!isDeviceOnline ? "Device is offline" : "Restart EdgeView session"}
                                 onClick={handleResetEdgeView}
+                                disabled={!isDeviceOnline}
                               >
                                 <RefreshCw size={14} />
                               </button>
@@ -3510,11 +3294,11 @@ Do you want to try connecting anyway?`)) {
                             {/* SSH Control */}
                             <div
                               className={`config-chip ${sshStatus.status === 'enabled' ? 'enabled' : sshStatus.status === 'mismatch' ? 'warning' : 'disabled'}`}
-                              onClick={sshStatus.status === 'enabled' ? handleDisableSSH : handleSetupSSH}
-                              title={sshStatus.status === 'enabled' ? "SSH Enabled - Click to Disable" : sshStatus.status === 'mismatch' ? "Key Mismatch - Click to Fix" : "SSH Disabled - Click to Enable"}
+                              onClick={isDeviceOnline ? (sshStatus.status === 'enabled' ? handleDisableSSH : handleSetupSSH) : undefined}
+                              title={!isDeviceOnline ? "Device is offline" : sshStatus.status === 'enabled' ? "SSH Enabled - Click to Disable" : sshStatus.status === 'mismatch' ? "Key Mismatch - Click to Fix" : "SSH Disabled - Click to Enable"}
                               style={{
                                 display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
-                                fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
+                                fontSize: '12px', fontWeight: '500', cursor: isDeviceOnline ? 'pointer' : 'default', transition: 'all 0.2s', opacity: isDeviceOnline ? 1 : 0.5,
                                 backgroundColor: sshStatus.status === 'enabled' ? 'var(--color-success-bg)' : sshStatus.status === 'mismatch' ? 'var(--color-warning-bg)' : 'var(--bg-secondary)',
                                 color: sshStatus.status === 'enabled' ? 'var(--color-success)' : sshStatus.status === 'mismatch' ? 'var(--color-warning)' : 'var(--text-primary)',
                                 border: 'none'
@@ -3529,11 +3313,11 @@ Do you want to try connecting anyway?`)) {
                             {/* VGA Control */}
                             <div
                               className={`config-chip ${sshStatus.vgaEnabled ? 'enabled' : 'disabled'}`}
-                              onClick={() => handleToggleVGA(!sshStatus.vgaEnabled)}
-                              title={sshStatus.vgaEnabled ? "VGA Enabled - Click to Disable" : "VGA Disabled - Click to Enable"}
+                              onClick={isDeviceOnline ? () => handleToggleVGA(!sshStatus.vgaEnabled) : undefined}
+                              title={!isDeviceOnline ? "Device is offline" : sshStatus.vgaEnabled ? "VGA Enabled - Click to Disable" : "VGA Disabled - Click to Enable"}
                               style={{
                                 display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
-                                fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
+                                fontSize: '12px', fontWeight: '500', cursor: isDeviceOnline ? 'pointer' : 'default', transition: 'all 0.2s', opacity: isDeviceOnline ? 1 : 0.5,
                                 backgroundColor: sshStatus.vgaEnabled ? 'var(--color-success-bg)' : 'var(--bg-secondary)',
                                 color: sshStatus.vgaEnabled ? 'var(--color-success)' : 'var(--text-primary)',
                                 border: 'none'
@@ -3546,11 +3330,11 @@ Do you want to try connecting anyway?`)) {
                             {/* USB Control */}
                             <div
                               className={`config-chip ${sshStatus.usbEnabled ? 'enabled' : 'disabled'}`}
-                              onClick={() => handleToggleUSB(!sshStatus.usbEnabled)}
-                              title={sshStatus.usbEnabled ? "USB Enabled - Click to Disable" : "USB Disabled - Click to Enable"}
+                              onClick={isDeviceOnline ? () => handleToggleUSB(!sshStatus.usbEnabled) : undefined}
+                              title={!isDeviceOnline ? "Device is offline" : sshStatus.usbEnabled ? "USB Enabled - Click to Disable" : "USB Disabled - Click to Enable"}
                               style={{
                                 display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
-                                fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
+                                fontSize: '12px', fontWeight: '500', cursor: isDeviceOnline ? 'pointer' : 'default', transition: 'all 0.2s', opacity: isDeviceOnline ? 1 : 0.5,
                                 backgroundColor: sshStatus.usbEnabled ? 'var(--color-success-bg)' : 'var(--bg-secondary)',
                                 color: sshStatus.usbEnabled ? 'var(--color-success)' : 'var(--text-primary)',
                                 border: 'none'
@@ -3563,11 +3347,11 @@ Do you want to try connecting anyway?`)) {
                             {/* Console Control */}
                             <div
                               className={`config-chip ${sshStatus.consoleEnabled ? 'enabled' : 'disabled'}`}
-                              onClick={() => handleToggleConsole(!sshStatus.consoleEnabled)}
-                              title={sshStatus.consoleEnabled ? "Console Enabled - Click to Disable" : "Console Disabled - Click to Enable"}
+                              onClick={isDeviceOnline ? () => handleToggleConsole(!sshStatus.consoleEnabled) : undefined}
+                              title={!isDeviceOnline ? "Device is offline" : sshStatus.consoleEnabled ? "Console Enabled - Click to Disable" : "Console Disabled - Click to Enable"}
                               style={{
                                 display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
-                                fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
+                                fontSize: '12px', fontWeight: '500', cursor: isDeviceOnline ? 'pointer' : 'default', transition: 'all 0.2s', opacity: isDeviceOnline ? 1 : 0.5,
                                 backgroundColor: sshStatus.consoleEnabled ? 'var(--color-success-bg)' : 'var(--bg-secondary)',
                                 color: sshStatus.consoleEnabled ? 'var(--color-success)' : 'var(--text-primary)',
                                 border: 'none'
@@ -3580,11 +3364,11 @@ Do you want to try connecting anyway?`)) {
                             {/* External Policy Control */}
                             <div
                               className={`config-chip ${sshStatus.externalPolicy ? 'enabled' : 'disabled'}`}
-                              onClick={handleEnableExternalPolicy}
-                              title={sshStatus.externalPolicy ? "External Policy Enabled - Click to Disable" : "External Policy Disabled - Click to Enable"}
+                              onClick={isDeviceOnline ? handleEnableExternalPolicy : undefined}
+                              title={!isDeviceOnline ? "Device is offline" : sshStatus.externalPolicy ? "External Policy Enabled - Click to Disable" : "External Policy Disabled - Click to Enable"}
                               style={{
                                 display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
-                                fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
+                                fontSize: '12px', fontWeight: '500', cursor: isDeviceOnline ? 'pointer' : 'default', transition: 'all 0.2s', opacity: isDeviceOnline ? 1 : 0.5,
                                 backgroundColor: sshStatus.externalPolicy ? 'var(--color-success-bg)' : 'var(--bg-secondary)',
                                 color: sshStatus.externalPolicy ? 'var(--color-success)' : 'var(--text-primary)',
                                 border: 'none'
@@ -3639,12 +3423,13 @@ Do you want to try connecting anyway?`)) {
                       backgroundColor: 'var(--bg-hover)',
                       borderRadius: '6px'
                     }}
-                    onClick={() => {
+                    onClick={isDeviceOnline ? () => {
                       setTcpIpInput('');
                       setTcpPortInput('');
                       setTcpTunnelConfig({ id: 'manual' });
-                    }}
-                    title="Open TCP tunnel to external endpoint"
+                    } : undefined}
+                    disabled={!isDeviceOnline}
+                    title={!isDeviceOnline ? "Device is offline" : "Open TCP tunnel to external endpoint"}
                   >
                     <Activity size={14} style={{ marginRight: '8px', color: 'var(--color-primary)' }} />
                     External Endpoint TCP Tunnel
@@ -3663,7 +3448,7 @@ Do you want to try connecting anyway?`)) {
               )
             }
 
-            {
+            {selectedNode && (
               loadingServices ? (
                 <div className="services-list">
                   <ServicesListSkeleton count={3} />
@@ -4327,7 +4112,7 @@ Do you want to try connecting anyway?`)) {
                   })()}
                 </div >
               ) : null
-            }
+            )}
 
             {selectedNode && <ActivityLog logs={logs} />}
 
@@ -4547,18 +4332,13 @@ Do you want to try connecting anyway?`)) {
 
             {
               !selectedNode && (
-                <div
-                  className="results-list"
-                  onScroll={(e) => {
-                    const { scrollTop, scrollHeight, clientHeight } = e.target;
-                    if (scrollHeight - scrollTop - clientHeight < 100 && hasMore && !loading && !loadingMore) {
-                      setPaginationTrigger(prev => prev + 1);
-                    }
-                  }}
-                >
-                  {loading && !loadingMore && <DeviceListSkeleton count={6} />}
-                  {displayNodes.length === 0 && !loading && initialLoadComplete && (
+                <div className="results-list">
+                  {loading && !cacheLoaded && <DeviceListSkeleton count={6} />}
+                  {displayNodes.length === 0 && !loading && cacheLoaded && query && (
                     <div className="empty-state">No results found</div>
+                  )}
+                  {displayNodes.length === 0 && !loading && cacheLoaded && !query && (
+                    <div className="empty-state">No devices</div>
                   )}
                   {(!loading || displayNodes.length > 0) && recentNodes.length > 0 && (
                     <div className="section-header">Recent Devices</div>
@@ -4566,12 +4346,12 @@ Do you want to try connecting anyway?`)) {
                   {(!loading || displayNodes.length > 0) && recentNodes.map((node, index) => (
                     <div
                       key={node.id}
-                      className={`result-item ${index === selectedIndex ? 'selected' : ''} ${node.status !== 'online' ? 'disabled' : ''}`}
+                      className={`result-item ${index === selectedIndex ? 'selected' : ''}`}
                       onClick={() => handleConnect(node)}
                       onMouseEnter={() => setSelectedIndex(index)}
                     >
                       <div className="node-icon">
-                        {node.edgeView ? <Server size={18} /> : <Server size={18} />}
+                        <Server size={18} />
                       </div>
                       <div className="node-info">
                         <div className="node-name">
@@ -4585,7 +4365,7 @@ Do you want to try connecting anyway?`)) {
                         <span className={`status-dot ${node.status}`}></span>
                         {node.status}
                       </div>
-                      {index === selectedIndex && node.status === 'online' && (
+                      {index === selectedIndex && (
                         <div className="node-actions">
                           <span className="shortcut">↵ Details</span>
                         </div>
@@ -4600,12 +4380,12 @@ Do you want to try connecting anyway?`)) {
                     return (
                       <div
                         key={node.id}
-                        className={`result-item ${globalIndex === selectedIndex ? 'selected' : ''} ${node.status !== 'online' ? 'disabled' : ''}`}
+                        className={`result-item ${globalIndex === selectedIndex ? 'selected' : ''}`}
                         onClick={() => handleConnect(node)}
                         onMouseEnter={() => setSelectedIndex(globalIndex)}
                       >
                         <div className="node-icon">
-                          {node.edgeView ? <Server size={18} /> : <Server size={18} />}
+                          <Server size={18} />
                         </div>
                         <div className="node-info">
                           <div className="node-name">
@@ -4619,7 +4399,7 @@ Do you want to try connecting anyway?`)) {
                           <span className={`status-dot ${node.status}`}></span>
                           {node.status}
                         </div>
-                        {globalIndex === selectedIndex && node.status === 'online' && (
+                        {globalIndex === selectedIndex && (
                           <div className="node-actions">
                             <span className="shortcut">↵ Details</span>
                           </div>
@@ -4627,12 +4407,6 @@ Do you want to try connecting anyway?`)) {
                       </div>
                     )
                   })}
-                  {loadingMore && (
-                    <div className="loading-more-state">
-                      <Activity className="loading-icon animate-spin" size={16} />
-                      <span>Loading more devices...</span>
-                    </div>
-                  )}
                 </div>
               )
             }

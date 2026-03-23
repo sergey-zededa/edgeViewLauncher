@@ -42,6 +42,8 @@ vi.mock('./tauriAPI', () => ({
   SecureStorageGetSettings: vi.fn(),
   SecureStorageSaveSettings: vi.fn(),
   InjectSecureConfig: vi.fn().mockResolvedValue(),
+  GetDeviceCache: vi.fn().mockResolvedValue({ devices: [], projects: [], updatedAt: new Date().toISOString(), isRefreshing: false }),
+  RefreshDeviceCache: vi.fn().mockResolvedValue({ started: true }),
   getElectronAppInfo: vi.fn().mockResolvedValue({
     version: '1.0.0',
     buildNumber: 'test',
@@ -364,7 +366,12 @@ describe('Secure Storage Integration', () => {
         recentDevices: []
       });
 
-      tauriAPI.SearchNodes.mockResolvedValue([mockNode]);
+      tauriAPI.GetDeviceCache.mockResolvedValue({
+        devices: [mockNode],
+        projects: [],
+        updatedAt: new Date().toISOString(),
+        isRefreshing: false,
+      });
       tauriAPI.AddRecentDevice.mockResolvedValue({});
       tauriAPI.GetDeviceServices.mockResolvedValue(JSON.stringify({ apps: [] }));
       tauriAPI.GetSSHStatus.mockResolvedValue({ status: 'disabled' });
@@ -377,13 +384,9 @@ describe('Secure Storage Integration', () => {
         expect(screen.getByPlaceholderText(/Search nodes/i)).toBeInTheDocument();
       });
 
-      // Type search query
-      const searchInput = screen.getByPlaceholderText(/Search nodes/i);
-      fireEvent.change(searchInput, { target: { value: 'Test' } });
-
-      // Wait for search results
+      // Device should appear from cache
       await waitFor(() => {
-        expect(tauriAPI.SearchNodes).toHaveBeenCalledWith('Test', 200, '', '');
+        expect(tauriAPI.GetDeviceCache).toHaveBeenCalled();
       });
 
       // Connect to node (simulate)

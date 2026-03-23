@@ -429,6 +429,49 @@ func (s *HTTPServer) handleContainerShell(w http.ResponseWriter, r *http.Request
 	})
 }
 
+func (s *HTTPServer) handleGetDeviceCache(w http.ResponseWriter, r *http.Request) {
+	cc := s.app.GetDeviceCache()
+
+	type respDevice struct {
+		ID      string `json:"id"`
+		Name    string `json:"name"`
+		Project string `json:"project"`
+		Status  string `json:"status"`
+	}
+	type respProject struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+
+	resp := map[string]interface{}{
+		"devices":      []respDevice{},
+		"projects":     []respProject{},
+		"updatedAt":    nil,
+		"isRefreshing": s.app.IsDeviceCacheRefreshing(),
+	}
+
+	if cc != nil {
+		devices := make([]respDevice, len(cc.Devices))
+		for i, d := range cc.Devices {
+			devices[i] = respDevice{ID: d.ID, Name: d.Name, Project: d.Project, Status: d.Status}
+		}
+		projects := make([]respProject, len(cc.Projects))
+		for i, p := range cc.Projects {
+			projects[i] = respProject{ID: p.ID, Name: p.Name}
+		}
+		resp["devices"] = devices
+		resp["projects"] = projects
+		resp["updatedAt"] = cc.UpdatedAt
+	}
+
+	s.sendSuccess(w, resp)
+}
+
+func (s *HTTPServer) handleRefreshDeviceCache(w http.ResponseWriter, r *http.Request) {
+	s.app.RefreshDeviceCache()
+	s.sendSuccess(w, map[string]bool{"started": true})
+}
+
 // Helper methods
 func (s *HTTPServer) sendSuccess(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
@@ -538,6 +581,8 @@ func (s *HTTPServer) Start() {
 	router.HandleFunc("/api/collect-info/status", s.handleGetCollectInfoStatus).Methods("GET")
 	router.HandleFunc("/api/collect-info/download", s.handleDownloadCollectInfo).Methods("GET")
 	router.HandleFunc("/api/container-shell", s.handleContainerShell).Methods("POST")
+	router.HandleFunc("/api/device-cache", s.handleGetDeviceCache).Methods("GET")
+	router.HandleFunc("/api/device-cache/refresh", s.handleRefreshDeviceCache).Methods("POST")
 
 	// Health check
 	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {

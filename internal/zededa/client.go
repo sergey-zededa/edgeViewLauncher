@@ -170,7 +170,8 @@ func (c *Client) SearchNodesWithToken(query string, limit int, pageToken string,
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API request failed with status: %d, body: %s", resp.StatusCode, string(body))
 	}
 
 	var deviceResp DeviceListResponse
@@ -197,15 +198,30 @@ func (c *Client) SearchNodesWithToken(query string, limit int, pageToken string,
 			EdgeView: true,
 		})
 	}
-	// Extract next-page cursor: the API may return a string, an object, or null.
-	// We store the raw JSON as the opaque cursor token so it can be sent back verbatim.
+	// Extract next-page cursor.  The API always returns a Cursor object
+	// (even on the last page), so we must inspect its fields to decide
+	// whether more pages remain.
 	nextToken := ""
 	if len(deviceResp.Next) > 0 && string(deviceResp.Next) != "null" {
-		nextToken = string(deviceResp.Next)
-		// If it's a JSON string (quoted), unwrap the quotes
-		var s string
-		if json.Unmarshal(deviceResp.Next, &s) == nil {
-			nextToken = s
+		// Try to parse as a cursor object with pagination metadata
+		var cursor struct {
+			PageToken  string `json:"pageToken"`
+			PageNum    int    `json:"pageNum"`
+			TotalPages int    `json:"totalPages"`
+		}
+		if json.Unmarshal(deviceResp.Next, &cursor) == nil {
+			// There are more pages only if pageNum < totalPages
+			if cursor.TotalPages > 0 && cursor.PageNum < cursor.TotalPages {
+				nextToken = string(deviceResp.Next)
+			}
+		} else {
+			// Fallback: treat as opaque string token
+			var s string
+			if json.Unmarshal(deviceResp.Next, &s) == nil && s != "" {
+				nextToken = s
+			} else {
+				nextToken = string(deviceResp.Next)
+			}
 		}
 	}
 	return &SearchResult{Nodes: results, NextToken: nextToken}, nil

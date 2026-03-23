@@ -488,6 +488,20 @@ body {
     gap: 6px;
 }
 
+/* Device Offline Banner */
+.device-offline-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    margin: 0 16px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    color: var(--color-warning, #e2b340);
+    background: rgba(226, 179, 64, 0.08);
+    border: 1px solid rgba(226, 179, 64, 0.2);
+}
+
 /* Authentication Error Banner */
 .auth-error-banner {
     background: linear-gradient(135deg, rgba(218, 54, 51, 0.1) 0%, rgba(218, 54, 51, 0.05) 100%);
@@ -1323,7 +1337,8 @@ body {
     }
 }
 
-.animate-spin {
+.animate-spin,
+.spinning {
     animation: spin 1s linear infinite;
 }
 

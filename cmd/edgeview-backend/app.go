@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"edgeViewLauncher/internal/cache"
 	"edgeViewLauncher/internal/config"
 	"errors"
 	"edgeViewLauncher/internal/session"
@@ -85,6 +86,9 @@ type App struct {
 	// Track currently enriching nodes to avoid redundant work and allow waiting
 	enrichingJobs map[string]chan struct{}
 	enrichingMu_  sync.Mutex
+
+	// Device/project cache
+	deviceCache *cache.Manager
 }
 
 // NewApp creates a new App application struct
@@ -117,7 +121,7 @@ func NewApp() *App {
 		}
 	}
 
-	return &App{
+	a := &App{
 		config:             cfg,
 		zededaClient:       zededa.NewClient(baseURL, apiToken),
 		sessionManager:     session.NewManager(),
@@ -125,7 +129,15 @@ func NewApp() *App {
 		nodeMetaCache:      make(map[string]NodeMeta),
 		connectionProgress: make(map[string]string),
 		enrichingJobs:      make(map[string]chan struct{}),
+		deviceCache:        cache.NewManager(),
 	}
+
+	// Load disk cache for the active cluster
+	if cfg.ActiveCluster != "" {
+		a.deviceCache.SwitchCluster(cfg.ActiveCluster)
+	}
+
+	return a
 }
 
 // SetConnectionProgress updates the connection status for a node
@@ -178,9 +190,30 @@ func (a *App) SaveSettings(clusters []config.ClusterConfig, activeCluster string
 		a.tokenInfoCache = nil
 		a.mu.Unlock()
 		a.fetchTokenInfo(activeConfig.APIToken)
+
+		// Switch device cache to the new cluster and start background refresh
+		a.deviceCache.SwitchCluster(activeCluster)
+		if activeConfig.APIToken != "" {
+			a.deviceCache.StartBackground(a.zededaClient, 75*time.Second)
+		}
 	}
 
 	return config.Save(a.config)
+}
+
+// GetDeviceCache returns the current device/project cache.
+func (a *App) GetDeviceCache() *cache.ClusterCache {
+	return a.deviceCache.Get()
+}
+
+// IsDeviceCacheRefreshing returns true if a cache refresh is in progress.
+func (a *App) IsDeviceCacheRefreshing() bool {
+	return a.deviceCache.IsRefreshing()
+}
+
+// RefreshDeviceCache triggers an async cache refresh.
+func (a *App) RefreshDeviceCache() {
+	go a.deviceCache.Refresh(a.zededaClient)
 }
 
 // GetUserInfo returns cluster URL and enterprise for display
