@@ -856,9 +856,18 @@ function App() {
   // Cache polling effect — fetches device cache from backend periodically.
   // Runs independently of showSettings so cluster switches populate data
   // immediately while the settings panel is still closing.
+  // Uses fast polling (2s) while a refresh is in progress, then slows to 15s.
   useEffect(() => {
     if (!config.activeCluster) return;
     let cancelled = false;
+    let intervalId = null;
+    let currentInterval = 2000; // Start fast to catch initial load / refresh completion
+
+    const scheduleNext = (ms) => {
+      if (intervalId) clearInterval(intervalId);
+      currentInterval = ms;
+      intervalId = setInterval(fetchCache, ms);
+    };
 
     const fetchCache = async () => {
       try {
@@ -873,6 +882,13 @@ function App() {
         (data.projects || []).forEach(p => { map[p.id] = p.name; });
         setProjects(map);
         projectsLoadedRef.current = true;
+
+        // Adaptive polling: fast while refreshing, slow when idle
+        if (data.isRefreshing && currentInterval !== 2000) {
+          scheduleNext(2000);
+        } else if (!data.isRefreshing && currentInterval !== 15000) {
+          scheduleNext(15000);
+        }
       } catch (err) {
         if (err.message?.includes('401')) setAuthError(true);
       } finally {
@@ -883,8 +899,8 @@ function App() {
     // Only show skeleton on first load, not on every poll cycle
     if (!cacheLoaded) setLoading(true);
     fetchCache();
-    const interval = setInterval(fetchCache, 15000); // poll every 15s for status updates
-    return () => { cancelled = true; clearInterval(interval); };
+    intervalId = setInterval(fetchCache, currentInterval);
+    return () => { cancelled = true; if (intervalId) clearInterval(intervalId); };
   }, [config.activeCluster]);
 
 
@@ -2245,10 +2261,11 @@ Do you want to try connecting anyway?`)) {
       setCacheLoaded(false);
       setLoading(true); // Show skeletons while new cluster cache loads
 
-      // 2. Update active cluster in config/storage
+      // 2. Save config to storage (but DON'T update React config yet —
+      //    updating config.activeCluster triggers the polling effect, which
+      //    would fetch from the OLD backend before InjectSecureConfig runs)
       const newConfig = { ...config, activeCluster: target };
       await SecureStorageSaveSettings(newConfig);
-      setConfig(newConfig);
 
       // 2b. Update the viewing state so the settings panel reflects the new active cluster
       setViewingClusterName(target);
@@ -2262,10 +2279,14 @@ Do you want to try connecting anyway?`)) {
       setShowSettings(false);
       setShowClusterDropdown(false);
 
-      // 4. Push updated config to the Go backend (triggers cache switch + refresh)
+      // 4. Push updated config to the Go backend FIRST (triggers cache switch + refresh)
       await InjectSecureConfig().catch(err => console.error('Failed to inject config:', err));
 
-      // 5. Immediately fetch the new cluster's cache (may have disk-cached data)
+      // 5. NOW update React config — this triggers the polling effect, which will
+      //    fetch from the correctly-configured backend
+      setConfig(newConfig);
+
+      // 6. Immediately fetch the new cluster's cache (may have disk-cached data)
       try {
         const data = await GetDeviceCache();
         if (data) {
@@ -2282,7 +2303,7 @@ Do you want to try connecting anyway?`)) {
         console.error('Failed to fetch cache after cluster switch:', err);
       }
 
-      // 6. Reload user info (non-blocking for device list)
+      // 7. Reload user info (non-blocking for device list)
       loadUserInfo().catch(err => console.error('Failed to load user info:', err));
 
       // Clear any auth errors since we switched
