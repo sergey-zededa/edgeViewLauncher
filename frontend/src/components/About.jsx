@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { getElectronAppInfo, openExternal } from '../tauriAPI';
 import { X, ExternalLink } from 'lucide-react';
 import zededaLogo from '../assets/zededa-logo.png';

@@ -242,12 +242,10 @@ describe('Secure Storage Integration', () => {
         expect(tauriAPI.SecureStorageGetSettings).toHaveBeenCalled();
       });
 
-      // Find the settings icon by class name directly from container
-      // There are two icons with class settings-icon: Info (About) and Settings
-      // The Settings icon is the second one
-      const icons = container.querySelectorAll('.settings-icon');
-      if (icons.length >= 2) {
-        fireEvent.click(icons[1]);
+      // Find the Settings icon by its title attribute
+      const settingsIcon = container.querySelector('.settings-icon[title="Settings"]');
+      if (settingsIcon) {
+        fireEvent.click(settingsIcon);
       } else {
         throw new Error('Could not find settings icon');
       }
@@ -303,9 +301,9 @@ describe('Secure Storage Integration', () => {
         expect(tauriAPI.SecureStorageGetSettings).toHaveBeenCalled();
       });
 
-      const icons = container.querySelectorAll('.settings-icon');
-      if (icons.length >= 2) {
-        fireEvent.click(icons[1]);
+      const settingsIcon = container.querySelector('.settings-icon[title="Settings"]');
+      if (settingsIcon) {
+        fireEvent.click(settingsIcon);
       } else {
         throw new Error('Could not find settings icon');
       }
