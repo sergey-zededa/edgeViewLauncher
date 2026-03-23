@@ -2598,8 +2598,12 @@ Do you want to try connecting anyway?`)) {
                       <div
                         key={cluster.name}
                         onClick={() => {
-                          if (!isActive) activateCluster(cluster.name);
-                          setShowClusterDropdown(false);
+                          if (!isActive) {
+                            setShowClusterDropdown(false);
+                            activateCluster(cluster.name);
+                          } else {
+                            setShowClusterDropdown(false);
+                          }
                         }}
                         style={{
                           padding: '8px 12px',
@@ -4333,7 +4337,7 @@ Do you want to try connecting anyway?`)) {
 
             {
               !selectedNode && (
-                <div className="results-list">
+                <div className="results-list" key={config.activeCluster || 'default'}>
                   {loading && !cacheLoaded && <DeviceListSkeleton count={6} />}
                   {!(loading && !cacheLoaded) && displayNodes.length === 0 && cacheLoaded && query && (
                     <div className="empty-state">No results found</div>

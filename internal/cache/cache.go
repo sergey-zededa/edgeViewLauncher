@@ -130,53 +130,72 @@ func (m *Manager) Refresh(client ZededaFetcher) error {
 	m.refreshing.Store(true)
 	defer m.refreshing.Store(false)
 
-	// Fetch all devices via pagination, with per-page retry
+	// Fetch devices and projects in parallel
 	var devices []CachedDevice
-	pageToken := ""
-	for {
-		var result *zededa.SearchResult
-		var err error
-		for attempt := 0; attempt < 3; attempt++ {
-			result, err = client.SearchNodesWithToken("", 200, pageToken, "")
-			if err == nil {
-				break
-			}
-			log.Printf("[Cache] Device fetch attempt %d failed: %v", attempt+1, err)
-			time.Sleep(time.Duration(attempt+1) * 2 * time.Second)
-		}
-		if err != nil {
-			return fmt.Errorf("fetching devices: %w", err)
-		}
-		pageCount := len(result.Nodes)
-		for _, n := range result.Nodes {
-			devices = append(devices, CachedDevice{
-				ID:      n.ID,
-				Name:    n.Name,
-				Project: n.Project,
-				Status:  n.Status,
-			})
-		}
-		// Stop if no next cursor or if we got fewer results than the page size
-		if result.NextToken == "" || pageCount < 200 {
-			break
-		}
-		pageToken = result.NextToken
-	}
-
-	// Fetch all projects with retry
+	var devErr error
 	var projList []zededa.Project
 	var projErr error
-	for attempt := 0; attempt < 3; attempt++ {
-		projList, projErr = client.GetProjects()
-		if projErr == nil {
-			break
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// Goroutine 1: Fetch all devices via pagination
+	go func() {
+		defer wg.Done()
+		pageToken := ""
+		for {
+			var result *zededa.SearchResult
+			var err error
+			for attempt := 0; attempt < 2; attempt++ {
+				result, err = client.SearchNodesWithToken("", 200, pageToken, "")
+				if err == nil {
+					break
+				}
+				log.Printf("[Cache] Device fetch attempt %d failed: %v", attempt+1, err)
+				time.Sleep(time.Duration(attempt+1) * time.Second)
+			}
+			if err != nil {
+				devErr = fmt.Errorf("fetching devices: %w", err)
+				return
+			}
+			pageCount := len(result.Nodes)
+			for _, n := range result.Nodes {
+				devices = append(devices, CachedDevice{
+					ID:      n.ID,
+					Name:    n.Name,
+					Project: n.Project,
+					Status:  n.Status,
+				})
+			}
+			if result.NextToken == "" || pageCount < 200 {
+				break
+			}
+			pageToken = result.NextToken
 		}
-		log.Printf("[Cache] Project fetch attempt %d failed: %v", attempt+1, projErr)
-		time.Sleep(time.Duration(attempt+1) * 2 * time.Second)
+	}()
+
+	// Goroutine 2: Fetch all projects
+	go func() {
+		defer wg.Done()
+		for attempt := 0; attempt < 2; attempt++ {
+			projList, projErr = client.GetProjects()
+			if projErr == nil {
+				return
+			}
+			log.Printf("[Cache] Project fetch attempt %d failed: %v", attempt+1, projErr)
+			time.Sleep(time.Duration(attempt+1) * time.Second)
+		}
+	}()
+
+	wg.Wait()
+
+	if devErr != nil {
+		return devErr
 	}
 	if projErr != nil {
 		return fmt.Errorf("fetching projects: %w", projErr)
 	}
+
 	projects := make([]CachedProject, len(projList))
 	for i, p := range projList {
 		projects[i] = CachedProject{ID: p.ID, Name: p.Name}
@@ -237,7 +256,7 @@ func (m *Manager) StartBackground(client ZededaFetcher, interval time.Duration) 
 			}
 			log.Printf("[Cache] Initial refresh attempt %d failed: %v", retries+1, err)
 
-			delay := time.Duration(retries+1) * 5 * time.Second
+			delay := time.Duration(retries+1) * time.Second
 			select {
 			case <-stopCh:
 				return
