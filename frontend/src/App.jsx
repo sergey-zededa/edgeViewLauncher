@@ -2558,12 +2558,14 @@ Do you want to try connecting anyway?`)) {
         <div className="header-actions">
           {config.clusters.filter(c => c.baseUrl && c.apiToken).length > 1 && (
             <div ref={clusterDropdownRef} style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-              <Layers
-                className="settings-icon"
-                size={20}
-                onClick={() => setShowClusterDropdown(!showClusterDropdown)}
-                title="Switch Cluster"
-              />
+              <Tooltip text="Switch cluster" simple position="bottom">
+                <Layers
+                  className="settings-icon"
+                  size={20}
+                  onClick={() => setShowClusterDropdown(!showClusterDropdown)}
+                  title="Switch Cluster"
+                />
+              </Tooltip>
               {showClusterDropdown && (
                 <div style={{
                   position: 'absolute',
