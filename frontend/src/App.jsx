@@ -353,7 +353,6 @@ const Copyable = ({ text, children, style = {} }) => {
 function App() {
   const [config, setConfig] = useState({ baseUrl: '', apiToken: '', clusters: [], activeCluster: '' });
   const [query, setQuery] = useState('');
-  const [nodes, setNodes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [authError, setAuthError] = useState(false); // Track authentication failures
@@ -1656,10 +1655,8 @@ function App() {
     });
   }, [deviceCache?.devices, query, projects]);
 
-  // Sync filteredDevices into nodes state for compatibility with existing rendering
-  useEffect(() => {
-    setNodes(filteredDevices);
-  }, [filteredDevices]);
+  // Use filteredDevices directly — no intermediate nodes state needed
+  const nodes = filteredDevices;
 
   const handleConnect = async (node) => {
     try {
@@ -2239,7 +2236,6 @@ Do you want to try connecting anyway?`)) {
     try {
       // 1. Clear selection/device state IMMEDIATELY to stop polling and stale UI
       setSelectedNode(null);
-      setNodes([]);
       setServices(null);
       setSshStatus(null);
       setSessionStatus(null);
@@ -2419,7 +2415,9 @@ Do you want to try connecting anyway?`)) {
         const active = newConfig.clusters.find(c => c.name === newConfig.activeCluster);
 
         // Clear state before reloading to prevent stale data
-        setNodes([]);
+        setDeviceCache(null);
+        setCacheLoaded(false);
+        setLoading(true);
         setProjects({});
         projectsLoadedRef.current = false;
         setEnterprise(null);
@@ -4337,16 +4335,16 @@ Do you want to try connecting anyway?`)) {
               !selectedNode && (
                 <div className="results-list">
                   {loading && !cacheLoaded && <DeviceListSkeleton count={6} />}
-                  {displayNodes.length === 0 && !loading && cacheLoaded && query && (
+                  {!(loading && !cacheLoaded) && displayNodes.length === 0 && cacheLoaded && query && (
                     <div className="empty-state">No results found</div>
                   )}
-                  {displayNodes.length === 0 && !loading && cacheLoaded && !query && (
+                  {!(loading && !cacheLoaded) && displayNodes.length === 0 && cacheLoaded && !query && (
                     <div className="empty-state">No devices</div>
                   )}
-                  {(!loading || displayNodes.length > 0) && recentNodes.length > 0 && (
+                  {!(loading && !cacheLoaded) && recentNodes.length > 0 && (
                     <div className="section-header">Recent Devices</div>
                   )}
-                  {(!loading || displayNodes.length > 0) && recentNodes.map((node, index) => (
+                  {!(loading && !cacheLoaded) && recentNodes.map((node, index) => (
                     <div
                       key={node.id}
                       className={`result-item ${index === selectedIndex ? 'selected' : ''}`}
@@ -4375,10 +4373,10 @@ Do you want to try connecting anyway?`)) {
                       )}
                     </div>
                   ))}
-                  {(!loading || displayNodes.length > 0) && (recentNodes.length > 0 && otherNodes.length > 0) && (
+                  {!(loading && !cacheLoaded) && (recentNodes.length > 0 && otherNodes.length > 0) && (
                     <div className="section-header">All Devices</div>
                   )}
-                  {(!loading || displayNodes.length > 0) && otherNodes.map((node, index) => {
+                  {!(loading && !cacheLoaded) && otherNodes.map((node, index) => {
                     const globalIndex = index + recentNodes.length;
                     return (
                       <div
