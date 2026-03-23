@@ -1692,7 +1692,7 @@ function App() {
     const abortController = new AbortController();
     searchAbortRef.current = abortController;
 
-    // Reset so "No results found" doesn't flash during the debounce window
+    // Reset so "No results found" doesn't flash while a new search is pending.
     setInitialLoadComplete(false);
 
     const search = async () => {
@@ -1703,37 +1703,52 @@ function App() {
         const matchingProjectIds = resolveMatchingProjectIds(query);
         const lowerQuery = query ? query.toLowerCase() : '';
 
-        // Search by device name via API (first page)
-        const nameResult = await SearchNodes(query, LIMIT, '', '');
+        if (query) {
+          console.log('[Search] query:', JSON.stringify(query),
+            'matchingProjects:', matchingProjectIds.length,
+            'projectsLoaded:', Object.keys(projects).length);
+        }
 
-        // Also search by matching project IDs
-        let projectResults = [];
+        // Run name search and project search in parallel
+        const nameResultPromise = SearchNodes(query, LIMIT, '', '');
+
+        let projectResultsPromise = Promise.resolve([]);
         if (matchingProjectIds.length > 0) {
-          const projectPromises = matchingProjectIds.map(pid =>
-            SearchNodes('', LIMIT, '', pid)
-              .then(r => r?.nodes || r || [])
-              .catch(() => [])
-          );
-          const projectArrays = await Promise.all(projectPromises);
-          projectResults = projectArrays.flat();
+          projectResultsPromise = Promise.all(
+            matchingProjectIds.map(pid =>
+              SearchNodes('', LIMIT, '', pid)
+                .then(r => r?.nodes || r || [])
+                .catch(err => { console.warn('[Search] project search failed for', pid, err); return []; })
+            )
+          ).then(arrays => arrays.flat());
         }
 
         // Fetch recent devices by ID explicitly if query is empty and we have recents
-        let recentResults = [];
+        let recentResultsPromise = Promise.resolve([]);
         if (!query && config.recentDevices && config.recentDevices.length > 0) {
-          const recentPromises = config.recentDevices.map(nodeId =>
-            SearchNodes('', LIMIT, '', '', nodeId)
-              .then(r => r?.nodes || r || [])
-              .catch(() => [])
-          );
-          const recentArrays = await Promise.all(recentPromises);
-          recentResults = recentArrays.flat();
+          recentResultsPromise = Promise.all(
+            config.recentDevices.map(nodeId =>
+              SearchNodes('', LIMIT, '', '', nodeId)
+                .then(r => r?.nodes || r || [])
+                .catch(() => [])
+            )
+          ).then(arrays => arrays.flat());
         }
+
+        const [nameResult, projectResults, recentResults] = await Promise.all([
+          nameResultPromise, projectResultsPromise, recentResultsPromise
+        ]);
 
         if (abortController.signal.aborted) return;
 
         const nameNodes = nameResult?.nodes || nameResult || [];
         const nameNextToken = nameResult?.nextToken || '';
+
+        if (query) {
+          console.log('[Search] results — nameNodes:', nameNodes.length,
+            'projectResults:', projectResults.length,
+            'aborted:', abortController.signal.aborted);
+        }
 
         // Client-side filter for name-search results only.
         // Project results are already scoped by resolveMatchingProjectIds,
@@ -1757,22 +1772,29 @@ function App() {
           }
         }
 
+        if (abortController.signal.aborted) return;
+
         setNodes(filtered);
         setNextPageToken(nameNextToken);
         setHasMore(!!nameNextToken);
         setAuthError(false);
       } catch (err) {
         if (abortController.signal.aborted) return;
-        console.error(err);
+        console.error('[Search] error:', err);
         setNodes([]);
         if (err.message && (err.message.includes('401') || err.message.includes('unauthorized'))) {
           setAuthError(true);
         }
       } finally {
-        searchInFlightRef.current = false;
-        setLoading(false);
-        setLoadingMore(false);
-        setInitialLoadComplete(true);
+        // Only update loading/completion state if this search wasn't aborted.
+        // An aborted search's finally block must NOT stomp on the replacement
+        // search's state — that causes "No results found" flashes.
+        if (!abortController.signal.aborted) {
+          searchInFlightRef.current = false;
+          setLoading(false);
+          setLoadingMore(false);
+          setInitialLoadComplete(true);
+        }
       }
     };
 

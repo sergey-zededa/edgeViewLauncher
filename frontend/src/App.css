@@ -283,6 +283,14 @@ body {
     text-align: center;
     color: var(--text-secondary);
     font-style: italic;
+    /* Delay appearance so brief loading transitions don't flash this message */
+    animation: fadeInDelayed 0.15s ease-out both;
+    animation-delay: 0.3s;
+}
+
+@keyframes fadeInDelayed {
+    from { opacity: 0; }
+    to { opacity: 1; }
 }
 
 .loading-state {
