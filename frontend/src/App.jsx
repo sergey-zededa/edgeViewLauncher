@@ -2247,6 +2247,7 @@ Do you want to try connecting anyway?`)) {
       projectsLoadedRef.current = false;
       setDeviceCache(null);
       setCacheLoaded(false);
+      setLoading(true); // Show skeletons while new cluster cache loads
 
       // 2. Update active cluster in config/storage
       const newConfig = { ...config, activeCluster: target };
