@@ -26,8 +26,9 @@ pub async fn check_for_updates(app: AppHandle) -> Result<Value, String> {
             Err(e) => {
                 // 404 = no releases yet; don't surface as error
                 let msg = e.to_string();
-                if msg.contains("404") || msg.contains("No releases") {
-                    return Ok(serde_json::json!({ "success": false, "noReleases": true }));
+                if msg.contains("404") || msg.contains("No releases") || msg.contains("valid release JSON") {
+                    let _ = app.emit("update-not-available", serde_json::json!({}));
+                    return Ok(serde_json::json!({ "success": true, "upToDate": true, "noReleases": true }));
                 }
                 let _ = app.emit("update-error", &msg);
                 Err(msg)

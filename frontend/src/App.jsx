@@ -2844,7 +2844,14 @@ Do you want to try connecting anyway?`)) {
                     <span>v<VersionDisplay /></span>
                     <button
                       onClick={async () => {
-                        try { await CheckForUpdates(); } catch (err) { console.error('Failed to check for updates:', err); }
+                        try {
+                          const res = await CheckForUpdates();
+                          if (res?.upToDate || res?.noReleases) {
+                            setGlobalStatus({ type: 'success', message: 'You are on the latest version.', duration: 3000 });
+                          }
+                        } catch (err) {
+                          console.error('Failed to check for updates:', err);
+                        }
                       }}
                       disabled={updateState.status === 'downloading'}
                       style={{
