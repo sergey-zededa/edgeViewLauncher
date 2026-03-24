@@ -1576,6 +1576,7 @@ body {
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3) !important;
     animation: slideUpToast 0.4s cubic-bezier(0.16, 1, 0.3, 1) !important;
     margin: 0 !important;
+    box-sizing: border-box !important;
 }
 
 @keyframes slideUpToast {
