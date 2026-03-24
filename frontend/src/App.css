@@ -580,11 +580,11 @@ body {
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border-color);
     transition: max-height 0.3s ease, padding 0.3s ease, opacity 0.3s ease, border-bottom-width 0.3s ease;
-    overflow: hidden;
+    overflow: visible;
 }
 
 .active-tunnels-section.expanded {
-    max-height: 500px;
+    max-height: none;
     padding: 16px;
     opacity: 1;
 }

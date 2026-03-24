@@ -2914,7 +2914,9 @@ Do you want to try connecting anyway?`)) {
                   </div>
                 )}
                 <div className="form-group">
-                  <label>Cluster Name</label>
+                  <Tooltip text="A friendly name for this ZEDEDA Cloud cluster." simple>
+                    <label style={{ cursor: 'help' }}>Cluster Name</label>
+                  </Tooltip>
                   <input
                     type="text"
                     value={editingCluster.name}
@@ -2923,7 +2925,9 @@ Do you want to try connecting anyway?`)) {
                   />
                 </div>
                 <div className="form-group">
-                  <label>Base URL</label>
+                  <Tooltip text="The ZEDEDA Cloud controller URL (e.g. zedcontrol.zededa.net)." simple>
+                    <label style={{ cursor: 'help' }}>Base URL</label>
+                  </Tooltip>
                   <input
                     type="text"
                     value={editingCluster.baseUrl}
@@ -2933,7 +2937,9 @@ Do you want to try connecting anyway?`)) {
                 </div>
                 <div className="form-group">
                   <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    API Token
+                    <Tooltip text="A bearer token from ZEDEDA Cloud for authenticating API requests." helpUrl="https://help.zededa.com/hc/en-us/articles/21466243767579-Configure-Session-Tokens" simple>
+                      <span style={{ cursor: 'help' }}>API Token</span>
+                    </Tooltip>
                     <HelpCircle
                       size={14}
                       style={{ cursor: 'pointer', color: 'var(--text-tertiary)' }}
@@ -3281,7 +3287,9 @@ Do you want to try connecting anyway?`)) {
                         <div className="status-grid">
                           {(sshStatus.instID !== undefined || sshStatus.maxInst !== undefined) && (
                             <div className="status-item">
-                              <div className="status-label">INSTANCE</div>
+                              <Tooltip text="Current EdgeView instance / max allowed concurrent instances." helpUrl="https://lf-edge.atlassian.net/wiki/spaces/EVE/pages/14584954/EdgeView+Commands#Multi-Instances" simple>
+                                <div className="status-label" style={{ cursor: 'help' }}>INSTANCE</div>
+                              </Tooltip>
                               <div className="status-value">
                                 {sshStatus.instID !== undefined && sshStatus.maxInst !== undefined
                                   ? `${sshStatus.instID}/${sshStatus.maxInst}`
@@ -3291,12 +3299,16 @@ Do you want to try connecting anyway?`)) {
                           )}
                           {sshStatus.maxSessions > 0 && (
                             <div className="status-item">
-                              <div className="status-label">MAX SESSIONS</div>
+                              <Tooltip text="Maximum number of concurrent tunnels to the edge node allowed, controlled by Project or edge-node level EdgeView policy." helpUrl="https://help.zededa.com/hc/en-us/articles/43171861150491-Configure-the-Project-Policies#h_01K5K3W1FJVZN3Z55JFKFDKHJE" simple>
+                                <div className="status-label" style={{ cursor: 'help' }}>MAX SESSIONS</div>
+                              </Tooltip>
                               <div className="status-value">{sshStatus.maxSessions}</div>
                             </div>
                           )}
                           <div className="status-item">
-                            <div className="status-label">ENCRYPTION</div>
+                            <Tooltip text="Whether the EdgeView tunnel uses end-to-end encryption (JWT-based)." helpUrl="https://lf-edge.atlassian.net/wiki/spaces/EVE/pages/14584760/Edge-View+Architecture#Data-Path" simple>
+                              <div className="status-label" style={{ cursor: 'help' }}>ENCRYPTION</div>
+                            </Tooltip>
                             <div className={`status-value ${(sessionStatus?.isEncrypted || sshStatus?.isEncrypted) ? 'success' : 'mismatch'}`}>
                               {(sessionStatus?.isEncrypted || sshStatus?.isEncrypted) ? (
                                 <><Lock size={14} /> Encrypted</>
@@ -3306,7 +3318,9 @@ Do you want to try connecting anyway?`)) {
                             </div>
                           </div>
                           <div className="status-item">
-                            <div className="status-label">SESSION</div>
+                            <Tooltip text="Whether an active EdgeView session is established to this device." helpUrl="https://help.zededa.com/hc/en-us/articles/39473586111003-Edge-View-Overview" simple>
+                              <div className="status-label" style={{ cursor: 'help' }}>SESSION</div>
+                            </Tooltip>
                             <div className={`status-value ${isSessionConnected ? 'success' : 'error'}`}>
                               {isSessionConnected ? (
                                 <><Check size={14} /> Activated</>
@@ -3316,7 +3330,9 @@ Do you want to try connecting anyway?`)) {
                             </div>
                           </div>
                           <div className="status-item">
-                            <div className="status-label">EXPIRES</div>
+                            <Tooltip text="Time remaining before the EdgeView session token expires (~5h default)." helpUrl="https://lf-edge.atlassian.net/wiki/spaces/EVE/pages/14584760/Edge-View+Architecture" simple>
+                              <div className="status-label" style={{ cursor: 'help' }}>EXPIRES</div>
+                            </Tooltip>
                             <div className={`status-value ${expiryInfo.colorClass}`}>
                               {expiryInfo.timestamp ? (
                                 <span title={new Date(expiryInfo.timestamp).toLocaleString(undefined, getTimeFormatOptions())}>
@@ -3370,6 +3386,7 @@ Do you want to try connecting anyway?`)) {
                           <div className="config-row" style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', justifyContent: 'space-between' }}>
 
                             {/* SSH Control */}
+                            <Tooltip text="Enable SSH access to the EVE-OS shell via EdgeView tunnel." helpUrl="https://help.zededa.com/hc/en-us/articles/39473586111003-Edge-View-Overview#h_01K2NBYMH255X6QMJHP079XVXQ" simple>
                             <div
                               className={`config-chip ${sshStatus.status === 'enabled' ? 'enabled' : sshStatus.status === 'mismatch' ? 'warning' : 'disabled'}`}
                               onClick={isDeviceOnline ? (sshStatus.status === 'enabled' ? handleDisableSSH : handleSetupSSH) : undefined}
@@ -3387,8 +3404,10 @@ Do you want to try connecting anyway?`)) {
                                   <Lock size={13} style={{ marginRight: '6px' }} />}
                               {sshStatus.status === 'enabled' ? 'SSH Enabled' : sshStatus.status === 'mismatch' ? 'SSH Key Mismatch' : 'Enable SSH'}
                             </div>
+                            </Tooltip>
 
                             {/* VGA Control */}
+                            <Tooltip text="Enable VGA console output on the device for local display or remote VNC access." helpUrl="https://help.zededa.com/hc/en-us/sections/40376827750043-Local-UI-for-Direct-Edge-Node-Access" simple>
                             <div
                               className={`config-chip ${sshStatus.vgaEnabled ? 'enabled' : 'disabled'}`}
                               onClick={isDeviceOnline ? () => handleToggleVGA(!sshStatus.vgaEnabled) : undefined}
@@ -3404,8 +3423,10 @@ Do you want to try connecting anyway?`)) {
                               <Monitor size={13} style={{ marginRight: '6px' }} />
                               {sshStatus.vgaEnabled ? 'VGA Enabled' : 'Enable VGA'}
                             </div>
+                            </Tooltip>
 
                             {/* USB Control */}
+                            <Tooltip text="Allow USB devices (e.g. keyboards) on the device for local access." helpUrl="https://help.zededa.com/hc/en-us/sections/40376827750043-Local-UI-for-Direct-Edge-Node-Access" simple>
                             <div
                               className={`config-chip ${sshStatus.usbEnabled ? 'enabled' : 'disabled'}`}
                               onClick={isDeviceOnline ? () => handleToggleUSB(!sshStatus.usbEnabled) : undefined}
@@ -3421,8 +3442,10 @@ Do you want to try connecting anyway?`)) {
                               <Activity size={13} style={{ marginRight: '6px' }} />
                               {sshStatus.usbEnabled ? 'USB Enabled' : 'Enable USB'}
                             </div>
+                            </Tooltip>
 
                             {/* Console Control */}
+                            <Tooltip text="Enable serial console access on the device for low-level debugging." helpUrl="https://help.zededa.com/hc/en-us/sections/40376827750043-Local-UI-for-Direct-Edge-Node-Access" simple>
                             <div
                               className={`config-chip ${sshStatus.consoleEnabled ? 'enabled' : 'disabled'}`}
                               onClick={isDeviceOnline ? () => handleToggleConsole(!sshStatus.consoleEnabled) : undefined}
@@ -3438,8 +3461,10 @@ Do you want to try connecting anyway?`)) {
                               <Terminal size={13} style={{ marginRight: '6px' }} />
                               {sshStatus.consoleEnabled ? 'Console Enabled' : 'Enable Console'}
                             </div>
+                            </Tooltip>
 
                             {/* External Policy Control */}
+                            <Tooltip text="Allow EdgeView to route traffic to external IPs beyond the device's local network." helpUrl="https://lf-edge.atlassian.net/wiki/spaces/EVE/pages/14584954/EdgeView+Commands#Access-TCP-Services-of-External-Hosts" simple>
                             <div
                               className={`config-chip ${sshStatus.externalPolicy ? 'enabled' : 'disabled'}`}
                               onClick={isDeviceOnline ? handleEnableExternalPolicy : undefined}
@@ -3455,8 +3480,10 @@ Do you want to try connecting anyway?`)) {
                               <Shield size={13} style={{ marginRight: '6px' }} />
                               {sshStatus.externalPolicy ? 'Ext. Policy Enabled' : 'Enable Ext. Policy'}
                             </div>
+                            </Tooltip>
 
                             {/* Collect Info */}
+                            <Tooltip text="Download a tech-support bundle with logs, network state, and diagnostics." helpUrl="https://lf-edge.atlassian.net/wiki/spaces/EVE/pages/14584954/EdgeView+Commands#CollectInfo" simple>
                             <div
                               className={`config-chip ${isSessionConnected ? '' : 'disabled'}`}
                               onClick={isSessionConnected ? handleCollectInfo : undefined}
@@ -3472,6 +3499,7 @@ Do you want to try connecting anyway?`)) {
                               <Download size={13} style={{ marginRight: '6px' }} />
                               Collect Info
                             </div>
+                            </Tooltip>
 
                           </div>
                         </div>

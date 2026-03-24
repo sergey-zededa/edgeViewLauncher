@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Copy, Check } from 'lucide-react';
+import { Copy, Check, ExternalLink } from 'lucide-react';
+import { openExternal } from '../tauriAPI';
 
-const Tooltip = ({ text, children, position = 'top', simple = false }) => {
+const Tooltip = ({ text, children, position = 'top', simple = false, helpUrl = null, helpLabel = null }) => {
     const [isVisible, setIsVisible] = useState(false);
     const [adjustedPosition, setAdjustedPosition] = useState(position);
     const [offset, setOffset] = useState({ left: '50%', transform: 'translateX(-50%)' });
@@ -11,7 +12,10 @@ const Tooltip = ({ text, children, position = 'top', simple = false }) => {
     const timeoutRef = useRef(null);
 
     // Determine if we should show copy button (if text length > 50 chars and not simple mode)
-    const showCopy = !simple && typeof text === 'string' && text.length > 50;
+    const showCopy = !simple && !helpUrl && typeof text === 'string' && text.length > 50;
+
+    // When helpUrl is present, treat as interactive (not simple) so user can hover to click link
+    const isInteractive = !!helpUrl || (!simple && showCopy);
 
     const handleCopy = (e) => {
         e.stopPropagation(); // Prevent closing if logic relies on click
@@ -31,8 +35,8 @@ const Tooltip = ({ text, children, position = 'top', simple = false }) => {
     };
 
     const handleMouseLeave = () => {
-        // Simple tooltips close immediately
-        const delay = simple ? 0 : 300;
+        // Simple tooltips close immediately, interactive ones (with links or copy) have delay
+        const delay = (simple && !helpUrl) ? 0 : 300;
         timeoutRef.current = setTimeout(() => {
             setIsVisible(false);
             if (copied) setTimeout(() => setCopied(false), 300);
@@ -102,7 +106,7 @@ const Tooltip = ({ text, children, position = 'top', simple = false }) => {
             {isVisible && (
                 <div
                     ref={tooltipRef}
-                    className={`tooltip-content tooltip-${adjustedPosition} ${simple ? 'tooltip-simple' : ''}`}
+                    className={`tooltip-content tooltip-${adjustedPosition} ${(simple && !helpUrl) ? 'tooltip-simple' : ''} ${helpUrl ? 'tooltip-with-help' : ''}`}
                     style={offset}
                     onMouseEnter={handleMouseEnter}
                     onMouseLeave={handleMouseLeave}
@@ -118,6 +122,18 @@ const Tooltip = ({ text, children, position = 'top', simple = false }) => {
                     <div className="tooltip-body">
                         {text}
                     </div>
+                    {helpUrl && (
+                        <div
+                            className="tooltip-help-link"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                openExternal(helpUrl);
+                            }}
+                        >
+                            <ExternalLink size={11} />
+                            <span>{helpLabel || 'Learn more →'}</span>
+                        </div>
+                    )}
                 </div>
             )}
         </div>

@@ -16,8 +16,8 @@
     white-space: pre-wrap;
     word-break: break-word;
     max-width: 400px;
-    max-height: 300px; /* Limit height */
-    overflow-y: auto; /* Enable scrolling */
+    max-height: none;
+    overflow-y: visible;
     z-index: 10000;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
     pointer-events: auto; /* Enable interaction */
@@ -43,21 +43,21 @@
     gap: 0;
 }
 
-/* Custom scrollbar for tooltip */
-.tooltip-content::-webkit-scrollbar {
+/* Custom scrollbar for tooltip body */
+.tooltip-body::-webkit-scrollbar {
     width: 6px;
 }
 
-.tooltip-content::-webkit-scrollbar-track {
+.tooltip-body::-webkit-scrollbar-track {
     background: transparent;
 }
 
-.tooltip-content::-webkit-scrollbar-thumb {
+.tooltip-body::-webkit-scrollbar-thumb {
     background: var(--scrollbar-thumb);
     border-radius: 3px;
 }
 
-.tooltip-content::-webkit-scrollbar-thumb:hover {
+.tooltip-body::-webkit-scrollbar-thumb:hover {
     background: var(--scrollbar-thumb-hover);
 }
 
@@ -154,5 +154,30 @@
 .tooltip-body {
     overflow-y: auto;
     max-height: 250px;
-    padding-right: 4px; /* Space for scrollbar */
+}
+
+/* Help link variant — slightly wider, wraps text, interactive */
+.tooltip-with-help {
+    white-space: normal;
+    max-width: 300px;
+    pointer-events: auto;
+}
+
+.tooltip-help-link {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding-top: 6px;
+    margin-top: 4px;
+    border-top: 1px solid var(--border-subtle);
+    font-size: 11px;
+    color: var(--color-primary, #58a6ff);
+    cursor: pointer;
+    transition: opacity 0.15s;
+    white-space: nowrap;
+}
+
+.tooltip-help-link:hover {
+    opacity: 0.8;
+    text-decoration: underline;
 }
