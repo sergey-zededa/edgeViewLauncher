@@ -58,62 +58,23 @@ const WELL_KNOWN_PORTS = [
   { port: 27017, label: 'MongoDB', description: 'MongoDB Database' },
 ];
 
-const PortSelect = ({ exposedPorts = [], selectedValue, onChange, placeholder, showCommonPorts = true }) => {
+const PortComboBox = ({ value, onChange, exposedPorts = [], showCommonPorts = true, placeholder = 'Port' }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [coords, setCoords] = useState({ top: 0, left: 0, width: 0 });
-  const [searchTerm, setSearchTerm] = useState('');
-  const dropdownRef = useRef(null);
-  const searchInputRef = useRef(null);
+  const [highlightIndex, setHighlightIndex] = useState(-1);
+  const containerRef = useRef(null);
+  const inputRef = useRef(null);
+  const blurTimeoutRef = useRef(null);
+  const itemRefs = useRef([]);
 
   useEffect(() => {
-    const handleClickOutside = (event) => {
-      // Logic handled via backdrop in portal, but kept for trigger safety
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-        // Only close if not clicking inside the portal (handled separately)
-      }
-    };
-    /* Window resize handler to close dropdown if open */
     const handleResize = () => setIsOpen(false);
-
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Reset search and focus when opening
-  useEffect(() => {
-    if (isOpen) {
-      setSearchTerm('');
-      setTimeout(() => {
-        if (searchInputRef.current) searchInputRef.current.focus();
-      }, 50);
-    }
-  }, [isOpen]);
-
-  const toggleDropdown = () => {
-    if (!isOpen && dropdownRef.current) {
-      const rect = dropdownRef.current.getBoundingClientRect();
-      setCoords({
-        top: rect.bottom + window.scrollY,
-        left: rect.left + window.scrollX,
-        width: rect.width
-      });
-    }
-    setIsOpen(!isOpen);
-  };
-
-  const getSelectedLabel = () => {
-    const exposed = exposedPorts.find(p => p.publicPort.toString() === selectedValue.toString());
-    if (exposed) {
-      return `${exposed.publicPort} (Ext) → ${exposed.privatePort} (${exposed.containerName})`;
-    }
-    const common = WELL_KNOWN_PORTS.find(p => p.port.toString() === selectedValue.toString());
-    if (common && showCommonPorts) {
-      return `${common.port} (${common.label})`;
-    }
-    return placeholder || 'Select Port...';
-  };
-
-  // Filter ports based on search term
+  // Filter ports based on the input value as search term
+  const searchTerm = value || '';
   const filteredExposed = exposedPorts.filter(p => {
     if (!searchTerm) return true;
     const term = searchTerm.toLowerCase();
@@ -134,40 +95,171 @@ const PortSelect = ({ exposedPorts = [], selectedValue, onChange, placeholder, s
     );
   }) : [];
 
-  const hasResults = filteredExposed.length > 0 || filteredCommon.length > 0;
+  // Flat list for keyboard navigation
+  const flatItems = useMemo(() => [
+    ...filteredExposed.map(p => ({ type: 'exposed', port: p.publicPort, data: p })),
+    ...filteredCommon.map(p => ({ type: 'common', port: p.port, data: p }))
+  ], [filteredExposed, filteredCommon]);
+
+  const hasResults = flatItems.length > 0;
+
+  // Reset highlight when filter changes
+  useEffect(() => {
+    setHighlightIndex(-1);
+  }, [searchTerm]);
+
+  // Scroll highlighted item into view
+  useEffect(() => {
+    if (highlightIndex >= 0 && itemRefs.current[highlightIndex]) {
+      itemRefs.current[highlightIndex].scrollIntoView({ block: 'nearest' });
+    }
+  }, [highlightIndex]);
+
+  const updateCoords = () => {
+    if (containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      setCoords({
+        top: rect.bottom + window.scrollY,
+        left: rect.left + window.scrollX,
+        width: rect.width
+      });
+    }
+  };
+
+  const openDropdown = () => {
+    if (!isOpen) {
+      updateCoords();
+      setIsOpen(true);
+      setHighlightIndex(-1);
+    }
+  };
+
+  const selectItem = (port) => {
+    clearTimeout(blurTimeoutRef.current);
+    onChange(port.toString());
+    setIsOpen(false);
+    inputRef.current?.focus();
+  };
+
+  const handleBlur = () => {
+    blurTimeoutRef.current = setTimeout(() => {
+      setIsOpen(false);
+    }, 150);
+  };
+
+  const handleFocus = () => {
+    clearTimeout(blurTimeoutRef.current);
+    openDropdown();
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      openDropdown();
+      setHighlightIndex(prev => (prev + 1) % Math.max(flatItems.length, 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      openDropdown();
+      setHighlightIndex(prev => prev <= 0 ? flatItems.length - 1 : prev - 1);
+    } else if (e.key === 'Enter') {
+      if (isOpen && highlightIndex >= 0 && highlightIndex < flatItems.length) {
+        e.preventDefault();
+        selectItem(flatItems[highlightIndex].port);
+      } else if (isOpen) {
+        // If exactly one result, auto-select it
+        if (flatItems.length === 1) {
+          e.preventDefault();
+          selectItem(flatItems[0].port);
+        }
+      }
+    } else if (e.key === 'Escape') {
+      setIsOpen(false);
+    } else if (e.key === 'Tab') {
+      setIsOpen(false);
+    }
+  };
+
+  // Determine if the current value matches a known port for the hint label
+  const matchedPort = useMemo(() => {
+    const num = value;
+    if (!num) return null;
+    const exposed = exposedPorts.find(p => p.publicPort.toString() === num);
+    if (exposed) return exposed.containerName;
+    const common = WELL_KNOWN_PORTS.find(p => p.port.toString() === num);
+    if (common) return common.label;
+    return null;
+  }, [value, exposedPorts]);
 
   return (
-    <div className="custom-select-container" ref={dropdownRef} style={{ position: 'relative', flex: 1, minWidth: 0, overflow: 'hidden' }}>
-      <div
-        className="custom-select-trigger"
-        onClick={toggleDropdown}
-        style={{
-          padding: '8px 12px',
-          backgroundColor: 'var(--bg-surface)',
-          border: '1px solid var(--border-subtle)',
-          borderRadius: '4px',
-          color: selectedValue ? 'var(--text-primary)' : 'var(--text-muted)',
-          cursor: 'pointer',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          fontSize: '13px',
-          userSelect: 'none',
-          height: '34px', // Fixed height to match inputs
-          boxSizing: 'border-box'
+    <div ref={containerRef} style={{ position: 'relative', width: '100%' }}>
+      <input
+        ref={inputRef}
+        type="text"
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          openDropdown();
         }}
-      >
-        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {getSelectedLabel()}
+        onFocus={handleFocus}
+        onBlur={handleBlur}
+        onKeyDown={handleKeyDown}
+        placeholder={placeholder}
+        style={{
+          width: '100%',
+          padding: '8px',
+          paddingRight: matchedPort ? '80px' : '28px',
+          fontSize: '13px',
+          backgroundColor: 'var(--bg-secondary)',
+          border: `1px solid ${isOpen ? 'var(--color-accent)' : 'var(--border-color)'}`,
+          borderRadius: '4px',
+          color: 'var(--text-primary)',
+          height: '34px',
+          boxSizing: 'border-box',
+          outline: 'none',
+          fontFamily: 'var(--font-mono)'
+        }}
+      />
+      {matchedPort && (
+        <span style={{
+          position: 'absolute',
+          right: '28px',
+          top: '50%',
+          transform: 'translateY(-50%)',
+          fontSize: '11px',
+          color: 'var(--color-accent)',
+          fontWeight: '600',
+          pointerEvents: 'none',
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          maxWidth: '50px'
+        }}>
+          {matchedPort}
         </span>
-        <ChevronDown size={14} style={{ color: 'var(--text-secondary)', transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
-      </div>
+      )}
+      <ChevronDown
+        size={14}
+        style={{
+          position: 'absolute',
+          right: '8px',
+          top: '50%',
+          transform: `translateY(-50%) ${isOpen ? 'rotate(180deg)' : ''}`,
+          transition: 'transform 0.2s',
+          color: 'var(--text-secondary)',
+          pointerEvents: 'none'
+        }}
+      />
 
       {isOpen && createPortal(
         <>
           <div
             style={{ position: 'fixed', inset: 0, zIndex: 9998, cursor: 'default' }}
-            onClick={() => setIsOpen(false)}
+            onMouseDown={(e) => {
+              // Prevent blur so we can close cleanly
+              if (!containerRef.current?.contains(e.target)) {
+                setIsOpen(false);
+              }
+            }}
           />
           <div className="custom-select-options" style={{
             position: 'fixed',
@@ -184,29 +276,6 @@ const PortSelect = ({ exposedPorts = [], selectedValue, onChange, placeholder, s
             display: 'flex',
             flexDirection: 'column'
           }}>
-            {/* Search Input */}
-            <div style={{ padding: '8px', borderBottom: '1px solid var(--border-subtle)', position: 'sticky', top: 0, backgroundColor: 'var(--bg-panel)', zIndex: 2 }}>
-              <input
-                ref={searchInputRef}
-                type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Search port or name..."
-                style={{
-                  width: '100%',
-                  padding: '6px 8px',
-                  fontSize: '13px',
-                  border: '1px solid var(--border-subtle)',
-                  borderRadius: '4px',
-                  backgroundColor: 'var(--bg-surface)',
-                  color: 'var(--text-primary)',
-                  outline: 'none',
-                  boxSizing: 'border-box'
-                }}
-                onClick={(e) => e.stopPropagation()}
-              />
-            </div>
-
             {!hasResults && (
               <div style={{ padding: '12px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '12px' }}>
                 No matching ports found
@@ -218,35 +287,40 @@ const PortSelect = ({ exposedPorts = [], selectedValue, onChange, placeholder, s
                 <div style={{ padding: '6px 12px', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', backgroundColor: 'var(--bg-hover)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                   Exposed Ports
                 </div>
-                {filteredExposed.map((pm, idx) => (
-                  <div
-                    key={`exposed-${idx}`}
-                    className="custom-option"
-                    onClick={() => {
-                      onChange(pm.publicPort);
-                      setIsOpen(false);
-                    }}
-                    style={{
-                      padding: '8px 12px',
-                      cursor: 'pointer',
-                      fontSize: '13px',
-                      color: 'var(--text-primary)',
-                      borderBottom: '1px solid var(--border-subtle)',
-                      transition: 'background 0.1s'
-                    }}
-                    onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--bg-hover)'}
-                    onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', pointerEvents: 'none' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <span style={{ color: 'var(--text-primary)', fontWeight: '500' }}>{pm.publicPort}</span>
-                        <span style={{ color: 'var(--text-secondary)' }}>→</span>
-                        <span style={{ color: 'var(--text-secondary)' }}>{pm.privatePort}</span>
+                {filteredExposed.map((pm, idx) => {
+                  const flatIdx = idx;
+                  return (
+                    <div
+                      key={`exposed-${idx}`}
+                      ref={el => itemRefs.current[flatIdx] = el}
+                      className="custom-option"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        selectItem(pm.publicPort);
+                      }}
+                      style={{
+                        padding: '8px 12px',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        color: 'var(--text-primary)',
+                        borderBottom: '1px solid var(--border-subtle)',
+                        transition: 'background 0.1s',
+                        backgroundColor: highlightIndex === flatIdx ? 'var(--bg-hover)' : 'transparent'
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; setHighlightIndex(flatIdx); }}
+                      onMouseLeave={(e) => { if (highlightIndex !== flatIdx) e.currentTarget.style.backgroundColor = 'transparent'; }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', pointerEvents: 'none' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <span style={{ color: 'var(--text-primary)', fontWeight: '500' }}>{pm.publicPort}</span>
+                          <span style={{ color: 'var(--text-secondary)' }}>→</span>
+                          <span style={{ color: 'var(--text-secondary)' }}>{pm.privatePort}</span>
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--color-accent)', marginLeft: '12px' }}>{pm.containerName}</div>
                       </div>
-                      <div style={{ fontSize: '11px', color: 'var(--color-accent)', marginLeft: '12px' }}>{pm.containerName}</div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </>
             )}
 
@@ -255,41 +329,46 @@ const PortSelect = ({ exposedPorts = [], selectedValue, onChange, placeholder, s
                 <div style={{ padding: '6px 12px', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', backgroundColor: 'var(--bg-hover)', textTransform: 'uppercase', letterSpacing: '0.5px', borderTop: filteredExposed.length > 0 ? '1px solid var(--border-subtle)' : 'none' }}>
                   Common Ports
                 </div>
-                {filteredCommon.map((p, idx) => (
-                  <div
-                    key={`common-${idx}`}
-                    className="custom-option"
-                    onClick={() => {
-                      onChange(p.port);
-                      setIsOpen(false);
-                    }}
-                    style={{
-                      padding: '8px 12px',
-                      cursor: 'pointer',
-                      fontSize: '13px',
-                      color: 'var(--text-primary)',
-                      borderBottom: idx < filteredCommon.length - 1 ? '1px solid var(--border-subtle)' : 'none',
-                      transition: 'background 0.1s'
-                    }}
-                    onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--bg-hover)'}
-                    onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
-                  >
+                {filteredCommon.map((p, idx) => {
+                  const flatIdx = filteredExposed.length + idx;
+                  return (
                     <div
-                      style={{ display: 'flex', alignItems: 'center', width: '100%' }}
-                      title={`${p.label} - ${p.description}`}
+                      key={`common-${idx}`}
+                      ref={el => itemRefs.current[flatIdx] = el}
+                      className="custom-option"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        selectItem(p.port);
+                      }}
+                      style={{
+                        padding: '8px 12px',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        color: 'var(--text-primary)',
+                        borderBottom: idx < filteredCommon.length - 1 ? '1px solid var(--border-subtle)' : 'none',
+                        transition: 'background 0.1s',
+                        backgroundColor: highlightIndex === flatIdx ? 'var(--bg-hover)' : 'transparent'
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; setHighlightIndex(flatIdx); }}
+                      onMouseLeave={(e) => { if (highlightIndex !== flatIdx) e.currentTarget.style.backgroundColor = 'transparent'; }}
                     >
-                      <div style={{ width: '45px', textAlign: 'right', marginRight: '12px', flexShrink: 0, fontFamily: 'var(--font-mono)' }}>
-                        <span style={{ color: 'var(--text-primary)', fontWeight: '500' }}>{p.port}</span>
-                      </div>
-                      <div style={{ width: '65px', textAlign: 'left', marginRight: '8px', flexShrink: 0 }}>
-                        <span style={{ color: 'var(--color-accent)', fontSize: '12px', fontWeight: 'bold' }}>{p.label}</span>
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0, textAlign: 'left', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        <span style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>{p.description}</span>
+                      <div
+                        style={{ display: 'flex', alignItems: 'center', width: '100%' }}
+                        title={`${p.label} - ${p.description}`}
+                      >
+                        <div style={{ width: '45px', textAlign: 'right', marginRight: '12px', flexShrink: 0, fontFamily: 'var(--font-mono)' }}>
+                          <span style={{ color: 'var(--text-primary)', fontWeight: '500' }}>{p.port}</span>
+                        </div>
+                        <div style={{ width: '65px', textAlign: 'left', marginRight: '8px', flexShrink: 0 }}>
+                          <span style={{ color: 'var(--color-accent)', fontSize: '12px', fontWeight: 'bold' }}>{p.label}</span>
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0, textAlign: 'left', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          <span style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>{p.description}</span>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </>
             )}
           </div>
@@ -4260,34 +4339,22 @@ Do you want to try connecting anyway?`)) {
 
                   <div className="form-group">
                     <label>Target Port</label>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <input
-                        type="number"
-                        value={tcpPortInput}
-                        onChange={(e) => setTcpPortInput(e.target.value)}
-                        placeholder="e.g. 8080"
-                        style={{ width: '100px' }}
-                      />
-
-                      {tcpTunnelConfig && (() => {
-                        // Flatten all exposed ports
-                        const exposedPorts = (tcpTunnelConfig.containers || []).flatMap(c =>
-                          (c.portMaps || [])
-                            .filter(pm => pm.publicPort > 0)
-                            .map(pm => ({ ...pm, containerName: c.containerName }))
-                        );
-
-                        return (
-                          <PortSelect
-                            exposedPorts={exposedPorts}
-                            selectedValue={tcpPortInput}
-                            onChange={setTcpPortInput}
-                            placeholder={exposedPorts.length > 0 ? "Select exposed port..." : "Common ports..."}
-                            showCommonPorts={true}
-                          />
-                        );
-                      })()}
-                    </div>
+                    {(() => {
+                      const exposedPorts = tcpTunnelConfig ? (tcpTunnelConfig.containers || []).flatMap(c =>
+                        (c.portMaps || [])
+                          .filter(pm => pm.publicPort > 0)
+                          .map(pm => ({ ...pm, containerName: c.containerName }))
+                      ) : [];
+                      return (
+                        <PortComboBox
+                          value={tcpPortInput}
+                          onChange={setTcpPortInput}
+                          exposedPorts={exposedPorts}
+                          placeholder="e.g. 8080"
+                          showCommonPorts={true}
+                        />
+                      );
+                    })()}
                   </div>
 
                   {tcpError && (
@@ -4366,24 +4433,12 @@ Do you want to try connecting anyway?`)) {
                     </div>
                     <div className="form-group" style={{ flex: '1 1 0', minWidth: 0, overflow: 'hidden' }}>
                       <label>Port</label>
-                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'nowrap' }}>
-                        <input
-                          type="number"
-                          value={sshPort}
-                          onChange={(e) => setSshPort(e.target.value)}
-                          placeholder="22"
-                          min="1"
-                          max="65535"
-                          style={{ width: '70px', flexShrink: 0 }}
-                        />
-                        <PortSelect
-                          exposedPorts={[]}
-                          selectedValue={sshPort}
-                          onChange={setSshPort}
-                          placeholder="Quick Select"
-                          showCommonPorts={true}
-                        />
-                      </div>
+                      <PortComboBox
+                        value={sshPort}
+                        onChange={setSshPort}
+                        placeholder="22"
+                        showCommonPorts={true}
+                      />
                     </div>
                   </div>
 
