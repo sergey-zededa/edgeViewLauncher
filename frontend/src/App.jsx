@@ -2679,100 +2679,103 @@ Do you want to try connecting anyway?`)) {
 
       {/* Unlock Prompt Overlay Removed */}
 
-      {/* Update Banner */}
-      <UpdateBanner
-        updateState={updateState}
-        onDownload={handleDownloadUpdate}
-        onInstall={handleInstallUpdate}
-        onDismiss={handleDismissUpdate}
-      />
+      {/* Notification Toasts Container */}
+      <div className="toast-container">
+        {/* Update Banner */}
+        <UpdateBanner
+          updateState={updateState}
+          onDownload={handleDownloadUpdate}
+          onInstall={handleInstallUpdate}
+          onDismiss={handleDismissUpdate}
+        />
 
-      {/* Global Status Banner */}
-      <GlobalStatusBanner
-        status={globalStatus}
-        onDismiss={() => setGlobalStatus(null)}
-      />
+        {/* Global Status Banner */}
+        <GlobalStatusBanner
+          status={globalStatus}
+          onDismiss={() => setGlobalStatus(null)}
+        />
 
-      {/* Migration Status Banner */}
-      {migrationState.inProgress && (
-        <div className="migration-banner info-banner">
-          <div className="banner-content">
-            <RefreshCw size={18} className="spinner" />
-            <span>Migrating credentials to secure storage...</span>
-          </div>
-        </div>
-      )}
-      {migrationState.completed && (
-        <div className="migration-banner success-banner">
-          <div className="banner-content">
-            <Check size={18} />
-            <span>Credentials successfully migrated to secure storage</span>
-            <button
-              className="banner-dismiss"
-              onClick={() => setMigrationState(prev => ({ ...prev, completed: false }))}
-            >
-              <X size={16} />
-            </button>
-          </div>
-        </div>
-      )}
-      {migrationState.error && (
-        <div className="migration-banner error-banner">
-          <div className="banner-content">
-            <AlertTriangle size={18} />
-            <span>Migration failed: {migrationState.error}</span>
-            <button
-              className="banner-dismiss"
-              onClick={() => setMigrationState(prev => ({ ...prev, error: null }))}
-            >
-              <X size={16} />
-            </button>
-          </div>
-        </div>
-      )}
-      {!migrationState.encryptionAvailable && (
-        <div className="migration-banner warning-banner">
-          <div className="banner-content">
-            <AlertCircle size={18} />
-            <span>Secure storage not available on this system. Tokens will be stored locally.</span>
-          </div>
-        </div>
-      )}
-      {migrationState.requiresReauth && (
-        <div className="migration-banner warning-banner" style={{ backgroundColor: 'rgba(255, 149, 0, 0.1)', border: '1px solid rgba(255, 149, 0, 0.3)', color: '#ff9500' }}>
-          <div className="banner-content">
-            <Lock size={18} />
-            <span><strong>Major Update:</strong> For security reasons, your API tokens could not be automatically migrated from the old version. Please re-authenticate your clusters in Settings.</span>
-            <button
-              className="banner-dismiss"
-              onClick={() => setMigrationState(prev => ({ ...prev, requiresReauth: false }))}
-            >
-              <X size={16} />
-            </button>
-          </div>
-        </div>
-      )}
-
-      {authError && !showSettings && (
-        <div className="auth-error-banner">
-          <div className="auth-error-content">
-            <AlertTriangle size={20} />
-            <div className="auth-error-text">
-              <strong>Authentication Failed</strong>
-              <span>Your API token is expired or invalid. Please update it in settings.</span>
+        {/* Migration Status Banner */}
+        {migrationState.inProgress && (
+          <div className="migration-banner info-banner">
+            <div className="banner-content">
+              <RefreshCw size={18} className="spinner" />
+              <span>Migrating credentials to secure storage...</span>
             </div>
-            <button
-              className="auth-error-button"
-              onClick={() => {
-                setShowSettings(true);
-                setAuthError(false);
-              }}
-            >
-              Open Settings
-            </button>
           </div>
-        </div>
-      )}
+        )}
+        {migrationState.completed && (
+          <div className="migration-banner success-banner">
+            <div className="banner-content">
+              <Check size={18} />
+              <span>Credentials successfully migrated to secure storage</span>
+              <button
+                className="banner-dismiss"
+                onClick={() => setMigrationState(prev => ({ ...prev, completed: false }))}
+              >
+                <X size={16} />
+              </button>
+            </div>
+          </div>
+        )}
+        {migrationState.error && (
+          <div className="migration-banner error-banner">
+            <div className="banner-content">
+              <AlertTriangle size={18} />
+              <span>Migration failed: {migrationState.error}</span>
+              <button
+                className="banner-dismiss"
+                onClick={() => setMigrationState(prev => ({ ...prev, error: null }))}
+              >
+                <X size={16} />
+              </button>
+            </div>
+          </div>
+        )}
+        {!migrationState.encryptionAvailable && (
+          <div className="migration-banner warning-banner">
+            <div className="banner-content">
+              <AlertCircle size={18} />
+              <span>Secure storage not available on this system. Tokens will be stored locally.</span>
+            </div>
+          </div>
+        )}
+        {migrationState.requiresReauth && (
+          <div className="migration-banner warning-banner" style={{ backgroundColor: 'rgba(255, 149, 0, 0.1)', border: '1px solid rgba(255, 149, 0, 0.3)', color: '#ff9500' }}>
+            <div className="banner-content">
+              <Lock size={18} />
+              <span><strong>Major Update:</strong> For security reasons, your API tokens could not be automatically migrated from the old version. Please re-authenticate your clusters in Settings.</span>
+              <button
+                className="banner-dismiss"
+                onClick={() => setMigrationState(prev => ({ ...prev, requiresReauth: false }))}
+              >
+                <X size={16} />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {authError && !showSettings && (
+          <div className="auth-error-banner">
+            <div className="auth-error-content">
+              <AlertTriangle size={20} />
+              <div className="auth-error-text">
+                <strong>Authentication Failed</strong>
+                <span>Your API token is expired or invalid. Please update it in settings.</span>
+              </div>
+              <button
+                className="auth-error-button"
+                onClick={() => {
+                  setShowSettings(true);
+                  setAuthError(false);
+                }}
+              >
+                Open Settings
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Collect Info Modal - Removed in favor of GlobalStatusBanner */}
 
