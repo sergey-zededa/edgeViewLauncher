@@ -3190,33 +3190,59 @@ Do you want to try connecting anyway?`)) {
                 <div className="ssh-status-section">
                   <div className="section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span>EdgeView Session</span>
-                    <div className="split-btn-container" ref={dropdownRef}>
-                      <button
-                        className={`connect-btn primary split-main`}
-                        onClick={() => setShowTerminalMenu(!showTerminalMenu)}
-                        disabled={!sshStatus || sshStatus.status !== 'enabled' || !isSessionConnected || !isDeviceOnline}
-                        title={!isDeviceOnline
-                          ? "Device is offline"
-                          : (!sshStatus || sshStatus.status !== 'enabled')
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'stretch' }}>
+                      {sshStatus?.externalPolicy && (
+                        <div style={{ position: 'relative', display: 'flex' }}>
+                            <button
+                              className={`connect-btn secondary`}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '8px',
+                                padding: '6px 12px',
+                                fontSize: '12px',
+                                height: '100%'
+                              }}
+                              onClick={() => {
+                                setTcpIpInput('');
+                                setTcpPortInput('');
+                                setTcpTunnelConfig({ id: 'manual' });
+                              }}
+                              disabled={!isSessionConnected}
+                              title={!isSessionConnected ? "Session is not connected" : "Open TCP tunnel to external endpoint"}
+                            >
+                              <Activity size={16} style={{ color: !isSessionConnected ? 'var(--text-secondary)' : 'var(--color-primary)' }} />
+                              External Endpoint TCP Tunnel
+                            </button>
+                        </div>
+                      )}
+                      <div className="split-btn-container" ref={dropdownRef}>
+                        <button
+                          className={`connect-btn secondary split-main`}
+                          onClick={() => setShowTerminalMenu(!showTerminalMenu)}
+                          disabled={!sshStatus || sshStatus.status !== 'enabled' || !isSessionConnected || !isDeviceOnline}
+                          title={!isDeviceOnline
+                            ? "Device is offline"
+                            : (!sshStatus || sshStatus.status !== 'enabled')
                             ? "SSH must be enabled first"
                             : !isSessionConnected
                               ? "Session is not connected"
                               : "Open SSH Terminal"}
-                        style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', fontSize: '12px' }}
-                      >
-                        <Terminal size={16} />
-                        <img src={eveOsIcon} alt="EVE-OS" style={{ height: '14px', width: 'auto' }} />
-                        EVE-OS SSH Terminal
-                      </button>
-                      <button
-                        className={`connect-btn primary split-arrow`}
-                        onClick={() => setShowTerminalMenu(!showTerminalMenu)}
-                        disabled={!sshStatus || sshStatus.status !== 'enabled' || !isSessionConnected || !isDeviceOnline}
-                        style={{ padding: '6px 8px' }}
-                      >
-                        <ChevronDown size={14} />
-                      </button>
-                      {showTerminalMenu && (
+                          style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', fontSize: '12px' }}
+                        >
+                          <Terminal size={16} />
+                          <img src={eveOsIcon} alt="EVE-OS" style={{ height: '14px', width: 'auto', filter: theme === 'dark' ? 'brightness(0) invert(1)' : 'none', opacity: theme === 'dark' ? 0.9 : 1 }} />
+                          EVE-OS SSH Terminal
+                        </button>
+                        <button
+                          className={`connect-btn secondary split-arrow`}
+                          onClick={() => setShowTerminalMenu(!showTerminalMenu)}
+                          disabled={!sshStatus || sshStatus.status !== 'enabled' || !isSessionConnected || !isDeviceOnline}
+                          style={{ padding: '6px 8px' }}
+                        >
+                          <ChevronDown size={14} />
+                        </button>
+                        {showTerminalMenu && (
                         <div className="dropdown-menu">
                           <div className="dropdown-item" onClick={() => startSession(selectedNode.id, true)} style={{
                             padding: '10px 14px',
@@ -3241,6 +3267,7 @@ Do you want to try connecting anyway?`)) {
                           </div>
                         </div>
                       )}
+                    </div>
                     </div>
                   </div>
 
@@ -3454,36 +3481,9 @@ Do you want to try connecting anyway?`)) {
               )
             }
 
-            {/* Contextual Action Button (Outside Config Box) */}
-            {selectedNode && sshStatus?.externalPolicy && (
-              <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginBottom: '16px', marginTop: '-8px', marginRight: '16px' }}>
-                <div style={{ position: 'relative' }}>
-                  <button
-                    className={`btn secondary`}
-                    style={{
-                      fontSize: '12px',
-                      padding: '6px 14px',
-                      cursor: 'pointer',
-                      border: '1px solid var(--border-subtle)',
-                      color: 'var(--text-primary)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      backgroundColor: 'var(--bg-hover)',
-                      borderRadius: '6px'
-                    }}
-                    onClick={isDeviceOnline ? () => {
-                      setTcpIpInput('');
-                      setTcpPortInput('');
-                      setTcpTunnelConfig({ id: 'manual' });
-                    } : undefined}
-                    disabled={!isDeviceOnline}
-                    title={!isDeviceOnline ? "Device is offline" : "Open TCP tunnel to external endpoint"}
-                  >
-                    <Activity size={14} style={{ marginRight: '8px', color: 'var(--color-primary)' }} />
-                    External Endpoint TCP Tunnel
-                  </button>
-
-                </div>
+            {/* Contextual Action Button placeholder (button moved to session header) */}
+            {selectedNode && (
+              <div style={{ marginBottom: '16px', marginTop: '-8px' }}>
               </div>
             )}
 
@@ -3547,8 +3547,9 @@ Do you want to try connecting anyway?`)) {
                       if (!childrenIds.has(app.id)) {
                         displayList.push({ ...app, isChild: false, isRuntime: parentsMap.has(app.id) });
                         if (parentsMap.has(app.id)) {
-                          parentsMap.get(app.id).forEach(child => {
-                            displayList.push({ ...child, isChild: true });
+                          const children = parentsMap.get(app.id);
+                          children.forEach((child, index) => {
+                            displayList.push({ ...child, isChild: true, isLastChild: index === children.length - 1 });
                           });
                         }
                       }
@@ -3563,17 +3564,29 @@ Do you want to try connecting anyway?`)) {
                               flexDirection: 'column',
                               alignItems: 'stretch',
                               marginLeft: app.isChild ? '32px' : '0',
-                              paddingLeft: app.isChild ? '12px' : '16px',
-                              // Only override borderLeft for children to create the tree line effect
-                              // Parents keep the default border from .service-item class
-                              ...(app.isChild ? { borderLeft: '2px solid var(--border-color)' } : {}),
                               position: 'relative',
-                              marginBottom: '8px'
+                              marginBottom: '8px',
+                              overflow: 'visible'
                             }}>
                               {app.isChild && (
-                                <div style={{
-                                  position: 'absolute', left: '-2px', top: '24px', width: '12px', height: '2px', backgroundColor: 'var(--border-color)'
-                                }} />
+                                <>
+                                  <div style={{
+                                    position: 'absolute',
+                                    left: '-16px',
+                                    top: '-10px',
+                                    width: '2px',
+                                    height: app.isLastChild ? '34px' : 'calc(100% + 18px)',
+                                    backgroundColor: 'var(--border-color)'
+                                  }} />
+                                  <div style={{
+                                    position: 'absolute',
+                                    left: '-16px',
+                                    top: '24px',
+                                    width: '16px',
+                                    height: '2px',
+                                    backgroundColor: 'var(--border-color)'
+                                  }} />
+                                </>
                               )}
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                 <div className="service-info" style={{ flex: 1, minWidth: 0 }}>

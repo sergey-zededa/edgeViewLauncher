@@ -21,7 +21,8 @@
       "Bash(cargo check:*)",
       "Bash(prompt\":*)",
       "Bash(npx vitest:*)",
-      "Bash(cargo test:*)"
+      "Bash(cargo test:*)",
+      "Bash(git cherry-pick:*)"
     ]
   }
 }
