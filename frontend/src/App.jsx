@@ -456,7 +456,8 @@ function App() {
     inProgress: false,
     completed: false,
     error: null,
-    encryptionAvailable: true
+    encryptionAvailable: true,
+    requiresReauth: false
   });
 
   // Lock state - removed as we are reverting to auto-unlock
@@ -1578,7 +1579,8 @@ function App() {
         setMigrationState(prev => ({
           ...prev,
           needed: status.needsMigration,
-          encryptionAvailable: status.encryptionAvailable
+          encryptionAvailable: status.encryptionAvailable,
+          requiresReauth: status.requiresReauth
         }));
 
         // Auto-migrate if needed
@@ -2732,12 +2734,25 @@ Do you want to try connecting anyway?`)) {
         <div className="migration-banner warning-banner">
           <div className="banner-content">
             <AlertCircle size={18} />
-            <span>Secure storage is not available on this system. Credentials are stored in plaintext.</span>
+            <span>Secure storage not available on this system. Tokens will be stored locally.</span>
+          </div>
+        </div>
+      )}
+      {migrationState.requiresReauth && (
+        <div className="migration-banner warning-banner" style={{ backgroundColor: 'rgba(255, 149, 0, 0.1)', border: '1px solid rgba(255, 149, 0, 0.3)', color: '#ff9500' }}>
+          <div className="banner-content">
+            <Lock size={18} />
+            <span><strong>Major Update:</strong> For security reasons, your API tokens could not be automatically migrated from the old version. Please re-authenticate your clusters in Settings.</span>
+            <button
+              className="banner-dismiss"
+              onClick={() => setMigrationState(prev => ({ ...prev, requiresReauth: false }))}
+            >
+              <X size={16} />
+            </button>
           </div>
         </div>
       )}
 
-      {/* Authentication Error Banner */}
       {authError && !showSettings && (
         <div className="auth-error-banner">
           <div className="auth-error-content">

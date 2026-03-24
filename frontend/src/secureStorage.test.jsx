@@ -210,7 +210,7 @@ describe('Secure Storage Integration', () => {
 
       await waitFor(() => {
         expect(tauriAPI.SecureStorageMigrate).not.toHaveBeenCalled();
-        expect(screen.getByText(/Secure storage is not available/i)).toBeInTheDocument();
+        expect(screen.getByText(/Secure storage not available/i)).toBeInTheDocument();
       });
     });
   });
