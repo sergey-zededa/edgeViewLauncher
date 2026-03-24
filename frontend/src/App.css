@@ -1572,8 +1572,9 @@ body {
     border-radius: 8px !important;
     width: 100%;
     max-width: 640px;
-    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    border: none !important;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3) !important;
+    overflow: hidden;
     animation: slideUpToast 0.4s cubic-bezier(0.16, 1, 0.3, 1) !important;
     margin: 0 !important;
     box-sizing: border-box !important;

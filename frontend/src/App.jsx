@@ -360,8 +360,9 @@ function App() {
   const [cacheLoaded, setCacheLoaded] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
-  const [showClusterDropdown, setShowClusterDropdown] = useState(false);
+  const [showClusterDropdown, setShowClusterDropdown] = useState(null); // null | 'header' | 'icon'
   const clusterDropdownRef = useRef(null);
+  const clusterHeaderRef = useRef(null);
   const [selectedNode, setSelectedNode] = useState(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [enterprise, setEnterprise] = useState(null);
@@ -398,8 +399,10 @@ function App() {
   useEffect(() => {
     if (!showClusterDropdown) return;
     const handleClickOutside = (e) => {
-      if (clusterDropdownRef.current && !clusterDropdownRef.current.contains(e.target)) {
-        setShowClusterDropdown(false);
+      const inIcon = clusterDropdownRef.current && clusterDropdownRef.current.contains(e.target);
+      const inHeader = clusterHeaderRef.current && clusterHeaderRef.current.contains(e.target);
+      if (!inIcon && !inHeader) {
+        setShowClusterDropdown(null);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -2189,7 +2192,7 @@ Do you want to try connecting anyway?`)) {
   const handleKeyDown = (e) => {
     if (e.key === 'Escape' && showClusterDropdown) {
       e.preventDefault();
-      setShowClusterDropdown(false);
+      setShowClusterDropdown(null);
       return;
     }
     if (e.key === 'Escape' && showSettings) {
@@ -2279,7 +2282,7 @@ Do you want to try connecting anyway?`)) {
 
       // 3. Close settings panel immediately so the user sees the device list
       setShowSettings(false);
-      setShowClusterDropdown(false);
+      setShowClusterDropdown(null);
 
       // 4. Push updated config to the Go backend FIRST (triggers cache switch + refresh)
       await InjectSecureConfig().catch(err => console.error('Failed to inject config:', err));
@@ -2518,9 +2521,10 @@ Do you want to try connecting anyway?`)) {
               <>
                 <Tooltip text={config.clusters.filter(c => c.baseUrl && c.apiToken).length > 1 ? "Switch cluster" : "Active cluster"} simple position="bottom">
                   <span
+                    ref={clusterHeaderRef}
                     onClick={() => {
                       const configured = config.clusters.filter(c => c.baseUrl && c.apiToken);
-                      if (configured.length > 1) setShowClusterDropdown(!showClusterDropdown);
+                      if (configured.length > 1) setShowClusterDropdown(showClusterDropdown ? null : 'header');
                     }}
                     style={{
                       cursor: config.clusters.filter(c => c.baseUrl && c.apiToken).length > 1 ? 'pointer' : 'default',
@@ -2537,7 +2541,7 @@ Do you want to try connecting anyway?`)) {
                   >
                     {entName} • {url}
                     {config.clusters.filter(c => c.baseUrl && c.apiToken).length > 1 && (
-                      <ChevronDown size={12} style={{ transition: 'transform 0.2s', transform: showClusterDropdown ? 'rotate(180deg)' : 'none' }} />
+                      <ChevronDown size={12} style={{ transition: 'transform 0.2s', transform: showClusterDropdown === 'header' ? 'rotate(180deg)' : 'none' }} />
                     )}
                   </span>
                 </Tooltip>
@@ -2584,15 +2588,26 @@ Do you want to try connecting anyway?`)) {
                 <Layers
                   className="settings-icon"
                   size={20}
-                  onClick={() => setShowClusterDropdown(!showClusterDropdown)}
+                  onClick={() => setShowClusterDropdown(showClusterDropdown ? null : 'icon')}
                   title="Switch Cluster"
                 />
               </Tooltip>
-              {showClusterDropdown && (
-                <div style={{
+              {showClusterDropdown && (() => {
+                const anchorRef = showClusterDropdown === 'header' ? clusterHeaderRef : clusterDropdownRef;
+                const rect = anchorRef.current?.getBoundingClientRect();
+                const dropdownStyle = rect ? {
+                  position: 'fixed',
+                  top: rect.bottom + 8,
+                  left: showClusterDropdown === 'header' ? rect.left : undefined,
+                  right: showClusterDropdown === 'icon' ? (window.innerWidth - rect.right) : undefined,
+                } : {
                   position: 'absolute',
                   top: 'calc(100% + 8px)',
                   right: 0,
+                };
+                return (
+                <div style={{
+                  ...dropdownStyle,
                   background: 'var(--bg-secondary)',
                   border: '1px solid var(--border-color)',
                   borderRadius: '8px',
@@ -2622,10 +2637,10 @@ Do you want to try connecting anyway?`)) {
                         key={cluster.name}
                         onClick={() => {
                           if (!isActive) {
-                            setShowClusterDropdown(false);
+                            setShowClusterDropdown(null);
                             activateCluster(cluster.name);
                           } else {
-                            setShowClusterDropdown(false);
+                            setShowClusterDropdown(null);
                           }
                         }}
                         style={{
@@ -2651,7 +2666,7 @@ Do you want to try connecting anyway?`)) {
                     );
                   })}
                 </div>
-              )}
+              );})()}
             </div>
           )}
           {!selectedNode && (
