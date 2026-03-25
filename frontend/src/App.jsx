@@ -874,6 +874,72 @@ function App() {
     };
   }, [selectedNode]);
 
+  // Poll all tunnels globally when the "All Tunnels" panel is open.
+  // This catches tunnels closed from child windows (VNC viewer, terminal)
+  // that bypass the per-node polling above.
+  useEffect(() => {
+    if (!showGlobalTunnels) return;
+
+    let cancelled = false;
+
+    const fetchAllTunnels = async () => {
+      if (cancelled) return;
+      try {
+        const tunnels = await ListTunnels('');
+        if (cancelled || tunnels === null || !Array.isArray(tunnels)) return;
+
+        const mapped = tunnels.map(t => {
+          const rawTarget = t.TargetIP || '';
+          const [ipPart, portPart] = rawTarget.split(':');
+          const targetPort = parseInt(portPart || '0', 10);
+
+          let type = t.Type || 'TCP';
+          if (type === 'TCP') {
+            if (targetPort === 22) type = 'SSH';
+            else if (targetPort === 5900) type = 'VNC';
+          }
+
+          return {
+            id: t.ID,
+            nodeId: t.NodeID,
+            nodeName: t.NodeName || '',
+            projectId: t.ProjectID || '',
+            type,
+            targetIP: ipPart || '',
+            targetPort,
+            localPort: t.LocalPort,
+            createdAt: t.CreatedAt,
+            status: t.Status || 'active',
+            error: t.Error || '',
+            isEncrypted: t.IsEncrypted,
+            bytesSent: t.BytesSent || 0,
+            bytesReceived: t.BytesReceived || 0,
+            lastActivity: t.LastActivity ? new Date(t.LastActivity).getTime() : 0,
+          };
+        });
+
+        setActiveTunnels(prev => {
+          // Preserve username from previous state (not returned by backend)
+          const prevById = new Map(prev.map(t => [t.id, t]));
+          return mapped.map(t => ({
+            ...t,
+            username: prevById.get(t.id)?.username || '',
+          }));
+        });
+      } catch (err) {
+        console.error('Failed to list all tunnels:', err);
+      }
+    };
+
+    fetchAllTunnels();
+    const intervalId = setInterval(fetchAllTunnels, 5000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [showGlobalTunnels]);
+
   // Polling for device services (every 15-60 seconds while a node is selected)
   // This ensures VNC details and real-time status are updated as background enrichment finishes.
   useEffect(() => {
@@ -3261,6 +3327,130 @@ Do you want to try connecting anyway?`)) {
                                 username: tunnel.username,
                                 nodeName: tunnel.nodeName || selectedNode.name,
                                 targetInfo: `${tunnel.username || 'root'}@${tunnel.nodeName || selectedNode.name}`,
+                                tunnelId: tunnel.id,
+                                theme
+                              })}
+                            >
+                              <Terminal size={14} />
+                            </button>
+                          </>
+                        )}
+                        <button
+                          className="icon-btn danger"
+                          title="Stop Tunnel"
+                          onClick={() => StopTunnel(tunnel.id)}
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Global tunnels view (all devices) */}
+            {showGlobalTunnels && activeTunnels.filter(t => t.status !== 'failed').length > 0 && (
+              <div className="active-tunnels-section global expanded">
+                <div className="section-title">All Active Tunnels</div>
+                <div className="tunnel-list">
+                  {activeTunnels.filter(t => t.status !== 'failed').map(tunnel => (
+                    <div key={tunnel.id} className="tunnel-item">
+                      <div className="tunnel-info">
+                        <div className="tunnel-type">
+                          {tunnel.type === 'VNC' && <Monitor size={14} className="tunnel-icon" />}
+                          {tunnel.type === 'SSH' && <Terminal size={14} className="tunnel-icon" />}
+                          {tunnel.type === 'TCP' && <Activity size={14} className="tunnel-icon" />}
+                          <span>{tunnel.type}</span>
+                          {tunnel.isEncrypted ? (
+                            <span className="tunnel-badge encrypted" title="End-to-End Encrypted">
+                              <Lock size={10} />
+                            </span>
+                          ) : (
+                            <span className="tunnel-badge unencrypted" title="Not Encrypted">
+                              <Unlock size={10} />
+                            </span>
+                          )}
+                        </div>
+                        <div className="tunnel-target">
+                          <span>{tunnel.targetIP}:{tunnel.targetPort}</span>
+                          <ArrowRight size={12} className="tunnel-arrow" />
+                        </div>
+                        <div className="tunnel-local">
+                          <Copyable text={tunnel.type === 'SSH' ? `ssh -p ${tunnel.localPort} ${tunnel.username || 'root'}@localhost` : `localhost:${tunnel.localPort}`}>
+                            <code>localhost:{tunnel.localPort}</code>
+                          </Copyable>
+                        </div>
+                        <div className="tunnel-meta">
+                          <span className="tunnel-device">{tunnel.nodeName || tunnel.nodeId}</span>
+                          {tunnel.projectId && (
+                            <span className="tunnel-project">
+                              • {projects[tunnel.projectId] || tunnel.projectId}
+                            </span>
+                          )}
+                        </div>
+                        {tunnel.type === 'TCP' && (
+                          <button
+                            className="icon-btn"
+                            title="Open in Browser"
+                            onClick={() => openExternal(`http://localhost:${tunnel.localPort}`)}
+                          >
+                            <ExternalLink size={12} />
+                          </button>
+                        )}
+                        <div className="tunnel-stats">
+                          <div
+                            className={`activity-dot ${Date.now() - (tunnel.lastActivity || 0) < 5000 ? 'active' : ''}`}
+                            title={Date.now() - (tunnel.lastActivity || 0) < 5000 ? "Active (Data transferring)" : "Idle"}
+                          ></div>
+                          <span className="stats-text" title="Data Transferred">
+                            <span title="Bytes Sent">TX: {formatBytes(tunnel.bytesSent)}</span>
+                            <span className="divider">|</span>
+                            <span title="Bytes Received">RX: {formatBytes(tunnel.bytesReceived)}</span>
+                          </span>
+                        </div>
+                      </div>
+                      <div className="tunnel-actions">
+                        {tunnel.type === 'VNC' && (
+                          <>
+                            <button
+                              className="icon-btn"
+                              title="Open External VNC Viewer"
+                              onClick={() => openExternal(`vnc://localhost:${tunnel.localPort}`)}
+                            >
+                              <ExternalLink size={14} />
+                            </button>
+                            <button
+                              className="icon-btn"
+                              title="Open Built-in VNC Viewer"
+                              onClick={() => openVncWindow({
+                                port: tunnel.localPort,
+                                nodeName: tunnel.nodeName || tunnel.nodeId,
+                                tunnelId: tunnel.id,
+                                theme
+                              })}
+                            >
+                              <Monitor size={14} />
+                            </button>
+                          </>
+                        )}
+                        {tunnel.type === 'SSH' && (
+                          <>
+                            <button
+                              className="icon-btn"
+                              title="Open External Terminal"
+                              onClick={() => openExternalTerminal(`ssh -p ${tunnel.localPort} ${tunnel.username || 'root'}@localhost`)}
+                            >
+                              <ExternalLink size={14} />
+                            </button>
+                            <button
+                              className="icon-btn"
+                              title="Open Built-in Terminal"
+                              onClick={() => openTerminalWindow({
+                                port: tunnel.localPort,
+                                username: tunnel.username,
+                                nodeName: tunnel.nodeName || tunnel.nodeId,
+                                targetInfo: `${tunnel.username || 'root'}@${tunnel.nodeName || tunnel.nodeId}`,
                                 tunnelId: tunnel.id,
                                 theme
                               })}

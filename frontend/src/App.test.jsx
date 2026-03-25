@@ -34,6 +34,10 @@ vi.mock('./tauriAPI', () => {
     SetupSSH: vi.fn(fn),
     GetSSHStatus: vi.fn().mockResolvedValue({ status: 'disabled' }),
     DisableSSH: vi.fn(fn),
+    SetVGAEnabled: vi.fn(fn),
+    SetUSBEnabled: vi.fn(fn),
+    SetConsoleEnabled: vi.fn(fn),
+    EnableExternalPolicy: vi.fn(fn),
     ResetEdgeView: vi.fn(fn),
     VerifyTunnel: vi.fn(fn),
     GetUserInfo: vi.fn(fn),
@@ -726,6 +730,450 @@ describe('Search with local cache filtering', () => {
 
     await waitFor(() => {
       expect(electronAPI.RefreshDeviceCache).toHaveBeenCalled();
+    });
+  });
+});
+
+describe('Status bar and global tunnels', () => {
+  const validKey = 'A'.repeat(171);
+  const validToken = `ENT1234:${validKey}`;
+  const configWithToken = {
+    baseUrl: 'https://cluster.example',
+    apiToken: validToken,
+    clusters: [{ name: 'Prod', baseUrl: 'https://cluster.example', apiToken: validToken }],
+    activeCluster: 'Prod',
+    recentDevices: [],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    electronAPI.GetSettings.mockReset();
+    electronAPI.SecureStorageGetSettings.mockReset();
+    electronAPI.GetDeviceCache.mockReset();
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache());
+    Object.defineProperty(window, 'electronAPI', {
+      value: undefined,
+      writable: true,
+    });
+  });
+
+  it('All Tunnels button is present in status bar', async () => {
+    const emptyConfig = { baseUrl: '', apiToken: '', clusters: [], activeCluster: '', recentDevices: [] };
+    electronAPI.GetSettings.mockResolvedValue(emptyConfig);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(emptyConfig);
+
+    render(<App />);
+
+    await screen.findByRole('heading', { name: 'Configuration' });
+
+    expect(screen.getByText('All Tunnels')).toBeInTheDocument();
+  });
+
+  it('clicking All Tunnels shows global tunnel panel with cross-device tunnels', async () => {
+    electronAPI.GetSettings.mockResolvedValue(configWithToken);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(configWithToken);
+
+    const node = { id: 'node-1', name: 'Node 1', status: 'online', project: 'proj-1' };
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([node], [{ id: 'proj-1', name: 'Project 1' }]));
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'enabled' });
+    electronAPI.GetSessionStatus.mockResolvedValue({ active: true, expiresAt: new Date(Date.now() + 3600000).toISOString() });
+
+    // Return tunnels from two different devices when polled
+    electronAPI.ListTunnels.mockResolvedValue([
+      {
+        ID: 'tun-1', NodeID: 'node-1', NodeName: 'Node 1', Type: 'TCP',
+        TargetIP: '10.0.0.1:5900', LocalPort: 6001, Status: 'active',
+        IsEncrypted: true, BytesSent: 0, BytesReceived: 0,
+      },
+      {
+        ID: 'tun-2', NodeID: 'node-2', NodeName: 'Node 2', Type: 'TCP',
+        TargetIP: '10.0.0.2:22', LocalPort: 6002, Status: 'active',
+        IsEncrypted: false, BytesSent: 0, BytesReceived: 0,
+      },
+    ]);
+
+    render(<App />);
+
+    // Select device to trigger tunnel polling
+    const nodeItem = await screen.findByText('Node 1');
+    fireEvent.click(nodeItem);
+    await screen.findByText('Running Applications');
+
+    // Wait for tunnel polling to populate activeTunnels
+    await waitFor(() => {
+      expect(screen.getByText('Active Tunnels')).toBeInTheDocument();
+    });
+
+    // Click All Tunnels button
+    const allTunnelsBtn = screen.getByText('All Tunnels');
+    fireEvent.click(allTunnelsBtn);
+
+    // Global panel should render
+    await waitFor(() => {
+      expect(screen.getByText('All Active Tunnels')).toBeInTheDocument();
+    });
+
+    // Should show tunnels from both devices
+    const globalSection = screen.getByText('All Active Tunnels').closest('.active-tunnels-section');
+    expect(globalSection).not.toBeNull();
+    const withinGlobal = within(globalSection);
+    expect(withinGlobal.getByText('Node 1')).toBeInTheDocument();
+    expect(withinGlobal.getByText('Node 2')).toBeInTheDocument();
+  });
+
+  it('clicking Hide All Tunnels dismisses the panel', async () => {
+    electronAPI.GetSettings.mockResolvedValue(configWithToken);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(configWithToken);
+
+    const node = { id: 'node-1', name: 'Node 1', status: 'online', project: 'proj-1' };
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([node]));
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'enabled' });
+    electronAPI.GetSessionStatus.mockResolvedValue({ active: true, expiresAt: new Date(Date.now() + 3600000).toISOString() });
+
+    electronAPI.ListTunnels.mockResolvedValue([
+      {
+        ID: 'tun-1', NodeID: 'node-1', NodeName: 'Node 1', Type: 'TCP',
+        TargetIP: '10.0.0.1:80', LocalPort: 6001, Status: 'active',
+        IsEncrypted: true, BytesSent: 0, BytesReceived: 0,
+      },
+    ]);
+
+    render(<App />);
+
+    const nodeItem = await screen.findByText('Node 1');
+    fireEvent.click(nodeItem);
+    await screen.findByText('Running Applications');
+
+    await waitFor(() => {
+      expect(screen.getByText('Active Tunnels')).toBeInTheDocument();
+    });
+
+    // Open global tunnels
+    fireEvent.click(screen.getByText('All Tunnels'));
+    await waitFor(() => {
+      expect(screen.getByText('All Active Tunnels')).toBeInTheDocument();
+    });
+
+    // Close global tunnels
+    fireEvent.click(screen.getByText('Hide All Tunnels'));
+    expect(screen.queryByText('All Active Tunnels')).not.toBeInTheDocument();
+  });
+
+  it('global tunnels panel hidden when no active tunnels', async () => {
+    electronAPI.GetSettings.mockResolvedValue(configWithToken);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(configWithToken);
+
+    const node = { id: 'node-1', name: 'Node 1', status: 'online', project: 'proj-1' };
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([node]));
+    electronAPI.ListTunnels.mockResolvedValue([]);
+
+    render(<App />);
+
+    await screen.findByText('Node 1');
+
+    // Click All Tunnels button
+    fireEvent.click(screen.getByText('All Tunnels'));
+
+    // Panel should NOT render because there are no active tunnels
+    expect(screen.queryByText('All Active Tunnels')).not.toBeInTheDocument();
+  });
+
+  it('status bar shows Ready when token is configured', async () => {
+    electronAPI.GetSettings.mockResolvedValue(configWithToken);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(configWithToken);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Ready')).toBeInTheDocument();
+    });
+  });
+
+  it('status bar shows Setup Required with no token', async () => {
+    const emptyConfig = { baseUrl: '', apiToken: '', clusters: [], activeCluster: '', recentDevices: [] };
+    electronAPI.GetSettings.mockResolvedValue(emptyConfig);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(emptyConfig);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Setup Required')).toBeInTheDocument();
+    });
+  });
+
+  it('status bar shows result count on device list', async () => {
+    electronAPI.GetSettings.mockResolvedValue(configWithToken);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(configWithToken);
+
+    const devices = [
+      { id: 'n1', name: 'Device-A', status: 'online', project: 'p1' },
+      { id: 'n2', name: 'Device-B', status: 'online', project: 'p1' },
+      { id: 'n3', name: 'Device-C', status: 'offline', project: 'p1' },
+    ];
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache(devices));
+
+    render(<App />);
+
+    await screen.findByText('Device-A');
+
+    expect(screen.getByText('3 results')).toBeInTheDocument();
+  });
+});
+
+describe('Navigation and interaction flows', () => {
+  const validKey = 'A'.repeat(171);
+  const validToken = `ENT1234:${validKey}`;
+  const configWithToken = {
+    baseUrl: 'https://cluster.example',
+    apiToken: validToken,
+    clusters: [{ name: 'Prod', baseUrl: 'https://cluster.example', apiToken: validToken }],
+    activeCluster: 'Prod',
+    recentDevices: [],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    electronAPI.GetSettings.mockReset();
+    electronAPI.SecureStorageGetSettings.mockReset();
+    electronAPI.GetDeviceCache.mockReset();
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache());
+    Object.defineProperty(window, 'electronAPI', {
+      value: undefined,
+      writable: true,
+    });
+    electronAPI.GetSettings.mockResolvedValue(configWithToken);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(configWithToken);
+  });
+
+  it('clicking back arrow returns to device list', async () => {
+    const node = { id: 'node-1', name: 'BackNav-Device', status: 'online', project: 'proj-1' };
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([node]));
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'disabled' });
+
+    render(<App />);
+
+    // Select device
+    const nodeItem = await screen.findByText('BackNav-Device');
+    fireEvent.click(nodeItem);
+
+    await screen.findByText('Activity Log');
+
+    // Click back arrow
+    const backIcon = document.querySelector('.back-icon');
+    expect(backIcon).not.toBeNull();
+    fireEvent.click(backIcon);
+
+    // Should be back on device list
+    await waitFor(() => {
+      expect(screen.queryByText('Activity Log')).not.toBeInTheDocument();
+    });
+    expect(screen.getByText('BackNav-Device')).toBeInTheDocument();
+  });
+
+  it('selecting a device calls GetDeviceServices and GetSSHStatus', async () => {
+    const node = { id: 'dev-42', name: 'API-Test-Device', status: 'online', project: 'proj-1' };
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([node]));
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'disabled' });
+
+    render(<App />);
+
+    const nodeItem = await screen.findByText('API-Test-Device');
+    fireEvent.click(nodeItem);
+
+    await waitFor(() => {
+      expect(electronAPI.GetDeviceServices).toHaveBeenCalledWith('dev-42', 'API-Test-Device');
+      expect(electronAPI.GetSSHStatus).toHaveBeenCalledWith('dev-42');
+    });
+  });
+
+  it('arrow keys navigate device list and Enter selects a device', async () => {
+    const devices = [
+      { id: 'n1', name: 'Alpha-Device', status: 'online', project: 'p1' },
+      { id: 'n2', name: 'Beta-Device', status: 'online', project: 'p1' },
+      { id: 'n3', name: 'Gamma-Device', status: 'online', project: 'p1' },
+    ];
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache(devices));
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'disabled' });
+
+    render(<App />);
+
+    await screen.findByText('Alpha-Device');
+
+    const appContainer = document.querySelector('.app-container');
+
+    // Arrow down twice to reach third device (index 0 -> 1 -> 2)
+    fireEvent.keyDown(appContainer, { key: 'ArrowDown' });
+    fireEvent.keyDown(appContainer, { key: 'ArrowDown' });
+    fireEvent.keyDown(appContainer, { key: 'Enter' });
+
+    // Should have selected the third device and opened details
+    await waitFor(() => {
+      expect(electronAPI.GetDeviceServices).toHaveBeenCalledWith('n3', 'Gamma-Device');
+    });
+  });
+
+  it('Escape closes settings panel', async () => {
+    render(<App />);
+
+    await screen.findByText('Alpha-Device').catch(() => null);
+
+    // Open settings via Cmd+,
+    const appContainer = document.querySelector('.app-container');
+    fireEvent.keyDown(appContainer, { key: ',', metaKey: true });
+
+    await screen.findByRole('heading', { name: 'Configuration' });
+
+    // Press Escape to close
+    fireEvent.keyDown(appContainer, { key: 'Escape' });
+
+    await waitFor(() => {
+      expect(screen.queryByRole('heading', { name: 'Configuration' })).not.toBeInTheDocument();
+    });
+  });
+});
+
+describe('EdgeView session controls', () => {
+  const validKey = 'A'.repeat(171);
+  const validToken = `ENT1234:${validKey}`;
+  const configWithToken = {
+    baseUrl: 'https://cluster.example',
+    apiToken: validToken,
+    clusters: [{ name: 'Prod', baseUrl: 'https://cluster.example', apiToken: validToken }],
+    activeCluster: 'Prod',
+    recentDevices: [],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    electronAPI.GetSettings.mockReset();
+    electronAPI.SecureStorageGetSettings.mockReset();
+    electronAPI.GetDeviceCache.mockReset();
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache());
+    Object.defineProperty(window, 'electronAPI', {
+      value: undefined,
+      writable: true,
+    });
+    electronAPI.GetSettings.mockResolvedValue(configWithToken);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(configWithToken);
+  });
+
+  it('clicking Enable SSH chip calls SetupSSH', async () => {
+    const node = { id: 'node-1', name: 'SSH-Test', status: 'online', project: 'proj-1' };
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([node]));
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'disabled' });
+    electronAPI.GetSessionStatus.mockResolvedValue({ active: true, expiresAt: new Date(Date.now() + 3600000).toISOString() });
+
+    render(<App />);
+
+    const nodeItem = await screen.findByText('SSH-Test');
+    fireEvent.click(nodeItem);
+
+    await screen.findByText('EdgeView Session');
+
+    const enableSshChip = screen.getByTitle('SSH Disabled - Click to Enable');
+    fireEvent.click(enableSshChip);
+
+    await waitFor(() => {
+      expect(electronAPI.SetupSSH).toHaveBeenCalledWith('node-1');
+    });
+  });
+
+  it('clicking SSH Enabled chip calls DisableSSH', async () => {
+    const node = { id: 'node-1', name: 'SSH-Test', status: 'online', project: 'proj-1' };
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([node]));
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'enabled', expiry: Math.floor(Date.now() / 1000) + 3600 });
+    electronAPI.GetSessionStatus.mockResolvedValue({ active: true, expiresAt: new Date(Date.now() + 3600000).toISOString() });
+
+    // DisableSSH shows a confirm dialog
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(<App />);
+
+    const nodeItem = await screen.findByText('SSH-Test');
+    fireEvent.click(nodeItem);
+
+    await screen.findByText('EdgeView Session');
+
+    const disableSshChip = screen.getByTitle('SSH Enabled - Click to Disable');
+    fireEvent.click(disableSshChip);
+
+    await waitFor(() => {
+      expect(electronAPI.DisableSSH).toHaveBeenCalledWith('node-1');
+    });
+
+    window.confirm.mockRestore();
+  });
+
+  it('clicking VGA chip calls SetVGAEnabled', async () => {
+    const node = { id: 'node-1', name: 'VGA-Test', status: 'online', project: 'proj-1' };
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([node]));
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'enabled', vgaEnabled: false });
+    electronAPI.GetSessionStatus.mockResolvedValue({ active: true, expiresAt: new Date(Date.now() + 3600000).toISOString() });
+
+    render(<App />);
+
+    const nodeItem = await screen.findByText('VGA-Test');
+    fireEvent.click(nodeItem);
+
+    await screen.findByText('EdgeView Session');
+
+    const vgaChip = screen.getByTitle('VGA Disabled - Click to Enable');
+    fireEvent.click(vgaChip);
+
+    await waitFor(() => {
+      expect(electronAPI.SetVGAEnabled).toHaveBeenCalledWith('node-1', true);
+    });
+  });
+
+  it('clicking USB chip calls SetUSBEnabled', async () => {
+    const node = { id: 'node-1', name: 'USB-Test', status: 'online', project: 'proj-1' };
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([node]));
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'enabled', usbEnabled: false });
+    electronAPI.GetSessionStatus.mockResolvedValue({ active: true, expiresAt: new Date(Date.now() + 3600000).toISOString() });
+
+    render(<App />);
+
+    const nodeItem = await screen.findByText('USB-Test');
+    fireEvent.click(nodeItem);
+
+    await screen.findByText('EdgeView Session');
+
+    const usbChip = screen.getByTitle('USB Disabled - Click to Enable');
+    fireEvent.click(usbChip);
+
+    await waitFor(() => {
+      expect(electronAPI.SetUSBEnabled).toHaveBeenCalledWith('node-1', true);
+    });
+  });
+
+  it('clicking Console chip calls SetConsoleEnabled', async () => {
+    const node = { id: 'node-1', name: 'Console-Test', status: 'online', project: 'proj-1' };
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([node]));
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'enabled', consoleEnabled: false });
+    electronAPI.GetSessionStatus.mockResolvedValue({ active: true, expiresAt: new Date(Date.now() + 3600000).toISOString() });
+
+    render(<App />);
+
+    const nodeItem = await screen.findByText('Console-Test');
+    fireEvent.click(nodeItem);
+
+    await screen.findByText('EdgeView Session');
+
+    const consoleChip = screen.getByTitle('Console Disabled - Click to Enable');
+    fireEvent.click(consoleChip);
+
+    await waitFor(() => {
+      expect(electronAPI.SetConsoleEnabled).toHaveBeenCalledWith('node-1', true);
     });
   });
 });
