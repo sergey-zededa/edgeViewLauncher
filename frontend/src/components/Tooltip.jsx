@@ -1,12 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Copy, Check, ExternalLink } from 'lucide-react';
 import { openExternal } from '../tauriAPI';
 
-const Tooltip = ({ text, children, position = 'top', simple = false, helpUrl = null, helpLabel = null }) => {
+const Tooltip = ({ text, children, position = 'top', simple = false, helpUrl = null, helpLabel = null, usePortal = false }) => {
     const [isVisible, setIsVisible] = useState(false);
     const [adjustedPosition, setAdjustedPosition] = useState(position);
     const [offset, setOffset] = useState({ left: '50%', transform: 'translateX(-50%)' });
     const [copied, setCopied] = useState(false);
+    const [portalPos, setPortalPos] = useState(null);
     const tooltipRef = useRef(null);
     const containerRef = useRef(null);
     const timeoutRef = useRef(null);
@@ -95,6 +97,75 @@ const Tooltip = ({ text, children, position = 'top', simple = false, helpUrl = n
         }
     }, [isVisible, position, text]);
 
+    // Portal mode: position tooltip absolutely on the page using trigger's bounding rect
+    useEffect(() => {
+        if (!usePortal || !isVisible || !tooltipRef.current || !containerRef.current) return;
+        const container = containerRef.current.getBoundingClientRect();
+        const tooltip = tooltipRef.current.getBoundingClientRect();
+        const gap = 8;
+        let top, left;
+
+        if (adjustedPosition === 'bottom') {
+            top = container.bottom + gap;
+        } else {
+            top = container.top - tooltip.height - gap;
+        }
+        left = container.left + container.width / 2 - tooltip.width / 2;
+
+        // Clamp horizontally
+        const windowWidth = window.innerWidth;
+        if (left < 10) left = 10;
+        if (left + tooltip.width > windowWidth - 10) left = windowWidth - 10 - tooltip.width;
+
+        setPortalPos({ top, left });
+    }, [usePortal, isVisible, adjustedPosition]);
+
+    const portalStyle = usePortal ? {
+        position: 'fixed',
+        zIndex: 99999,
+        top: portalPos ? portalPos.top : -9999,
+        left: portalPos ? portalPos.left : -9999,
+        bottom: 'auto',
+        right: 'auto',
+        transform: 'none',
+        margin: 0,
+        visibility: portalPos ? 'visible' : 'hidden',
+    } : null;
+
+    const tooltipContent = (
+        <div
+            ref={tooltipRef}
+            className={`tooltip-content tooltip-${adjustedPosition} ${(simple && !helpUrl) ? 'tooltip-simple' : ''} ${helpUrl ? 'tooltip-with-help' : ''}`}
+            style={portalStyle || offset}
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
+        >
+            {showCopy && (
+                <div className="tooltip-header">
+                    <button className="tooltip-copy-btn" onClick={handleCopy} title="Copy full message">
+                        {copied ? <Check size={12} /> : <Copy size={12} />}
+                        {copied ? 'Copied' : 'Copy'}
+                    </button>
+                </div>
+            )}
+            <div className="tooltip-body">
+                {text}
+            </div>
+            {helpUrl && (
+                <div
+                    className="tooltip-help-link"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        openExternal(helpUrl);
+                    }}
+                >
+                    <ExternalLink size={11} />
+                    <span>{helpLabel || 'Learn more →'}</span>
+                </div>
+            )}
+        </div>
+    );
+
     return (
         <div
             ref={containerRef}
@@ -103,38 +174,9 @@ const Tooltip = ({ text, children, position = 'top', simple = false, helpUrl = n
             onMouseLeave={handleMouseLeave}
         >
             {children}
-            {isVisible && (
-                <div
-                    ref={tooltipRef}
-                    className={`tooltip-content tooltip-${adjustedPosition} ${(simple && !helpUrl) ? 'tooltip-simple' : ''} ${helpUrl ? 'tooltip-with-help' : ''}`}
-                    style={offset}
-                    onMouseEnter={handleMouseEnter}
-                    onMouseLeave={handleMouseLeave}
-                >
-                    {showCopy && (
-                        <div className="tooltip-header">
-                            <button className="tooltip-copy-btn" onClick={handleCopy} title="Copy full message">
-                                {copied ? <Check size={12} /> : <Copy size={12} />}
-                                {copied ? 'Copied' : 'Copy'}
-                            </button>
-                        </div>
-                    )}
-                    <div className="tooltip-body">
-                        {text}
-                    </div>
-                    {helpUrl && (
-                        <div
-                            className="tooltip-help-link"
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                openExternal(helpUrl);
-                            }}
-                        >
-                            <ExternalLink size={11} />
-                            <span>{helpLabel || 'Learn more →'}</span>
-                        </div>
-                    )}
-                </div>
+            {isVisible && (usePortal
+                ? createPortal(tooltipContent, document.body)
+                : tooltipContent
             )}
         </div>
     );

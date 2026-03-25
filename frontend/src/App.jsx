@@ -2434,7 +2434,7 @@ Do you want to try connecting anyway?`)) {
 
   const saveSettings = async (targetActiveCluster = null) => {
     setSettingsError(null); // Clear previous errors
-    setSaveStatus('Saving...');
+    setSaveStatus('saving');
 
     try {
       let clustersToSave = [...config.clusters];
@@ -2533,13 +2533,13 @@ Do you want to try connecting anyway?`)) {
         }
 
         if (active && active.apiToken) {
-          setSaveStatus('Settings saved successfully!');
+          setSaveStatus('success');
           setTimeout(() => {
             setSaveStatus('');
             // Don't close settings immediately to allow user to verify
           }, 1500);
         } else {
-          setSaveStatus('Settings saved successfully!');
+          setSaveStatus('success');
           setTimeout(() => {
             setSaveStatus('');
             setShowSettings(false);
@@ -2932,26 +2932,28 @@ Do you want to try connecting anyway?`)) {
                 {/* APP section pinned at bottom */}
                 <div style={{ flexShrink: 0, borderTop: '1px solid var(--border-color)', paddingTop: '12px', marginTop: '8px' }}>
                   <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>APP</div>
-                  <div
-                    onClick={toggleTheme}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      padding: '6px 8px',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                      transition: 'background 0.15s',
-                      gap: '8px',
-                      fontSize: '12px',
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                  >
-                    {theme === 'dark' ? <Moon size={14} /> : theme === 'light' ? <Sun size={14} /> : <Monitor size={14} />}
-                    <span style={{ color: 'var(--text-primary)' }}>
-                      {theme === 'dark' ? 'Dark' : theme === 'light' ? 'Light' : 'Auto'}
-                    </span>
-                  </div>
+                  <Tooltip text="Toggle theme" simple position="top" usePortal>
+                    <div
+                      onClick={toggleTheme}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        padding: '6px 8px',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        transition: 'background 0.15s',
+                        gap: '8px',
+                        fontSize: '12px',
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                    >
+                      {theme === 'dark' ? <Moon size={14} /> : theme === 'light' ? <Sun size={14} /> : <Monitor size={14} />}
+                      <span style={{ color: 'var(--text-primary)' }}>
+                        {theme === 'dark' ? 'Dark' : theme === 'light' ? 'Light' : 'Auto'}
+                      </span>
+                    </div>
+                  </Tooltip>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
                     <span>v<VersionDisplay /></span>
                     <button
@@ -3151,13 +3153,14 @@ Do you want to try connecting anyway?`)) {
                 )}
 
                 <div className="settings-actions">
-                  {saveStatus && (
-                    <span className={`status-text ${saveStatus.includes('Success') ? 'success' : 'muted'}`}>
-                      {saveStatus}
-                    </span>
-                  )}
-                  <button className="save-btn" onClick={() => saveSettings(null)}>
-                    <Save size={16} /> Save Changes
+                  <button
+                    className={`save-btn ${saveStatus === 'success' ? 'save-success' : ''}`}
+                    onClick={() => saveSettings(null)}
+                    disabled={saveStatus === 'saving'}
+                  >
+                    {saveStatus === 'success' ? <><Check size={16} /> Saved!</> :
+                     saveStatus === 'saving' ? <><Save size={16} /> Saving...</> :
+                     <><Save size={16} /> Save Changes</>}
                   </button>
                 </div>
               </div>

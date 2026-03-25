@@ -355,7 +355,7 @@ body {
 
 /* Settings Panel */
 .settings-panel {
-    padding: 20px;
+    padding: 16px 20px 20px;
     background: var(--bg-primary);
     height: 100%;
     overflow-y: auto;
@@ -369,8 +369,8 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 20px;
-    padding-bottom: 15px;
+    margin-bottom: 12px;
+    padding-bottom: 10px;
     border-bottom: 1px solid var(--border-color);
     padding-left: 100px;
     /* Clear traffic lights */
@@ -497,6 +497,11 @@ body {
     display: flex;
     align-items: center;
     gap: 6px;
+    transition: background 0.2s;
+}
+
+.save-btn.save-success {
+    background: var(--color-success);
 }
 
 /* Device Offline Banner */
@@ -1154,7 +1159,7 @@ body {
 
 /* Token Info Section */
 .token-info-section {
-    margin-top: 16px;
+    margin-top: 8px;
     padding: 12px;
     background: var(--bg-secondary);
     border-radius: 6px;
