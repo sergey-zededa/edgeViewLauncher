@@ -93,8 +93,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: v__VERSION__
-          releaseName: "EdgeView Launcher v__VERSION__"
+          tagName: ${{ github.ref_name }}
+          releaseName: "EdgeView Launcher ${{ github.ref_name }}"
           releaseBody: "See the assets to download this version and install."
           releaseDraft: true
           prerelease: false
@@ -191,8 +191,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: v__VERSION__
-          releaseName: "EdgeView Launcher v__VERSION__"
+          tagName: ${{ github.ref_name }}
+          releaseName: "EdgeView Launcher ${{ github.ref_name }}"
           releaseBody: "See the assets to download this version and install."
           releaseDraft: true
           args: --target x86_64-pc-windows-msvc
@@ -290,8 +290,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: v__VERSION__
-          releaseName: "EdgeView Launcher v__VERSION__"
+          tagName: ${{ github.ref_name }}
+          releaseName: "EdgeView Launcher ${{ github.ref_name }}"
           releaseBody: "See the assets to download this version and install."
           releaseDraft: true
           args: --target x86_64-unknown-linux-gnu
