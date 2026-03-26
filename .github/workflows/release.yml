@@ -54,6 +54,9 @@ jobs:
           VERSION=$(node -p "require('./package.json').version")
           GOOS=darwin GOARCH=amd64 go build -ldflags="-X 'main.Version=$VERSION'" -o src-tauri/binaries/edgeview-backend-x86_64-apple-darwin ./cmd/edgeview-backend
 
+      - name: Generate build info
+        run: node scripts/generate-build-info.js
+
       - name: Build Tauri app (macOS universal)
         uses: tauri-apps/tauri-action@v0
         env:
@@ -126,6 +129,9 @@ jobs:
           $env:GOARCH = "amd64"
           go build -ldflags="-X 'main.Version=$VERSION'" -o src-tauri\binaries\edgeview-backend-x86_64-pc-windows-msvc.exe ./cmd/edgeview-backend
 
+      - name: Generate build info
+        run: node scripts/generate-build-info.js
+
       - name: Build Tauri app (Windows)
         uses: tauri-apps/tauri-action@v0
         env:
@@ -188,6 +194,9 @@ jobs:
         run: |
           VERSION=$(node -p "require('./package.json').version")
           GOOS=linux GOARCH=amd64 go build -ldflags="-X 'main.Version=$VERSION'" -o src-tauri/binaries/edgeview-backend-x86_64-unknown-linux-gnu ./cmd/edgeview-backend
+
+      - name: Generate build info
+        run: node scripts/generate-build-info.js
 
       - name: Build Tauri app (Linux)
         uses: tauri-apps/tauri-action@v0
