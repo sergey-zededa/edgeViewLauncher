@@ -351,9 +351,11 @@ jobs:
         uses: ncipollo/release-action@v1
         with:
           artifacts: |
-            artifacts/macos/**/*
-            artifacts/windows-x64/**/*
-            artifacts/linux-x64/**/*
+            artifacts/macos/macos/*
+            artifacts/macos/dmg/*
+            artifacts/windows-x64/*
+            artifacts/linux-x64/appimage/*
+            artifacts/linux-x64/deb/*
           generateReleaseNotes: true
           draft: false
           prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-alpha') || contains(github.ref, '-rc') }}
