@@ -64,7 +64,6 @@ jobs:
         run: rustup target add x86_64-apple-darwin
 
       - name: Configure Apple code signing
-        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
         env:
           CERT: ${{ secrets.APPLE_CERTIFICATE }}
           CERT_PASS: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -73,12 +72,19 @@ jobs:
           A_PASS: ${{ secrets.APPLE_PASSWORD }}
           A_TEAM: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          echo "APPLE_CERTIFICATE=${CERT}" >> $GITHUB_ENV
-          echo "APPLE_CERTIFICATE_PASSWORD=${CERT_PASS}" >> $GITHUB_ENV
-          echo "APPLE_SIGNING_IDENTITY=${SIGN_ID}" >> $GITHUB_ENV
-          echo "APPLE_ID=${A_ID}" >> $GITHUB_ENV
-          echo "APPLE_PASSWORD=${A_PASS}" >> $GITHUB_ENV
-          echo "APPLE_TEAM_ID=${A_TEAM}" >> $GITHUB_ENV
+          if [ -n "$CERT" ]; then
+            echo "APPLE_CERTIFICATE<<EOCERT" >> $GITHUB_ENV
+            echo "$CERT" >> $GITHUB_ENV
+            echo "EOCERT" >> $GITHUB_ENV
+            echo "APPLE_CERTIFICATE_PASSWORD=$CERT_PASS" >> $GITHUB_ENV
+            echo "APPLE_SIGNING_IDENTITY=$SIGN_ID" >> $GITHUB_ENV
+            echo "APPLE_ID=$A_ID" >> $GITHUB_ENV
+            echo "APPLE_PASSWORD=$A_PASS" >> $GITHUB_ENV
+            echo "APPLE_TEAM_ID=$A_TEAM" >> $GITHUB_ENV
+            echo "Apple code signing configured"
+          else
+            echo "Apple code signing skipped (no certificate configured)"
+          fi
 
       - name: Build Tauri app (macOS universal)
         uses: tauri-apps/tauri-action@v0
