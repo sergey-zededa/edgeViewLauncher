@@ -132,6 +132,7 @@ jobs:
           name: macos
           path: |
             src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
             src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
             src-tauri/target/universal-apple-darwin/release/bundle/macos/latest.json
             src-tauri/target/universal-apple-darwin/release/bundle/macos/latest-mac.yml
@@ -230,6 +231,8 @@ jobs:
           name: windows-x64
           path: |
             src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.nsis.zip
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.nsis.zip.sig
             src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/latest.json
             src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/latest.yml
           retention-days: 5
@@ -320,6 +323,9 @@ jobs:
           name: linux-x64
           path: |
             src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
+            src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage.sig
+            src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage.tar.gz
+            src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage.tar.gz.sig
             src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
             src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/latest.json
             src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/latest-linux.yml
@@ -345,9 +351,9 @@ jobs:
         uses: ncipollo/release-action@v1
         with:
           artifacts: |
-            artifacts/macos/*
-            artifacts/windows-x64/*
-            artifacts/linux-x64/*
+            artifacts/macos/**/*
+            artifacts/windows-x64/**/*
+            artifacts/linux-x64/**/*
           generateReleaseNotes: true
           draft: false
           prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-alpha') || contains(github.ref, '-rc') }}
