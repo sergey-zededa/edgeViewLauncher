@@ -51,6 +51,11 @@
     color: white;
 }
 
+.update-macos-note {
+    font-size: 13px;
+    opacity: 0.9;
+}
+
 .update-banner-message.error {
     color: #fff;
 }

@@ -263,3 +263,146 @@ describe('UpdateBanner', () => {
         expect(screen.getByText(/Unknown error/)).toBeInTheDocument();
     });
 });
+
+describe('UpdateBanner macOS behavior', () => {
+    // The isMacOS constant is evaluated at module load time from navigator.platform.
+    // In jsdom (test env), navigator.platform defaults to '' so isMacOS is false.
+    // We need to re-import the module with a mocked navigator.platform.
+
+    it('should show manual download message on macOS when update available', async () => {
+        // Set navigator.platform before importing the module
+        Object.defineProperty(navigator, 'platform', {
+            value: 'MacIntel',
+            writable: true,
+            configurable: true,
+        });
+
+        // Re-import the module so it picks up the new platform
+        vi.resetModules();
+        const { default: MacUpdateBanner } = await import('./UpdateBanner');
+
+        const updateState = {
+            status: 'available',
+            version: '2.0.0',
+            downloadProgress: 0,
+            error: null,
+        };
+
+        render(
+            <MacUpdateBanner
+                updateState={updateState}
+                onDownload={vi.fn()}
+                onInstall={vi.fn()}
+                onDismiss={vi.fn()}
+            />
+        );
+
+        expect(screen.getByText(/Auto-updates are temporarily unavailable on macOS/)).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /Download from GitHub/i })).toBeInTheDocument();
+        // Should NOT show the normal Download button
+        expect(screen.queryByRole('button', { name: /^Download$/i })).not.toBeInTheDocument();
+
+        // Restore
+        Object.defineProperty(navigator, 'platform', {
+            value: '',
+            writable: true,
+            configurable: true,
+        });
+    });
+
+    it('should show manual download message on macOS for downloading state', async () => {
+        Object.defineProperty(navigator, 'platform', {
+            value: 'MacIntel',
+            writable: true,
+            configurable: true,
+        });
+
+        vi.resetModules();
+        const { default: MacUpdateBanner } = await import('./UpdateBanner');
+
+        const updateState = {
+            status: 'downloading',
+            version: '2.0.0',
+            downloadProgress: 50,
+            error: null,
+        };
+
+        render(
+            <MacUpdateBanner
+                updateState={updateState}
+                onDownload={vi.fn()}
+                onInstall={vi.fn()}
+                onDismiss={vi.fn()}
+            />
+        );
+
+        // Should show manual download, not the progress bar
+        expect(screen.getByText(/Auto-updates are temporarily unavailable on macOS/)).toBeInTheDocument();
+        expect(screen.queryByText(/Downloading update/)).not.toBeInTheDocument();
+
+        Object.defineProperty(navigator, 'platform', {
+            value: '',
+            writable: true,
+            configurable: true,
+        });
+    });
+
+    it('should show manual download message on macOS for downloaded state', async () => {
+        Object.defineProperty(navigator, 'platform', {
+            value: 'MacIntel',
+            writable: true,
+            configurable: true,
+        });
+
+        vi.resetModules();
+        const { default: MacUpdateBanner } = await import('./UpdateBanner');
+
+        const updateState = {
+            status: 'downloaded',
+            version: '2.0.0',
+            downloadProgress: 100,
+            error: null,
+        };
+
+        render(
+            <MacUpdateBanner
+                updateState={updateState}
+                onDownload={vi.fn()}
+                onInstall={vi.fn()}
+                onDismiss={vi.fn()}
+            />
+        );
+
+        // Should show manual download, not Restart & Install
+        expect(screen.getByText(/Auto-updates are temporarily unavailable on macOS/)).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /Restart & Install/i })).not.toBeInTheDocument();
+
+        Object.defineProperty(navigator, 'platform', {
+            value: '',
+            writable: true,
+            configurable: true,
+        });
+    });
+
+    it('should show normal download button on non-macOS', () => {
+        // navigator.platform is '' in jsdom (not Mac), so the default import works
+        const updateState = {
+            status: 'available',
+            version: '2.0.0',
+            downloadProgress: 0,
+            error: null,
+        };
+
+        render(
+            <UpdateBanner
+                updateState={updateState}
+                onDownload={vi.fn()}
+                onInstall={vi.fn()}
+                onDismiss={vi.fn()}
+            />
+        );
+
+        expect(screen.getByRole('button', { name: /Download/i })).toBeInTheDocument();
+        expect(screen.queryByText(/Auto-updates are temporarily unavailable/)).not.toBeInTheDocument();
+    });
+});
