@@ -14,6 +14,7 @@
     "build:backend:linux": "VERSION=$(node -p \"require('./package.json').version\") && GOOS=linux GOARCH=amd64 go build -ldflags=\"-X main.Version=$VERSION\" -o src-tauri/binaries/edgeview-backend-x86_64-unknown-linux-gnu ./cmd/edgeview-backend",
     "build:windows": "npm run build:backend:windows && tauri build --target x86_64-pc-windows-msvc",
     "build:linux": "npm run build:backend:linux && tauri build --target x86_64-unknown-linux-gnu",
+    "tauri": "tauri",
     "test": "cd frontend && npm test"
   },
   "keywords": [],
