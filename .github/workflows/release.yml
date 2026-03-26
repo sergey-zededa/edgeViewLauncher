@@ -126,6 +126,21 @@ jobs:
           releaseDate: '${DATE}'
           EOYML
 
+      - name: Save macOS updater signature
+        run: |
+          BUNDLE_DIR="src-tauri/target/universal-apple-darwin/release/bundle/macos"
+          SIG_FILE=$(ls "${BUNDLE_DIR}"/*.app.tar.gz.sig 2>/dev/null | head -1)
+          if [ -n "$SIG_FILE" ]; then
+            mkdir -p updater-sigs
+            cp "$SIG_FILE" updater-sigs/macos.sig
+            # Save the actual asset filename (GitHub replaces spaces with dots)
+            ARCHIVE=$(ls "${BUNDLE_DIR}"/*.app.tar.gz 2>/dev/null | head -1)
+            basename "$ARCHIVE" | tr ' ' '.' > updater-sigs/macos-filename.txt
+            echo "Saved macOS updater signature"
+          else
+            echo "WARNING: No macOS .app.tar.gz.sig found"
+          fi
+
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -134,9 +149,10 @@ jobs:
             src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz
             src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
             src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
-            src-tauri/target/universal-apple-darwin/release/bundle/macos/latest.json
             src-tauri/target/universal-apple-darwin/release/bundle/macos/latest-mac.yml
             src-tauri/target/universal-apple-darwin/release/bundle/macos/EdgeViewLauncher-*-mac.zip
+            updater-sigs/macos.sig
+            updater-sigs/macos-filename.txt
           retention-days: 5
 
   build-windows:
@@ -225,6 +241,21 @@ jobs:
           releaseDate: '$DATE'
           "@ | Set-Content -Path "$NSIS_DIR/latest.yml" -Encoding utf8
 
+      - name: Save Windows updater signature
+        shell: pwsh
+        run: |
+          $NSIS_DIR = "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis"
+          $SIG = Get-ChildItem "$NSIS_DIR/*.nsis.zip.sig" | Select-Object -First 1
+          if ($SIG) {
+            New-Item -ItemType Directory -Force -Path updater-sigs | Out-Null
+            Copy-Item $SIG.FullName "updater-sigs/windows.sig"
+            $ARCHIVE = Get-ChildItem "$NSIS_DIR/*.nsis.zip" | Select-Object -First 1
+            $ARCHIVE.Name.Replace(' ', '.') | Set-Content "updater-sigs/windows-filename.txt" -NoNewline
+            Write-Output "Saved Windows updater signature"
+          } else {
+            Write-Output "WARNING: No Windows .nsis.zip.sig found"
+          }
+
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -233,8 +264,9 @@ jobs:
             src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
             src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.nsis.zip
             src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.nsis.zip.sig
-            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/latest.json
             src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/latest.yml
+            updater-sigs/windows.sig
+            updater-sigs/windows-filename.txt
           retention-days: 5
 
   build-linux:
@@ -317,18 +349,32 @@ jobs:
           releaseDate: '${DATE}'
           EOYML
 
+      - name: Save Linux updater signature
+        run: |
+          APPIMAGE_DIR="src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage"
+          SIG_FILE=$(ls "${APPIMAGE_DIR}"/*.AppImage.tar.gz.sig 2>/dev/null | head -1)
+          if [ -n "$SIG_FILE" ]; then
+            mkdir -p updater-sigs
+            cp "$SIG_FILE" updater-sigs/linux.sig
+            ARCHIVE=$(ls "${APPIMAGE_DIR}"/*.AppImage.tar.gz 2>/dev/null | head -1)
+            basename "$ARCHIVE" | tr ' ' '.' > updater-sigs/linux-filename.txt
+            echo "Saved Linux updater signature"
+          else
+            echo "WARNING: No Linux .AppImage.tar.gz.sig found"
+          fi
+
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
           name: linux-x64
           path: |
             src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
-            src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage.sig
             src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage.tar.gz
             src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage.tar.gz.sig
             src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
-            src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/latest.json
             src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/latest-linux.yml
+            updater-sigs/linux.sig
+            updater-sigs/linux-filename.txt
           retention-days: 5
 
   release:
@@ -347,15 +393,85 @@ jobs:
       - name: Display structure of downloaded files
         run: ls -R artifacts
 
+      - name: Generate latest.json for Tauri updater
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="${{ github.ref_name }}"
+          REPO="sergey-zededa/edgeViewLauncher"
+          DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          # Read per-platform signatures and filenames into files for Node
+          echo -n "" > /tmp/mac_sig.txt
+          echo -n "" > /tmp/mac_url.txt
+          echo -n "" > /tmp/win_sig.txt
+          echo -n "" > /tmp/win_url.txt
+          echo -n "" > /tmp/linux_sig.txt
+          echo -n "" > /tmp/linux_url.txt
+
+          if [ -f artifacts/macos/updater-sigs/macos.sig ]; then
+            cp artifacts/macos/updater-sigs/macos.sig /tmp/mac_sig.txt
+            MAC_FILENAME=$(cat artifacts/macos/updater-sigs/macos-filename.txt)
+            echo -n "https://github.com/${REPO}/releases/download/${TAG}/${MAC_FILENAME}" > /tmp/mac_url.txt
+            echo "macOS: ${MAC_FILENAME}"
+          fi
+
+          if [ -f artifacts/windows-x64/updater-sigs/windows.sig ]; then
+            cp artifacts/windows-x64/updater-sigs/windows.sig /tmp/win_sig.txt
+            WIN_FILENAME=$(cat artifacts/windows-x64/updater-sigs/windows-filename.txt)
+            echo -n "https://github.com/${REPO}/releases/download/${TAG}/${WIN_FILENAME}" > /tmp/win_url.txt
+            echo "Windows: ${WIN_FILENAME}"
+          fi
+
+          if [ -f artifacts/linux-x64/updater-sigs/linux.sig ]; then
+            cp artifacts/linux-x64/updater-sigs/linux.sig /tmp/linux_sig.txt
+            LINUX_FILENAME=$(cat artifacts/linux-x64/updater-sigs/linux-filename.txt)
+            echo -n "https://github.com/${REPO}/releases/download/${TAG}/${LINUX_FILENAME}" > /tmp/linux_url.txt
+            echo "Linux: ${LINUX_FILENAME}"
+          fi
+
+          # Build latest.json using node for proper JSON encoding
+          node -e "
+            const fs = require('fs');
+            const read = (f) => fs.readFileSync(f, 'utf8').trim();
+            const json = {
+              version: '${VERSION}',
+              notes: 'See release notes on GitHub',
+              pub_date: '${DATE}',
+              platforms: {}
+            };
+            const macSig = read('/tmp/mac_sig.txt');
+            const macUrl = read('/tmp/mac_url.txt');
+            const winSig = read('/tmp/win_sig.txt');
+            const winUrl = read('/tmp/win_url.txt');
+            const linuxSig = read('/tmp/linux_sig.txt');
+            const linuxUrl = read('/tmp/linux_url.txt');
+            if (macSig && macUrl) {
+              json.platforms['darwin-universal'] = { signature: macSig, url: macUrl };
+              json.platforms['darwin-aarch64'] = { signature: macSig, url: macUrl };
+              json.platforms['darwin-x86_64'] = { signature: macSig, url: macUrl };
+            }
+            if (winSig && winUrl) {
+              json.platforms['windows-x86_64'] = { signature: winSig, url: winUrl };
+            }
+            if (linuxSig && linuxUrl) {
+              json.platforms['linux-x86_64'] = { signature: linuxSig, url: linuxUrl };
+            }
+            console.log(JSON.stringify(json, null, 2));
+          " > artifacts/latest.json
+          echo "Generated latest.json:"
+          cat artifacts/latest.json
+
       - name: Create GitHub Release
         uses: ncipollo/release-action@v1
         with:
           artifacts: |
             artifacts/macos/macos/*
             artifacts/macos/dmg/*
+            artifacts/windows-x64/nsis/*
             artifacts/windows-x64/*
             artifacts/linux-x64/appimage/*
             artifacts/linux-x64/deb/*
+            artifacts/latest.json
           generateReleaseNotes: true
           draft: false
           prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-alpha') || contains(github.ref, '-rc') }}
