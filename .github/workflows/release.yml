@@ -54,6 +54,9 @@ jobs:
           VERSION=$(node -p "require('./package.json').version")
           GOOS=darwin GOARCH=amd64 go build -ldflags="-X 'main.Version=$VERSION'" -o src-tauri/binaries/edgeview-backend-x86_64-apple-darwin ./cmd/edgeview-backend
 
+      - name: Create universal Go backend binary
+        run: lipo -create -output src-tauri/binaries/edgeview-backend-universal-apple-darwin src-tauri/binaries/edgeview-backend-aarch64-apple-darwin src-tauri/binaries/edgeview-backend-x86_64-apple-darwin
+
       - name: Generate build info
         run: node scripts/generate-build-info.js
 
