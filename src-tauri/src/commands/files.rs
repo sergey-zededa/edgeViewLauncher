@@ -15,8 +15,10 @@ pub async fn save_collected_file(
     state: State<'_, AppState>,
     job_id: String,
     filename: String,
+    endpoint: Option<String>,
 ) -> Result<Value, String> {
     let port = state.wait_for_port(5_000).await?;
+    let api_path = endpoint.unwrap_or_else(|| "/api/collect-info/download".to_string());
 
     // Show native save dialog
     let (tx, rx) = tokio::sync::oneshot::channel::<Option<FilePath>>();
@@ -38,7 +40,7 @@ pub async fn save_collected_file(
     };
 
     // Stream-download from Go backend
-    let url = format!("http://localhost:{port}/api/collect-info/download?jobId={job_id}");
+    let url = format!("http://localhost:{port}{api_path}?jobId={job_id}");
     let response = reqwest::Client::new()
         .get(&url)
         .send()

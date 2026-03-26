@@ -142,6 +142,17 @@ export const DownloadCollectInfo = (jobId) =>
 export const SaveCollectInfo = (jobId, filename) =>
     invoke('save_collected_file', { jobId, filename });
 
+// ── Compose Diagnostics ──────────────────────────────────────────────────────
+
+export const StartComposeDiagnostics = (nodeId, appName, appIP, username, password) =>
+    apiCall('/api/compose-diagnostics/start', 'POST', { nodeId, appName, appIP, username, password }).then(r => r?.data);
+
+export const GetComposeDiagnosticsStatus = (jobId) =>
+    apiCall(`/api/compose-diagnostics/status?jobId=${jobId}`, 'GET').then(r => r?.data);
+
+export const SaveComposeDiagnostics = (jobId, filename) =>
+    invoke('save_collected_file', { jobId, filename, endpoint: '/api/compose-diagnostics/download' });
+
 // ── Secure Storage ────────────────────────────────────────────────────────────
 
 export const SecureStorageStatus = () =>

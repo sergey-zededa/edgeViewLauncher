@@ -67,19 +67,22 @@ type Tunnel struct {
 }
 
 type Manager struct {
-	sessions    map[string]*CachedSession  // key is nodeID
-	tunnels     map[string]*Tunnel         // key is tunnel ID
-	collectJobs map[string]*CollectInfoJob // key is job ID
-	mu          sync.RWMutex
-	tunnelMu    sync.RWMutex
-	collectMu   sync.RWMutex
+	sessions        map[string]*CachedSession           // key is nodeID
+	tunnels         map[string]*Tunnel                  // key is tunnel ID
+	collectJobs     map[string]*CollectInfoJob          // key is job ID
+	composeDiagJobs map[string]*ComposeDiagnosticsJob   // key is job ID
+	mu              sync.RWMutex
+	tunnelMu        sync.RWMutex
+	collectMu       sync.RWMutex
+	composeDiagMu   sync.RWMutex
 }
 
 func NewManager() *Manager {
 	return &Manager{
-		sessions:    make(map[string]*CachedSession),
-		tunnels:     make(map[string]*Tunnel),
-		collectJobs: make(map[string]*CollectInfoJob),
+		sessions:        make(map[string]*CachedSession),
+		tunnels:         make(map[string]*Tunnel),
+		collectJobs:     make(map[string]*CollectInfoJob),
+		composeDiagJobs: make(map[string]*ComposeDiagnosticsJob),
 	}
 }
 

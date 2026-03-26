@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, EnableExternalPolicy, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo, CheckForUpdates, openTerminalWindow, openVncWindow, openExternalTerminal, getElectronAppInfo, startContainerShell, getSystemTimeFormat, openExternal, InjectSecureConfig, GetDeviceCache, RefreshDeviceCache } from './tauriAPI';
+import { ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, EnableExternalPolicy, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo, StartComposeDiagnostics, GetComposeDiagnosticsStatus, SaveComposeDiagnostics, CheckForUpdates, openTerminalWindow, openVncWindow, openExternalTerminal, getElectronAppInfo, startContainerShell, getSystemTimeFormat, openExternal, InjectSecureConfig, GetDeviceCache, RefreshDeviceCache } from './tauriAPI';
 import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers, Shield, Moon, Sun, HelpCircle } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
 import Tooltip from './components/Tooltip';
@@ -748,6 +748,10 @@ function App() {
   // Collect Info State (removed modal state, kept only for tracking job if needed, but logic is moved to global status)
   // Actually we need to track jobId to poll status.
   const collectInfoJobRef = useRef(null);
+
+  // Compose Diagnostics State
+  const composeDiagJobRef = useRef(null);
+  const [diagPrompt, setDiagPrompt] = useState(null); // { app, idx }
 
   const handleTokenPaste = (token) => {
     setEditingCluster({ ...editingCluster, apiToken: token });
@@ -2313,6 +2317,160 @@ Do you want to try connecting anyway?`)) {
     // Deprecated
   };
 
+  // ── Compose Diagnostics ────────────────────────────────────────────────────
+
+  const resolveComposeRuntimeIP = (app) => {
+    const servicesList = Array.isArray(services) ? services : (services?.services || []);
+
+    // Prefer the app's own internal (airgapped) IP
+    if (app.internalIps && app.internalIps.length > 0) {
+      return app.internalIps[0];
+    }
+
+    const appExternalIps = app.ips || [];
+
+    // Find sibling app sharing an external IP that has internalIps
+    const runtimeApp = servicesList.find(otherApp => {
+      if (otherApp.id === app.id) return false;
+      const otherIps = otherApp.ips || [];
+      const hasSharedIp = otherIps.some(ip => appExternalIps.includes(ip));
+      const hasInternalIps = otherApp.internalIps && otherApp.internalIps.length > 0;
+      return hasSharedIp && hasInternalIps;
+    });
+
+    if (runtimeApp) {
+      return runtimeApp.internalIps[0];
+    }
+
+    // Fallback: sibling with a non-shared IP
+    const fallbackApp = servicesList.find(otherApp => {
+      if (otherApp.id === app.id) return false;
+      const otherIps = otherApp.ips || [];
+      return otherIps.some(ip => appExternalIps.includes(ip));
+    });
+
+    if (fallbackApp) {
+      if (fallbackApp.internalIps && fallbackApp.internalIps.length > 0) {
+        return fallbackApp.internalIps[0];
+      }
+      const otherIps = fallbackApp.ips || [];
+      const uniqueIps = otherIps.filter(ip => !appExternalIps.includes(ip));
+      if (uniqueIps.length > 0) {
+        return uniqueIps[0];
+      }
+    }
+
+    return null;
+  };
+
+  const openDiagnosticsPrompt = (app, idx) => {
+    const savedUser = getSavedSshUsername(app.name);
+    setDiagPrompt({ app, idx, username: savedUser || 'root', password: '' });
+  };
+
+  const handleComposeDiagnostics = async (app, username, password) => {
+    if (!selectedNode) return;
+    setDiagPrompt(null);
+
+    // Resolve the airgapped/internal IP for SSH access
+    const appIP = resolveComposeRuntimeIP(app);
+    if (!appIP) {
+      setGlobalStatus({ type: 'error', message: 'Could not determine the runtime internal IP. Ensure the device has an airgapped network configured.' });
+      addLog('Failed to resolve compose runtime internal IP for diagnostics', 'error');
+      return;
+    }
+
+    addLog(`Resolved compose runtime IP: ${appIP}`, 'info');
+
+    // Save username for future use
+    if (username && username !== 'root') {
+      saveSshUsername(app.name, username);
+    }
+
+    composeDiagJobRef.current = null;
+    setGlobalStatus({ type: 'loading', message: `Starting diagnostics collection for ${app.name}...` });
+
+    try {
+      addLog(`Starting compose diagnostics for ${app.name} (${appIP})...`);
+      const response = await StartComposeDiagnostics(selectedNode.id, app.name, appIP, username, password);
+      const jobId = response.jobId;
+      composeDiagJobRef.current = jobId;
+
+      setGlobalStatus({ type: 'loading', message: 'Connecting to compose runtime...' });
+
+      const pollInterval = setInterval(async () => {
+        if (!composeDiagJobRef.current || composeDiagJobRef.current !== jobId) {
+          clearInterval(pollInterval);
+          return;
+        }
+
+        try {
+          const status = await GetComposeDiagnosticsStatus(jobId);
+
+          if (status.status === 'connecting') {
+            setGlobalStatus({ type: 'loading', message: 'Establishing SSH tunnel to compose runtime...' });
+          } else if (status.status === 'running-script') {
+            setGlobalStatus({ type: 'loading', message: 'Running diagnostics script (this may take a few minutes)...' });
+          } else if (status.status === 'downloading') {
+            const progressMB = (status.progress / 1024 / 1024).toFixed(1);
+            const totalMB = (status.totalSize / 1024 / 1024).toFixed(1);
+            const percent = status.totalSize > 0 ? Math.round((status.progress / status.totalSize) * 100) : 0;
+            setGlobalStatus({ type: 'loading', message: `Downloading diagnostics: ${progressMB} MB / ${totalMB} MB (${percent}%)` });
+          } else if (status.status === 'completed') {
+            clearInterval(pollInterval);
+            addLog('Compose diagnostics collection completed', 'success');
+            setGlobalStatus({ type: 'success', message: 'Diagnostics collected. Saving file...' });
+
+            try {
+              const saveResult = await SaveComposeDiagnostics(jobId, status.filename);
+              if (saveResult.success) {
+                setGlobalStatus({ type: 'success', message: `File saved to ${saveResult.filePath}` });
+                addLog(`Saved diagnostics to ${saveResult.filePath}`, 'success');
+                setTimeout(() => setGlobalStatus(null), 5000);
+              } else if (saveResult.canceled) {
+                setGlobalStatus(null);
+                addLog('File save cancelled by user', 'info');
+              } else {
+                setGlobalStatus({ type: 'error', message: `Failed to save: ${saveResult.error}` });
+                addLog(`Failed to save diagnostics: ${saveResult.error}`, 'error');
+              }
+            } catch (saveErr) {
+              setGlobalStatus({ type: 'error', message: `Failed to save: ${saveErr.message}` });
+              addLog(`Failed to save diagnostics: ${saveErr.message}`, 'error');
+            }
+
+            if (composeDiagJobRef.current === jobId) {
+              composeDiagJobRef.current = null;
+            }
+          } else if (status.status === 'failed') {
+            clearInterval(pollInterval);
+            const userMsg = extractErrorMessage(status.error);
+            addLog(`Compose diagnostics failed: ${userMsg}`, 'error');
+            setGlobalStatus({ type: 'error', message: `Diagnostics failed: ${userMsg}` });
+            if (composeDiagJobRef.current === jobId) {
+              composeDiagJobRef.current = null;
+            }
+          }
+        } catch (err) {
+          console.error('Failed to poll compose diagnostics:', err);
+          const userMessage = extractErrorMessage(err);
+          addLog(`Diagnostics polling failed: ${userMessage}`, 'error');
+          setGlobalStatus({ type: 'error', message: `Polling failed: ${userMessage}` });
+          clearInterval(pollInterval);
+          if (composeDiagJobRef.current === jobId) {
+            composeDiagJobRef.current = null;
+          }
+        }
+      }, 1000);
+
+    } catch (err) {
+      console.error('Failed to start compose diagnostics:', err);
+      const userMessage = extractErrorMessage(err);
+      setGlobalStatus({ type: 'error', message: `Failed to start diagnostics: ${userMessage}` });
+      addLog(`Failed to start compose diagnostics: ${userMessage}`, 'error');
+    }
+  };
+
   const handleBack = () => {
     setSelectedNode(null);
     setServices(null);
@@ -3863,8 +4021,15 @@ Do you want to try connecting anyway?`)) {
 
                     rawList.forEach(app => {
                       if (!childrenIds.has(app.id)) {
-                        displayList.push({ ...app, isChild: false, isRuntime: parentsMap.has(app.id) });
-                        if (parentsMap.has(app.id)) {
+                        const isRuntime = parentsMap.has(app.id);
+                        // Detect compose runtime v2+ from the runtime app's appVersion (from ZEDEDA API swInfo)
+                        let composeV2Plus = false;
+                        if (isRuntime && app.appVersion) {
+                          const majorMatch = app.appVersion.match(/^(\d+)\./);
+                          composeV2Plus = majorMatch ? parseInt(majorMatch[1], 10) >= 2 : false;
+                        }
+                        displayList.push({ ...app, isChild: false, isRuntime, composeV2Plus });
+                        if (isRuntime) {
                           const children = parentsMap.get(app.id);
                           children.forEach((child, index) => {
                             displayList.push({ ...child, isChild: true, isLastChild: index === children.length - 1 });
@@ -4105,6 +4270,107 @@ Do you want to try connecting anyway?`)) {
                                   </div>
                                 </div>
                                 <div className="service-actions">
+                                  {app.isRuntime && app.composeV2Plus && (
+                                    <div style={{ position: 'relative', display: 'inline-block' }}>
+                                      <button
+                                        className="connect-btn secondary"
+                                        onClick={() => {
+                                          if (diagPrompt && diagPrompt.idx === idx) {
+                                            setDiagPrompt(null);
+                                          } else {
+                                            openDiagnosticsPrompt(app, idx);
+                                          }
+                                        }}
+                                        disabled={!isSessionConnected || (app.status !== 'RUN_STATE_ONLINE' && app.status !== 'ONLINE') || !!composeDiagJobRef.current}
+                                        style={{ marginRight: '8px' }}
+                                        title="Collect runtime diagnostics bundle from compose VM"
+                                      >
+                                        <Download size={14} /> Diagnostics
+                                      </button>
+                                      {diagPrompt && diagPrompt.idx === idx && (
+                                        <div
+                                          className="ssh-popover"
+                                          onClick={(e) => e.stopPropagation()}
+                                          style={{
+                                            position: 'absolute',
+                                            top: '100%',
+                                            right: '0',
+                                            marginTop: '4px',
+                                            backgroundColor: 'var(--bg-panel)',
+                                            border: '1px solid var(--border-subtle)',
+                                            borderRadius: '6px',
+                                            padding: '8px',
+                                            boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+                                            zIndex: 1000,
+                                            minWidth: '220px',
+                                            textAlign: 'left'
+                                          }}
+                                        >
+                                          <div style={{ marginBottom: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                                            SSH Credentials
+                                          </div>
+                                          <input
+                                            type="text"
+                                            value={diagPrompt.username}
+                                            onChange={e => setDiagPrompt(prev => ({ ...prev, username: e.target.value }))}
+                                            placeholder="Username (e.g. ubuntu)"
+                                            autoFocus
+                                            onKeyDown={(e) => {
+                                              if (e.key === 'Enter') {
+                                                e.preventDefault();
+                                                document.getElementById('diag-password-input')?.focus();
+                                              } else if (e.key === 'Escape') {
+                                                setDiagPrompt(null);
+                                              }
+                                            }}
+                                            style={{
+                                              width: '100%',
+                                              boxSizing: 'border-box',
+                                              padding: '6px 8px',
+                                              backgroundColor: 'var(--bg-surface)',
+                                              border: '1px solid var(--border-subtle)',
+                                              borderRadius: '4px',
+                                              color: 'var(--text-primary)',
+                                              fontSize: '13px',
+                                              marginBottom: '8px'
+                                            }}
+                                          />
+                                          <input
+                                            id="diag-password-input"
+                                            type="password"
+                                            value={diagPrompt.password}
+                                            onChange={e => setDiagPrompt(prev => ({ ...prev, password: e.target.value }))}
+                                            placeholder="Password"
+                                            onKeyDown={(e) => {
+                                              if (e.key === 'Enter') {
+                                                handleComposeDiagnostics(diagPrompt.app, diagPrompt.username, diagPrompt.password);
+                                              } else if (e.key === 'Escape') {
+                                                setDiagPrompt(null);
+                                              }
+                                            }}
+                                            style={{
+                                              width: '100%',
+                                              boxSizing: 'border-box',
+                                              padding: '6px 8px',
+                                              backgroundColor: 'var(--bg-surface)',
+                                              border: '1px solid var(--border-subtle)',
+                                              borderRadius: '4px',
+                                              color: 'var(--text-primary)',
+                                              fontSize: '13px',
+                                              marginBottom: '12px'
+                                            }}
+                                          />
+                                          <button
+                                            className="connect-btn primary"
+                                            style={{ width: '100%', justifyContent: 'center' }}
+                                            onClick={() => handleComposeDiagnostics(diagPrompt.app, diagPrompt.username, diagPrompt.password)}
+                                          >
+                                            Collect
+                                          </button>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
                                   {app.appType === 'APP_TYPE_DOCKER_COMPOSE' && app.containers && app.containers.length > 0 && (
                                     <button
                                       className={`connect-btn ${expandedServiceContainers[idx] ? 'active' : 'secondary'}`}

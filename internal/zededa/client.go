@@ -45,13 +45,15 @@ type Device struct {
 }
 
 type AppInstance struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	AppType    string `json:"appType"`
-	RunState   string `json:"runState"`
-	AdminState string `json:"adminState"` // Add adminState
-	ProjectID  string `json:"projectId"`
-	DeviceID   string `json:"deviceId"` // Device UUID this app belongs to
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	AppType        string   `json:"appType"`
+	RunState       string   `json:"runState"`
+	AdminState     string   `json:"adminState"`
+	ProjectID      string   `json:"projectId"`
+	DeviceID       string   `json:"deviceId"`
+	DeploymentType string   `json:"deploymentType"`
+	SwInfo         []SWInfo `json:"swInfo,omitempty"`
 }
 
 type AppInstanceListResponse struct {
@@ -303,18 +305,24 @@ type ContainerInfo struct {
 
 // AppInstanceConfig matches the configuration schema for an edge app instance
 type AppInstanceConfig struct {
-	ID            string                   `json:"id"`
-	Name          string                   `json:"name"`
-	Activate      bool                     `json:"activate"`
-	VMInfo        VMInfo                   `json:"vminfo,omitempty"`
-	Interfaces    []map[string]interface{} `json:"interfaces,omitempty"`
-	DockerCompose string                   `json:"dockerComposeYamlText,omitempty"`
+	ID                 string                   `json:"id"`
+	Name               string                   `json:"name"`
+	Activate           bool                     `json:"activate"`
+	VMInfo             VMInfo                   `json:"vminfo,omitempty"`
+	Interfaces         []map[string]interface{} `json:"interfaces,omitempty"`
+	DockerCompose      string                   `json:"dockerComposeYamlText,omitempty"`
+	UserDefinedVersion string                   `json:"userDefinedVersion,omitempty"`
 }
 
 type DeviceError struct {
 	Description string `json:"description"`
 	Severity    string `json:"severity"`
 	// Timestamp might be an object or string depending on API version, ignoring for now or mapping to interface{}
+}
+
+// SWInfo represents software version information from the API
+type SWInfo struct {
+	Version string `json:"version"`
 }
 
 // AppInstanceStatus matches the AppInstStatusMsg schema for an edge app instance
@@ -328,6 +336,7 @@ type AppInstanceStatus struct {
 	DeploymentType string          `json:"deploymentType"`
 	Containers     []ContainerInfo `json:"containerStatusList,omitempty"`
 	ErrInfo        []DeviceError   `json:"errInfo,omitempty"`
+	SwInfo         []SWInfo        `json:"swInfo,omitempty"`
 }
 
 // AppInstanceDetails is kept for compatibility and represents the status message

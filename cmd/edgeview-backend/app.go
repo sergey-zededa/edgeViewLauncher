@@ -57,6 +57,8 @@ type sessionAPI interface {
 	InvalidateSession(nodeID string)
 	StartCollectInfo(nodeID string) (string, error)
 	GetCollectInfoJob(jobID string) *session.CollectInfoJob
+	StartComposeDiagnostics(nodeID, appName, appIP, username, password string) (string, error)
+	GetComposeDiagnosticsJob(jobID string) *session.ComposeDiagnosticsJob
 }
 
 // App struct
@@ -1120,6 +1122,7 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 		Containers    []zededa.ContainerInfo `json:"containers,omitempty"`
 		AppType       string                 `json:"appType,omitempty"`
 		DockerCompose string                 `json:"dockerCompose,omitempty"`
+		AppVersion    string                 `json:"appVersion,omitempty"`
 		InternalIPs   []string               `json:"internalIps,omitempty"`
 		Error         string                 `json:"error,omitempty"`
 	}
@@ -1151,10 +1154,6 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 			appConfigs[app.ID] = config
 		}
 
-		// Log status for investigation
-		// statusJSON, _ := json.MarshalIndent(status, "", "  ")
-		// fmt.Printf("DEBUG: API Status for app %s:\n%s\n", app.Name, string(statusJSON))
-
 		// Collect Docker Runtime IPs for fallback (if still needed)
 		if status.DeploymentType == "DEPLOYMENT_TYPE_DOCKER_RUNTIME" {
 			if config != nil {
@@ -1179,6 +1178,8 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 			Status: app.RunState,
 			ID:     app.ID,
 		}
+
+		// App version will be populated from config.UserDefinedVersion below
 
 		status, hasStatus := appDetails[app.ID]
 		config, hasConfig := appConfigs[app.ID]
@@ -1225,7 +1226,11 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 			svc.AppType = status.AppType
 			if hasConfig {
 				svc.DockerCompose = config.DockerCompose
+				if config.UserDefinedVersion != "" {
+					svc.AppVersion = config.UserDefinedVersion
+				}
 			}
+			fmt.Printf("DEBUG-VER: App %s appType=%s deploymentType=%s appVersion=%q\n", app.Name, svc.AppType, status.DeploymentType, svc.AppVersion)
 
 			// Identify internal (airgapped) IPs by correlating:
 			//   config.Interfaces[i].netinstid → GetNetworkInstanceDetails → kind
@@ -1461,6 +1466,43 @@ func (a *App) StartCollectInfo(nodeID string) (string, error) {
 // GetCollectInfoJob returns the job status
 func (a *App) GetCollectInfoJob(jobID string) *session.CollectInfoJob {
 	return a.sessionManager.GetCollectInfoJob(jobID)
+}
+
+// StartComposeDiagnostics starts a diagnostics collection from a compose runtime VM.
+func (a *App) StartComposeDiagnostics(nodeID, appName, appIP, username, password string) (string, error) {
+	fmt.Printf("DEBUG: App.StartComposeDiagnostics for node %s, app %s, ip %s\n", nodeID, appName, appIP)
+
+	// Ensure we have a cached session (revive from Cloud API if needed)
+	_, ok := a.sessionManager.GetCachedSession(nodeID)
+	if !ok {
+		evStatus, err := a.zededaClient.GetEdgeViewStatus(nodeID)
+		if err == nil && evStatus != nil && evStatus.Token != "" && evStatus.DispURL != "" {
+			sc, parseErr := a.zededaClient.ParseEdgeViewToken(evStatus.Token)
+			if parseErr == nil {
+				if !strings.HasPrefix(sc.URL, "wss://") && !strings.HasPrefix(sc.URL, "ws://") {
+					if sc.URL == "" {
+						sc.URL = evStatus.DispURL
+						if !strings.HasPrefix(sc.URL, "http") && !strings.HasPrefix(sc.URL, "ws") {
+							sc.URL = "wss://" + sc.URL
+						}
+					}
+				}
+				expiresAt := time.Now().Add(4*time.Hour + 50*time.Minute)
+				a.sessionManager.StoreCachedSession(nodeID, sc, 0, expiresAt)
+			} else {
+				return "", fmt.Errorf("failed to parse active token: %w", parseErr)
+			}
+		} else {
+			return "", fmt.Errorf("no active EdgeView session found")
+		}
+	}
+
+	return a.sessionManager.StartComposeDiagnostics(nodeID, appName, appIP, username, password)
+}
+
+// GetComposeDiagnosticsJob returns the compose diagnostics job status
+func (a *App) GetComposeDiagnosticsJob(jobID string) *session.ComposeDiagnosticsJob {
+	return a.sessionManager.GetComposeDiagnosticsJob(jobID)
 }
 
 // VerifyToken checks if the provided token is valid

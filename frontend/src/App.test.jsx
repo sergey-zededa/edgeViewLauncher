@@ -89,6 +89,9 @@ vi.mock('./tauriAPI', () => {
     startContainerShell: vi.fn(),
     openExternal: vi.fn(),
     SaveCollectInfo: vi.fn().mockResolvedValue({ success: true, filePath: '/tmp/test.tar.gz' }),
+    StartComposeDiagnostics: vi.fn().mockResolvedValue({ jobId: 'compose-job-1' }),
+    GetComposeDiagnosticsStatus: vi.fn().mockResolvedValue({ status: 'connecting', progress: 0, totalSize: 0 }),
+    SaveComposeDiagnostics: vi.fn().mockResolvedValue({ success: true, filePath: '/tmp/runtime-info.tar.gz' }),
   };
 });
 
@@ -590,6 +593,192 @@ describe('App configuration and tunnels', () => {
     }, { timeout: 3000 });
 
     await screen.findByText(/File saved successfully/);
+  });
+
+  it('shows Diagnostics button on compose runtime apps and triggers collection', async () => {
+    const validKey = 'A'.repeat(171);
+    const validToken = `ENT1234:${validKey}`;
+    const config = {
+      baseUrl: 'https://cluster.example',
+      apiToken: validToken,
+      clusters: [{ name: 'Prod', baseUrl: 'https://cluster.example', apiToken: validToken }],
+      activeCluster: 'Prod',
+      recentDevices: [],
+    };
+    electronAPI.GetSettings.mockResolvedValue(config);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(config);
+
+    const node = { id: 'node-1', name: 'Node 1', status: 'online' };
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([node]));
+
+    // Return services: a compose runtime parent + a compose child app sharing an IP
+    const runtimeApp = {
+      name: 'compose-runtime',
+      id: 'rt-1',
+      status: 'RUN_STATE_ONLINE',
+      appType: 'APP_TYPE_VM',
+      appVersion: '2.0.7',
+      ips: ['192.168.1.10'],
+      internalIps: ['10.0.0.5'],
+      containers: [],
+    };
+    const composeApp = {
+      name: 'compose-app-1',
+      id: 'ca-1',
+      status: 'RUN_STATE_ONLINE',
+      appType: 'APP_TYPE_DOCKER_COMPOSE',
+      ips: ['192.168.1.10'],
+      internalIps: [],
+      containers: [{ containerName: 'web', containerState: 'running' }],
+    };
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([runtimeApp, composeApp]));
+
+    electronAPI.GetSessionStatus.mockResolvedValue({ active: true, expiresAt: new Date(Date.now() + 3600000).toISOString() });
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'enabled' });
+
+    electronAPI.StartComposeDiagnostics.mockResolvedValue({ jobId: 'compose-job-1' });
+    electronAPI.GetComposeDiagnosticsStatus
+      .mockResolvedValueOnce({ status: 'connecting', progress: 0, totalSize: 0 })
+      .mockResolvedValueOnce({ status: 'running-script', progress: 0, totalSize: 0 })
+      .mockResolvedValueOnce({ status: 'downloading', progress: 1000000, totalSize: 3000000 })
+      .mockResolvedValue({ status: 'completed', progress: 3000000, totalSize: 3000000, filename: 'runtime-info-v1-test.tar.gz' });
+    electronAPI.SaveComposeDiagnostics = vi.fn().mockResolvedValue({ success: true, filePath: '/tmp/runtime-info-v1-test.tar.gz' });
+
+    render(<App />);
+
+    const nodeItem = await screen.findByText('Node 1');
+    fireEvent.click(nodeItem);
+
+    await screen.findByText('Running Applications');
+
+    // The Diagnostics button should appear on the runtime parent app
+    const diagButton = await screen.findByText('Diagnostics');
+    expect(diagButton).toBeTruthy();
+
+    // Click it to open credentials prompt
+    fireEvent.click(diagButton);
+
+    // Should show the credentials prompt
+    const usernameInput = await screen.findByPlaceholderText('Username (e.g. ubuntu)');
+    const passwordInput = await screen.findByPlaceholderText('Password');
+    expect(usernameInput).toBeTruthy();
+    expect(passwordInput).toBeTruthy();
+
+    // Fill in credentials and submit
+    fireEvent.change(usernameInput, { target: { value: 'wcsuser' } });
+    fireEvent.change(passwordInput, { target: { value: 'secret' } });
+
+    const collectBtn = screen.getByText('Collect');
+    fireEvent.click(collectBtn);
+
+    // Should start diagnostics
+    await waitFor(() => {
+      expect(electronAPI.StartComposeDiagnostics).toHaveBeenCalledWith(
+        'node-1', 'compose-runtime', '10.0.0.5', 'wcsuser', 'secret'
+      );
+    }, { timeout: 3000 });
+
+    // Should show progress via global status banner
+    await waitFor(() => {
+      expect(screen.getByTestId('global-status-banner-mock')).toHaveTextContent(/diagnostics|Diagnostics|runtime|Downloading|Running/i);
+    }, { timeout: 3000 });
+
+    // Should eventually save the file
+    await waitFor(() => {
+      expect(electronAPI.SaveComposeDiagnostics).toHaveBeenCalledWith('compose-job-1', 'runtime-info-v1-test.tar.gz');
+    }, { timeout: 5000 });
+  });
+
+  it('does not show Diagnostics button on non-runtime compose apps', async () => {
+    const validKey = 'A'.repeat(171);
+    const validToken = `ENT1234:${validKey}`;
+    const config = {
+      baseUrl: 'https://cluster.example',
+      apiToken: validToken,
+      clusters: [{ name: 'Prod', baseUrl: 'https://cluster.example', apiToken: validToken }],
+      activeCluster: 'Prod',
+      recentDevices: [],
+    };
+    electronAPI.GetSettings.mockResolvedValue(config);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(config);
+
+    const node = { id: 'node-1', name: 'Node 1', status: 'online' };
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([node]));
+
+    // Regular VM app (not a compose runtime)
+    const regularApp = {
+      name: 'regular-vm',
+      id: 'vm-1',
+      status: 'RUN_STATE_ONLINE',
+      appType: 'APP_TYPE_VM',
+      ips: ['192.168.1.10'],
+      internalIps: [],
+      containers: [],
+    };
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([regularApp]));
+    electronAPI.GetSessionStatus.mockResolvedValue({ active: true, expiresAt: new Date(Date.now() + 3600000).toISOString() });
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'enabled' });
+
+    render(<App />);
+
+    const nodeItem = await screen.findByText('Node 1');
+    fireEvent.click(nodeItem);
+
+    await screen.findByText('Running Applications');
+
+    // No Diagnostics button should be rendered (no compose runtime)
+    expect(screen.queryByText('Diagnostics')).not.toBeInTheDocument();
+  });
+
+  it('does not show Diagnostics button for compose runtime v1.x', async () => {
+    const validKey = 'A'.repeat(171);
+    const validToken = `ENT1234:${validKey}`;
+    const config = {
+      baseUrl: 'https://cluster.example',
+      apiToken: validToken,
+      clusters: [{ name: 'Prod', baseUrl: 'https://cluster.example', apiToken: validToken }],
+      activeCluster: 'Prod',
+      recentDevices: [],
+    };
+    electronAPI.GetSettings.mockResolvedValue(config);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(config);
+
+    const node = { id: 'node-1', name: 'Node 1', status: 'online' };
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([node]));
+
+    // Compose runtime v1.x (should NOT show diagnostics)
+    const runtimeApp = {
+      name: 'compose-runtime-v1',
+      id: 'rt-v1',
+      status: 'RUN_STATE_ONLINE',
+      appType: 'APP_TYPE_VM',
+      appVersion: '1.2.12',
+      ips: ['192.168.1.20'],
+      internalIps: ['10.0.0.6'],
+      containers: [],
+    };
+    const composeAppV1 = {
+      name: 'compose-app-v1',
+      id: 'ca-v1',
+      status: 'RUN_STATE_ONLINE',
+      appType: 'APP_TYPE_DOCKER_COMPOSE',
+      ips: ['192.168.1.20'],
+      internalIps: [],
+      containers: [{ containerName: 'app', containerState: 'running' }],
+    };
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([runtimeApp, composeAppV1]));
+    electronAPI.GetSessionStatus.mockResolvedValue({ active: true, expiresAt: new Date(Date.now() + 3600000).toISOString() });
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'enabled' });
+
+    render(<App />);
+
+    const nodeItem = await screen.findByText('Node 1');
+    fireEvent.click(nodeItem);
+
+    await screen.findByText('Running Applications');
+
+    // Diagnostics button should NOT be rendered for v1.x runtime
+    expect(screen.queryByText('Diagnostics')).not.toBeInTheDocument();
   });
 });
 

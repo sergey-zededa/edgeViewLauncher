@@ -580,6 +580,9 @@ func (s *HTTPServer) Start() {
 	router.HandleFunc("/api/collect-info/start", s.handleStartCollectInfo).Methods("POST")
 	router.HandleFunc("/api/collect-info/status", s.handleGetCollectInfoStatus).Methods("GET")
 	router.HandleFunc("/api/collect-info/download", s.handleDownloadCollectInfo).Methods("GET")
+	router.HandleFunc("/api/compose-diagnostics/start", s.handleStartComposeDiagnostics).Methods("POST")
+	router.HandleFunc("/api/compose-diagnostics/status", s.handleGetComposeDiagnosticsStatus).Methods("GET")
+	router.HandleFunc("/api/compose-diagnostics/download", s.handleDownloadComposeDiagnostics).Methods("GET")
 	router.HandleFunc("/api/container-shell", s.handleContainerShell).Methods("POST")
 	router.HandleFunc("/api/device-cache", s.handleGetDeviceCache).Methods("GET")
 	router.HandleFunc("/api/device-cache/refresh", s.handleRefreshDeviceCache).Methods("POST")
@@ -1157,6 +1160,68 @@ func (s *HTTPServer) handleDownloadCollectInfo(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", job.Filename))
+	http.ServeFile(w, r, job.FilePath)
+}
+
+// ── Compose Diagnostics ──────────────────────────────────────────────────────
+
+func (s *HTTPServer) handleStartComposeDiagnostics(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		NodeID   string `json:"nodeId"`
+		AppName  string `json:"appName"`
+		AppIP    string `json:"appIP"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, err)
+		return
+	}
+	if req.NodeID == "" || req.AppIP == "" {
+		s.sendError(w, fmt.Errorf("nodeId and appIP are required"))
+		return
+	}
+	if req.Username == "" {
+		req.Username = "root"
+	}
+	jobID, err := s.app.StartComposeDiagnostics(req.NodeID, req.AppName, req.AppIP, req.Username, req.Password)
+	if err != nil {
+		s.sendError(w, err)
+		return
+	}
+	s.sendSuccess(w, map[string]string{"jobId": jobID})
+}
+
+func (s *HTTPServer) handleGetComposeDiagnosticsStatus(w http.ResponseWriter, r *http.Request) {
+	jobID := r.URL.Query().Get("jobId")
+	if jobID == "" {
+		s.sendError(w, fmt.Errorf("jobId required"))
+		return
+	}
+	job := s.app.GetComposeDiagnosticsJob(jobID)
+	if job == nil {
+		s.sendError(w, fmt.Errorf("job not found"))
+		return
+	}
+	s.sendSuccess(w, job)
+}
+
+func (s *HTTPServer) handleDownloadComposeDiagnostics(w http.ResponseWriter, r *http.Request) {
+	jobID := r.URL.Query().Get("jobId")
+	if jobID == "" {
+		http.Error(w, "jobId required", http.StatusBadRequest)
+		return
+	}
+	job := s.app.GetComposeDiagnosticsJob(jobID)
+	if job == nil {
+		http.Error(w, "job not found", http.StatusNotFound)
+		return
+	}
+	if job.Status != "completed" {
+		http.Error(w, "job not completed", http.StatusBadRequest)
+		return
+	}
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", job.Filename))
 	http.ServeFile(w, r, job.FilePath)
 }

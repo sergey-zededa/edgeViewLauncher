@@ -226,6 +226,22 @@ func (m *fakeSessionManager) GetCollectInfoJob(jobID string) *session.CollectInf
 	}
 }
 
+func (m *fakeSessionManager) StartComposeDiagnostics(nodeID, appName, appIP, username, password string) (string, error) {
+	return "compose-diag-123", nil
+}
+
+func (m *fakeSessionManager) GetComposeDiagnosticsJob(jobID string) *session.ComposeDiagnosticsJob {
+	return &session.ComposeDiagnosticsJob{
+		ID:        jobID,
+		NodeID:    "node-1",
+		Status:    "completed",
+		Filename:  "runtime-info-test.tar.gz",
+		FilePath:  "/tmp/runtime-info-test.tar.gz",
+		TotalSize: 2048,
+		Progress:  2048,
+	}
+}
+
 // --- Existing tests ---
 
 // TestAddRecentDevice verifies ordering, de-duplication and max length.
