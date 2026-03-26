@@ -77,6 +77,32 @@ jobs:
           prerelease: false
           args: --target universal-apple-darwin
 
+      - name: Create Electron-compatible macOS bridge artifacts
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          APP_DIR="src-tauri/target/universal-apple-darwin/release/bundle/macos"
+
+          # Create zip of .app bundle (electron-updater format)
+          cd "$APP_DIR"
+          ditto -c -k --sequesterRsrc --keepParent "EdgeView Launcher.app" "EdgeViewLauncher-${VERSION}-mac.zip"
+
+          # Calculate SHA512 (base64-encoded, as electron-updater expects)
+          SHA512=$(shasum -a 512 "EdgeViewLauncher-${VERSION}-mac.zip" | cut -f1 -d' ' | xxd -r -p | base64)
+          SIZE=$(stat -f%z "EdgeViewLauncher-${VERSION}-mac.zip")
+          DATE=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+
+          # Generate latest-mac.yml
+          cat > latest-mac.yml << EOYML
+          version: ${VERSION}
+          files:
+            - url: EdgeViewLauncher-${VERSION}-mac.zip
+              sha512: ${SHA512}
+              size: ${SIZE}
+          path: EdgeViewLauncher-${VERSION}-mac.zip
+          sha512: ${SHA512}
+          releaseDate: '${DATE}'
+          EOYML
+
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -85,6 +111,8 @@ jobs:
             src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz
             src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
             src-tauri/target/universal-apple-darwin/release/bundle/macos/latest.json
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/latest-mac.yml
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/EdgeViewLauncher-*-mac.zip
           retention-days: 5
 
   build-windows:
@@ -143,6 +171,34 @@ jobs:
           releaseDraft: true
           args: --target x86_64-pc-windows-msvc
 
+      - name: Create Electron-compatible Windows bridge manifest
+        shell: pwsh
+        run: |
+          $VERSION = node -p "require('./package.json').version"
+          $NSIS_DIR = "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis"
+          $EXE = Get-ChildItem "$NSIS_DIR/*.exe" | Select-Object -First 1
+          $HASH = (Get-FileHash -Algorithm SHA512 $EXE.FullName).Hash
+          # Convert hex SHA512 to base64 (electron-updater format)
+          $BYTES = [byte[]]::new($HASH.Length / 2)
+          for ($i = 0; $i -lt $HASH.Length; $i += 2) {
+            $BYTES[$i/2] = [Convert]::ToByte($HASH.Substring($i, 2), 16)
+          }
+          $SHA512 = [Convert]::ToBase64String($BYTES)
+          $SIZE = $EXE.Length
+          $DATE = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.000Z")
+          $FILENAME = $EXE.Name
+
+          @"
+          version: $VERSION
+          files:
+            - url: $FILENAME
+              sha512: $SHA512
+              size: $SIZE
+          path: $FILENAME
+          sha512: $SHA512
+          releaseDate: '$DATE'
+          "@ | Set-Content -Path "$NSIS_DIR/latest.yml" -Encoding utf8
+
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -150,6 +206,7 @@ jobs:
           path: |
             src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
             src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/latest.json
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/latest.yml
           retention-days: 5
 
   build-linux:
@@ -209,6 +266,27 @@ jobs:
           releaseDraft: true
           args: --target x86_64-unknown-linux-gnu
 
+      - name: Create Electron-compatible Linux bridge manifest
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          APPIMAGE_DIR="src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage"
+          APPIMAGE=$(ls ${APPIMAGE_DIR}/*.AppImage | head -1)
+          FILENAME=$(basename "$APPIMAGE")
+          SHA512=$(sha512sum "$APPIMAGE" | cut -f1 -d' ' | xxd -r -p | base64 -w0)
+          SIZE=$(stat --printf="%s" "$APPIMAGE")
+          DATE=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+
+          cat > "${APPIMAGE_DIR}/latest-linux.yml" << EOYML
+          version: ${VERSION}
+          files:
+            - url: ${FILENAME}
+              sha512: ${SHA512}
+              size: ${SIZE}
+          path: ${FILENAME}
+          sha512: ${SHA512}
+          releaseDate: '${DATE}'
+          EOYML
+
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -217,6 +295,7 @@ jobs:
             src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
             src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
             src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/latest.json
+            src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/latest-linux.yml
           retention-days: 5
 
   release:

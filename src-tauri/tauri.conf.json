@@ -55,7 +55,7 @@
     },
     "plugins": {
         "updater": {
-            "pubkey": "PLACEHOLDER_UPDATE_AFTER_tauri_signer_generate",
+            "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEYyREI1ODE5Qzc3MzJEMjgKUldRb0xYUEhHVmpiOGd0c1dTbXl0YUhtbG5MYVFmaFVaalNLaWRCb0lsOVlnZFkrWDY0cUJYUWwK%",
             "endpoints": [
                 "https://github.com/sergey-zededa/edgeViewLauncher/releases/latest/download/latest.json"
             ],

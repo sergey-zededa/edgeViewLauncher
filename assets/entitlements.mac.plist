@@ -22,8 +22,8 @@
     <key>com.apple.security.cs.allow-jit</key>
     <true/>
 
-    <!-- Allow debugging (required for local development to prevent keychain prompt issues) -->
+    <!-- get-task-allow must be false for production (Apple rejects notarization otherwise) -->
     <key>com.apple.security.get-task-allow</key>
-    <true/>
+    <false/>
 </dict>
 </plist>
