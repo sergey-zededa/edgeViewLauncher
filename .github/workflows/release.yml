@@ -63,18 +63,29 @@ jobs:
       - name: Install x86_64 Rust target for universal build
         run: rustup target add x86_64-apple-darwin
 
+      - name: Configure Apple code signing
+        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
+        env:
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+          CERT_PASS: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          SIGN_ID: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          A_ID: ${{ secrets.APPLE_ID }}
+          A_PASS: ${{ secrets.APPLE_PASSWORD }}
+          A_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          echo "APPLE_CERTIFICATE=${CERT}" >> $GITHUB_ENV
+          echo "APPLE_CERTIFICATE_PASSWORD=${CERT_PASS}" >> $GITHUB_ENV
+          echo "APPLE_SIGNING_IDENTITY=${SIGN_ID}" >> $GITHUB_ENV
+          echo "APPLE_ID=${A_ID}" >> $GITHUB_ENV
+          echo "APPLE_PASSWORD=${A_PASS}" >> $GITHUB_ENV
+          echo "APPLE_TEAM_ID=${A_TEAM}" >> $GITHUB_ENV
+
       - name: Build Tauri app (macOS universal)
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName: v__VERSION__
           releaseName: "EdgeView Launcher v__VERSION__"
