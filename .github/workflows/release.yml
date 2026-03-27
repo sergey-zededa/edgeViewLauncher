@@ -87,18 +87,10 @@ jobs:
           fi
 
       - name: Build Tauri app (macOS universal)
-        uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "EdgeView Launcher ${{ github.ref_name }}"
-          releaseBody: "See the assets to download this version and install."
-          releaseDraft: true
-          prerelease: false
-          args: --target universal-apple-darwin
+        run: npx tauri build --target universal-apple-darwin
 
       - name: Stage macOS release files
         run: |
@@ -109,7 +101,7 @@ jobs:
 
           # Debug: list all files in bundle directory
           echo "=== Files in MACOS_DIR ==="
-          find "$MACOS_DIR" -maxdepth 1 -type f -name "*.tar.gz*" -o -name "*.sig" | sort
+          find "$MACOS_DIR" -maxdepth 1 -type f \( -name "*.tar.gz*" -o -name "*.sig" \) | sort
           echo "=== Files in DMG_DIR ==="
           find "$DMG_DIR" -maxdepth 1 -type f | sort
           echo "==="
@@ -204,29 +196,24 @@ jobs:
         run: node scripts/generate-build-info.js
 
       - name: Build Tauri app (Windows)
-        uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "EdgeView Launcher ${{ github.ref_name }}"
-          releaseBody: "See the assets to download this version and install."
-          releaseDraft: true
-          args: --target x86_64-pc-windows-msvc
+        run: npx tauri build --target x86_64-pc-windows-msvc
 
       - name: Stage Windows release files
         shell: pwsh
         run: |
           $VERSION = node -p "require('./package.json').version"
           $NSIS_DIR = "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis"
+          $MSI_DIR = "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi"
           New-Item -ItemType Directory -Force -Path staging | Out-Null
 
           # Main artifacts
           Copy-Item "$NSIS_DIR/*.exe" staging/
           Copy-Item "$NSIS_DIR/*.nsis.zip" staging/ -ErrorAction SilentlyContinue
           Copy-Item "$NSIS_DIR/*.nsis.zip.sig" staging/ -ErrorAction SilentlyContinue
+          Copy-Item "$MSI_DIR/*.msi" staging/ -ErrorAction SilentlyContinue
 
           # Electron bridge: latest.yml
           $EXE = Get-ChildItem "staging/*.exe" | Select-Object -First 1
@@ -316,33 +303,28 @@ jobs:
         run: node scripts/generate-build-info.js
 
       - name: Build Tauri app (Linux)
-        uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "EdgeView Launcher ${{ github.ref_name }}"
-          releaseBody: "See the assets to download this version and install."
-          releaseDraft: true
-          args: --target x86_64-unknown-linux-gnu
+        run: npx tauri build --target x86_64-unknown-linux-gnu
 
       - name: Stage Linux release files
         run: |
           VERSION=$(node -p "require('./package.json').version")
           APPIMAGE_DIR="src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage"
           DEB_DIR="src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb"
+          RPM_DIR="src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/rpm"
           mkdir -p staging
 
           # Debug: list all files in bundle directory
           echo "=== Files in APPIMAGE_DIR ==="
-          find "$APPIMAGE_DIR" -maxdepth 1 -type f -name "*.tar.gz*" -o -name "*.sig" -o -name "*.AppImage" | sort
+          find "$APPIMAGE_DIR" -maxdepth 1 -type f \( -name "*.tar.gz*" -o -name "*.sig" -o -name "*.AppImage" \) | sort
           echo "==="
 
           # Copy artifacts using find to handle filenames with spaces
           find "$APPIMAGE_DIR" -maxdepth 1 -name "*.AppImage" ! -name "*.sig" -exec cp {} staging/ \;
           find "$DEB_DIR" -maxdepth 1 -name "*.deb" ! -name "*.sig" -exec cp {} staging/ \;
+          find "$RPM_DIR" -maxdepth 1 -name "*.rpm" ! -name "*.sig" -exec cp {} staging/ \;
           find "$APPIMAGE_DIR" -maxdepth 1 -name "*.AppImage.tar.gz" ! -name "*.sig" -exec cp {} staging/ \;
           find "$APPIMAGE_DIR" -maxdepth 1 -name "*.AppImage.tar.gz.sig" -exec cp {} staging/ \;
 
