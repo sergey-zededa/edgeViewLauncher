@@ -107,6 +107,13 @@ jobs:
           DMG_DIR="src-tauri/target/universal-apple-darwin/release/bundle/dmg"
           mkdir -p staging
 
+          # Debug: list all files in bundle directory
+          echo "=== Files in MACOS_DIR ==="
+          find "$MACOS_DIR" -maxdepth 1 -type f -name "*.tar.gz*" -o -name "*.sig" | sort
+          echo "=== Files in DMG_DIR ==="
+          find "$DMG_DIR" -maxdepth 1 -type f | sort
+          echo "==="
+
           # Copy artifacts using find to handle filenames with spaces
           find "$DMG_DIR" -maxdepth 1 -name "*.dmg" -exec cp {} staging/ \;
           find "$MACOS_DIR" -maxdepth 1 -name "*.app.tar.gz" ! -name "*.sig" -exec cp {} staging/ \;
@@ -327,6 +334,11 @@ jobs:
           APPIMAGE_DIR="src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage"
           DEB_DIR="src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb"
           mkdir -p staging
+
+          # Debug: list all files in bundle directory
+          echo "=== Files in APPIMAGE_DIR ==="
+          find "$APPIMAGE_DIR" -maxdepth 1 -type f -name "*.tar.gz*" -o -name "*.sig" -o -name "*.AppImage" | sort
+          echo "==="
 
           # Copy artifacts using find to handle filenames with spaces
           find "$APPIMAGE_DIR" -maxdepth 1 -name "*.AppImage" ! -name "*.sig" -exec cp {} staging/ \;
