@@ -93,23 +93,24 @@ jobs:
         run: npx tauri build --target universal-apple-darwin
 
       - name: Stage macOS release files
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           VERSION=$(node -p "require('./package.json').version")
           MACOS_DIR="src-tauri/target/universal-apple-darwin/release/bundle/macos"
           DMG_DIR="src-tauri/target/universal-apple-darwin/release/bundle/dmg"
           mkdir -p staging
 
-          # Debug: list all files in bundle directory
-          echo "=== Files in MACOS_DIR ==="
-          find "$MACOS_DIR" -maxdepth 1 -type f \( -name "*.tar.gz*" -o -name "*.sig" \) | sort
-          echo "=== Files in DMG_DIR ==="
-          find "$DMG_DIR" -maxdepth 1 -type f | sort
-          echo "==="
-
-          # Copy artifacts using find to handle filenames with spaces
+          # Copy DMG installer
           find "$DMG_DIR" -maxdepth 1 -name "*.dmg" -exec cp {} staging/ \;
-          find "$MACOS_DIR" -maxdepth 1 -name "*.app.tar.gz" ! -name "*.sig" -exec cp {} staging/ \;
-          find "$MACOS_DIR" -maxdepth 1 -name "*.app.tar.gz.sig" -exec cp {} staging/ \;
+
+          # Create updater archive from .app bundle
+          APP_TAR="EdgeView Launcher.app.tar.gz"
+          tar czf "staging/${APP_TAR}" -C "$MACOS_DIR" "EdgeView Launcher.app"
+
+          # Sign the updater archive (reads key from TAURI_SIGNING_PRIVATE_KEY env)
+          npx tauri signer sign "staging/${APP_TAR}"
 
           # Electron bridge: zip of .app bundle
           cd "$MACOS_DIR"
@@ -133,11 +134,11 @@ jobs:
           EOYML
 
           # Updater info for latest.json
-          SIG_FILE=$(find "$MACOS_DIR" -maxdepth 1 -name "*.app.tar.gz.sig" | head -1)
-          ARCHIVE=$(find "$MACOS_DIR" -maxdepth 1 -name "*.app.tar.gz" ! -name "*.sig" | head -1)
-          if [ -n "$SIG_FILE" ] && [ -n "$ARCHIVE" ]; then
-            cp "$SIG_FILE" staging/updater-mac-sig.txt
-            basename "$ARCHIVE" | tr ' ' '.' > staging/updater-mac-filename.txt
+          if [ -f "staging/${APP_TAR}.sig" ]; then
+            cp "staging/${APP_TAR}.sig" staging/updater-mac-sig.txt
+            echo -n "${APP_TAR}" | tr ' ' '.' > staging/updater-mac-filename.txt
+          else
+            echo "WARNING: No .sig file generated for macOS updater archive"
           fi
 
           echo "Staged macOS files:"
@@ -203,6 +204,9 @@ jobs:
 
       - name: Stage Windows release files
         shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           $VERSION = node -p "require('./package.json').version"
           $NSIS_DIR = "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis"
@@ -211,12 +215,17 @@ jobs:
 
           # Main artifacts
           Copy-Item "$NSIS_DIR/*.exe" staging/
-          Copy-Item "$NSIS_DIR/*.nsis.zip" staging/ -ErrorAction SilentlyContinue
-          Copy-Item "$NSIS_DIR/*.nsis.zip.sig" staging/ -ErrorAction SilentlyContinue
           Copy-Item "$MSI_DIR/*.msi" staging/ -ErrorAction SilentlyContinue
 
+          # Create updater archive (zip the NSIS exe)
+          $EXE = Get-ChildItem "staging/*-setup.exe" | Select-Object -First 1
+          $NSIS_ZIP_NAME = $EXE.BaseName + ".nsis.zip"
+          Compress-Archive -Path $EXE.FullName -DestinationPath "staging/$NSIS_ZIP_NAME"
+
+          # Sign the updater archive (reads key from TAURI_SIGNING_PRIVATE_KEY env)
+          npx tauri signer sign "staging/$NSIS_ZIP_NAME"
+
           # Electron bridge: latest.yml
-          $EXE = Get-ChildItem "staging/*.exe" | Select-Object -First 1
           $HASH = (Get-FileHash -Algorithm SHA512 $EXE.FullName).Hash
           $BYTES = [byte[]]::new($HASH.Length / 2)
           for ($i = 0; $i -lt $HASH.Length; $i += 2) {
@@ -239,11 +248,12 @@ jobs:
           "@ | Set-Content -Path "staging/latest.yml" -Encoding utf8
 
           # Updater info for latest.json
-          $SIG = Get-ChildItem "staging/*.nsis.zip.sig" -ErrorAction SilentlyContinue | Select-Object -First 1
-          $ARCHIVE = Get-ChildItem "staging/*.nsis.zip" -Exclude "*.sig" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($SIG -and $ARCHIVE) {
-            Copy-Item $SIG.FullName "staging/updater-win-sig.txt"
-            $ARCHIVE.Name.Replace(' ', '.') | Set-Content "staging/updater-win-filename.txt" -NoNewline
+          $SIG_FILE = "staging/$NSIS_ZIP_NAME.sig"
+          if (Test-Path $SIG_FILE) {
+            Copy-Item $SIG_FILE "staging/updater-win-sig.txt"
+            $NSIS_ZIP_NAME.Replace(' ', '.') | Set-Content "staging/updater-win-filename.txt" -NoNewline
+          } else {
+            Write-Output "WARNING: No .sig file generated for Windows updater archive"
           }
 
           Write-Output "Staged Windows files:"
@@ -309,6 +319,9 @@ jobs:
         run: npx tauri build --target x86_64-unknown-linux-gnu
 
       - name: Stage Linux release files
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           VERSION=$(node -p "require('./package.json').version")
           APPIMAGE_DIR="src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage"
@@ -316,21 +329,22 @@ jobs:
           RPM_DIR="src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/rpm"
           mkdir -p staging
 
-          # Debug: list all files in bundle directory
-          echo "=== Files in APPIMAGE_DIR ==="
-          find "$APPIMAGE_DIR" -maxdepth 1 -type f \( -name "*.tar.gz*" -o -name "*.sig" -o -name "*.AppImage" \) | sort
-          echo "==="
-
-          # Copy artifacts using find to handle filenames with spaces
+          # Copy main installer artifacts
           find "$APPIMAGE_DIR" -maxdepth 1 -name "*.AppImage" ! -name "*.sig" -exec cp {} staging/ \;
           find "$DEB_DIR" -maxdepth 1 -name "*.deb" ! -name "*.sig" -exec cp {} staging/ \;
           find "$RPM_DIR" -maxdepth 1 -name "*.rpm" ! -name "*.sig" -exec cp {} staging/ \;
-          find "$APPIMAGE_DIR" -maxdepth 1 -name "*.AppImage.tar.gz" ! -name "*.sig" -exec cp {} staging/ \;
-          find "$APPIMAGE_DIR" -maxdepth 1 -name "*.AppImage.tar.gz.sig" -exec cp {} staging/ \;
+
+          # Create updater archive from AppImage
+          APPIMAGE=$(find staging -maxdepth 1 -name "*.AppImage" | head -1)
+          APPIMAGE_BASENAME=$(basename "$APPIMAGE")
+          APPIMAGE_TAR="${APPIMAGE_BASENAME}.tar.gz"
+          tar czf "staging/${APPIMAGE_TAR}" -C staging "$APPIMAGE_BASENAME"
+
+          # Sign the updater archive (reads key from TAURI_SIGNING_PRIVATE_KEY env)
+          npx tauri signer sign "staging/${APPIMAGE_TAR}"
 
           # Electron bridge: latest-linux.yml
-          APPIMAGE=$(find staging -maxdepth 1 -name "*.AppImage" ! -name "*.tar.gz" | head -1)
-          FILENAME=$(basename "$APPIMAGE")
+          FILENAME="$APPIMAGE_BASENAME"
           SHA512=$(sha512sum "$APPIMAGE" | cut -f1 -d' ' | xxd -r -p | base64 -w0)
           SIZE=$(stat --printf="%s" "$APPIMAGE")
           DATE=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
@@ -346,11 +360,11 @@ jobs:
           EOYML
 
           # Updater info for latest.json
-          SIG_FILE=$(find staging -maxdepth 1 -name "*.AppImage.tar.gz.sig" | head -1)
-          ARCHIVE=$(find staging -maxdepth 1 -name "*.AppImage.tar.gz" ! -name "*.sig" | head -1)
-          if [ -n "$SIG_FILE" ] && [ -n "$ARCHIVE" ]; then
-            cp "$SIG_FILE" staging/updater-linux-sig.txt
-            basename "$ARCHIVE" | tr ' ' '.' > staging/updater-linux-filename.txt
+          if [ -f "staging/${APPIMAGE_TAR}.sig" ]; then
+            cp "staging/${APPIMAGE_TAR}.sig" staging/updater-linux-sig.txt
+            echo -n "${APPIMAGE_TAR}" | tr ' ' '.' > staging/updater-linux-filename.txt
+          else
+            echo "WARNING: No .sig file generated for Linux updater archive"
           fi
 
           echo "Staged Linux files:"
