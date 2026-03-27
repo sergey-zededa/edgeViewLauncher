@@ -107,10 +107,10 @@ jobs:
           DMG_DIR="src-tauri/target/universal-apple-darwin/release/bundle/dmg"
           mkdir -p staging
 
-          # Main artifacts
-          cp ${DMG_DIR}/*.dmg staging/
-          cp ${MACOS_DIR}/*.app.tar.gz staging/
-          cp ${MACOS_DIR}/*.app.tar.gz.sig staging/ 2>/dev/null || true
+          # Copy artifacts using find to handle filenames with spaces
+          find "$DMG_DIR" -maxdepth 1 -name "*.dmg" -exec cp {} staging/ \;
+          find "$MACOS_DIR" -maxdepth 1 -name "*.app.tar.gz" ! -name "*.sig" -exec cp {} staging/ \;
+          find "$MACOS_DIR" -maxdepth 1 -name "*.app.tar.gz.sig" -exec cp {} staging/ \;
 
           # Electron bridge: zip of .app bundle
           cd "$MACOS_DIR"
@@ -134,8 +134,8 @@ jobs:
           EOYML
 
           # Updater info for latest.json
-          SIG_FILE=$(ls ${MACOS_DIR}/*.app.tar.gz.sig 2>/dev/null | head -1)
-          ARCHIVE=$(ls ${MACOS_DIR}/*.app.tar.gz 2>/dev/null | head -1)
+          SIG_FILE=$(find "$MACOS_DIR" -maxdepth 1 -name "*.app.tar.gz.sig" | head -1)
+          ARCHIVE=$(find "$MACOS_DIR" -maxdepth 1 -name "*.app.tar.gz" ! -name "*.sig" | head -1)
           if [ -n "$SIG_FILE" ] && [ -n "$ARCHIVE" ]; then
             cp "$SIG_FILE" staging/updater-mac-sig.txt
             basename "$ARCHIVE" | tr ' ' '.' > staging/updater-mac-filename.txt
@@ -328,14 +328,14 @@ jobs:
           DEB_DIR="src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb"
           mkdir -p staging
 
-          # Main artifacts
-          cp ${APPIMAGE_DIR}/*.AppImage staging/
-          cp ${DEB_DIR}/*.deb staging/
-          cp ${APPIMAGE_DIR}/*.AppImage.tar.gz staging/ 2>/dev/null || true
-          cp ${APPIMAGE_DIR}/*.AppImage.tar.gz.sig staging/ 2>/dev/null || true
+          # Copy artifacts using find to handle filenames with spaces
+          find "$APPIMAGE_DIR" -maxdepth 1 -name "*.AppImage" ! -name "*.sig" -exec cp {} staging/ \;
+          find "$DEB_DIR" -maxdepth 1 -name "*.deb" ! -name "*.sig" -exec cp {} staging/ \;
+          find "$APPIMAGE_DIR" -maxdepth 1 -name "*.AppImage.tar.gz" ! -name "*.sig" -exec cp {} staging/ \;
+          find "$APPIMAGE_DIR" -maxdepth 1 -name "*.AppImage.tar.gz.sig" -exec cp {} staging/ \;
 
           # Electron bridge: latest-linux.yml
-          APPIMAGE=$(ls staging/*.AppImage | head -1)
+          APPIMAGE=$(find staging -maxdepth 1 -name "*.AppImage" ! -name "*.tar.gz" | head -1)
           FILENAME=$(basename "$APPIMAGE")
           SHA512=$(sha512sum "$APPIMAGE" | cut -f1 -d' ' | xxd -r -p | base64 -w0)
           SIZE=$(stat --printf="%s" "$APPIMAGE")
@@ -352,8 +352,8 @@ jobs:
           EOYML
 
           # Updater info for latest.json
-          SIG_FILE=$(ls staging/*.AppImage.tar.gz.sig 2>/dev/null | head -1)
-          ARCHIVE=$(ls staging/*.AppImage.tar.gz 2>/dev/null | grep -v '\.sig$' | head -1)
+          SIG_FILE=$(find staging -maxdepth 1 -name "*.AppImage.tar.gz.sig" | head -1)
+          ARCHIVE=$(find staging -maxdepth 1 -name "*.AppImage.tar.gz" ! -name "*.sig" | head -1)
           if [ -n "$SIG_FILE" ] && [ -n "$ARCHIVE" ]; then
             cp "$SIG_FILE" staging/updater-linux-sig.txt
             basename "$ARCHIVE" | tr ' ' '.' > staging/updater-linux-filename.txt
