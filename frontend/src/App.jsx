@@ -3789,6 +3789,7 @@ Do you want to try connecting anyway?`)) {
                                 title={!isDeviceOnline ? "Device is offline" : "Restart EdgeView session"}
                                 onClick={handleResetEdgeView}
                                 disabled={!isDeviceOnline}
+                                style={{ opacity: isDeviceOnline ? 1 : 0.5 }}
                               >
                                 <RefreshCw size={14} />
                               </button>
@@ -3932,13 +3933,14 @@ Do you want to try connecting anyway?`)) {
                             <div
                               className={`config-chip ${isSessionConnected ? '' : 'disabled'}`}
                               onClick={isSessionConnected ? handleCollectInfo : undefined}
-                              title={isSessionConnected ? "Collect system information (tech-support bundle)" : "Session must be active to collect info"}
+                              title={!isDeviceOnline ? "Device is offline" : !isSessionConnected ? "Session must be active to collect info" : "Collect system information (tech-support bundle)"}
                               style={{
                                 display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
                                 fontSize: '12px', fontWeight: '500', cursor: isSessionConnected ? 'pointer' : 'default', transition: 'all 0.2s',
                                 backgroundColor: isSessionConnected ? 'var(--color-primary-bg)' : 'var(--bg-secondary)',
                                 color: isSessionConnected ? 'var(--color-primary)' : 'var(--text-primary)',
-                                border: isSessionConnected ? '1px solid var(--color-primary-border)' : 'none'
+                                border: isSessionConnected ? '1px solid var(--color-primary-border)' : 'none',
+                                opacity: isDeviceOnline ? 1 : 0.5
                               }}
                             >
                               <Download size={13} style={{ marginRight: '6px' }} />
