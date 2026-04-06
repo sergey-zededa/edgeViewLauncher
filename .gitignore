@@ -1,3 +1,6 @@
+# Claude Code local settings
+.claude/settings.local.json
+
 # Build outputs
 build/bin
 frontend/dist
