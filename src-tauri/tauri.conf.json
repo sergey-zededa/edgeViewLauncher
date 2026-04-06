@@ -28,7 +28,10 @@
         "windows": {
             "certificateThumbprint": null,
             "digestAlgorithm": "sha256",
-            "timestampUrl": ""
+            "timestampUrl": "",
+            "nsis": {
+                "installerHooks": "nsis/hooks.nsh"
+            }
         }
     },
     "app": {
