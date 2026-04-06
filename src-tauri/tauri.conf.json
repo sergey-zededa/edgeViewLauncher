@@ -1,0 +1,71 @@
+{
+    "$schema": "https://schema.tauri.app/config/2",
+    "productName": "EdgeView Launcher",
+    "version": "0.2.0",
+    "identifier": "com.edgeview.launcher",
+    "build": {
+        "beforeDevCommand": "cd frontend && npm run dev",
+        "beforeBuildCommand": "cd frontend && npm run build",
+        "devUrl": "http://localhost:5173",
+        "frontendDist": "../frontend/dist"
+    },
+    "bundle": {
+        "active": true,
+        "targets": "all",
+        "icon": [
+            "../assets/icon.icns",
+            "../assets/icon.ico",
+            "../assets/icon.png"
+        ],
+        "resources": [],
+        "externalBin": [
+            "binaries/edgeview-backend"
+        ],
+        "macOS": {
+            "entitlements": "../assets/entitlements.mac.plist",
+            "hardenedRuntime": false
+        },
+        "windows": {
+            "certificateThumbprint": null,
+            "digestAlgorithm": "sha256",
+            "timestampUrl": "",
+            "nsis": {
+                "installerHooks": "nsis/hooks.nsh"
+            }
+        }
+    },
+    "app": {
+        "withGlobalTauri": false,
+        "windows": [
+            {
+                "label": "main",
+                "title": "EdgeView Launcher",
+                "width": 1000,
+                "height": 900,
+                "minWidth": 800,
+                "minHeight": 600,
+                "decorations": true,
+                "titleBarStyle": "Overlay",
+                "hiddenTitle": true,
+                "visible": false,
+                "center": true
+            }
+        ],
+        "security": {
+            "csp": null,
+            "dangerousDisableAssetCspModification": false
+        }
+    },
+    "plugins": {
+        "updater": {
+            "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEYyREI1ODE5Qzc3MzJEMjgKUldRb0xYUEhHVmpiOGd0c1dTbXl0YUhtbG5MYVFmaFVaalNLaWRCb0lsOVlnZFkrWDY0cUJYUWwK",
+            "endpoints": [
+                "https://github.com/sergey-zededa/edgeViewLauncher/releases/latest/download/latest.json"
+            ],
+            "dialog": false
+        },
+        "shell": {
+            "open": true
+        }
+    }
+}

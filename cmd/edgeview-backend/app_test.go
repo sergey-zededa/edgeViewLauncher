@@ -53,7 +53,10 @@ func (f *fakeZededaClient) GetEnterprise() (*zededa.Enterprise, error) {
 func (f *fakeZededaClient) GetProjects() ([]zededa.Project, error) {
 	return nil, errors.New("not implemented")
 }
-func (f *fakeZededaClient) SearchNodes(query string) ([]zededa.Node, error) {
+func (f *fakeZededaClient) SearchNodes(query string, limit, skip int, projectID string) (*zededa.SearchResult, error) {
+	return nil, errors.New("not implemented")
+}
+func (f *fakeZededaClient) SearchNodesWithToken(query string, limit int, pageToken string, projectID string) (*zededa.SearchResult, error) {
 	return nil, errors.New("not implemented")
 }
 func (f *fakeZededaClient) UpdateConfig(baseURL, token string) {}
@@ -220,6 +223,22 @@ func (m *fakeSessionManager) GetCollectInfoJob(jobID string) *session.CollectInf
 		FilePath:  "/tmp/test-file.tar.gz",
 		TotalSize: 1024,
 		Progress:  1024,
+	}
+}
+
+func (m *fakeSessionManager) StartComposeDiagnostics(nodeID, appName, appIP, username, password string) (string, error) {
+	return "compose-diag-123", nil
+}
+
+func (m *fakeSessionManager) GetComposeDiagnosticsJob(jobID string) *session.ComposeDiagnosticsJob {
+	return &session.ComposeDiagnosticsJob{
+		ID:        jobID,
+		NodeID:    "node-1",
+		Status:    "completed",
+		Filename:  "runtime-info-test.tar.gz",
+		FilePath:  "/tmp/runtime-info-test.tar.gz",
+		TotalSize: 2048,
+		Progress:  2048,
 	}
 }
 

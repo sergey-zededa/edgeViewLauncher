@@ -1,20 +1,20 @@
 {
   "name": "edgeview-launcher",
-  "version": "0.1.21",
+  "version": "0.2.0",
   "description": "EdgeView Launcher - Electron Edition",
-  "main": "electron-main.js",
   "scripts": {
-    "start": "electron .",
-    "dev": "cross-env NODE_ENV=development electron .",
+    "start": "tauri dev",
+    "dev": "tauri dev",
     "prebuild": "node scripts/generate-build-info.js",
     "build": "npm run build:mac",
-    "build:mac": "npm run build:frontend && npm run build:backend:mac && electron-builder --mac --arm64 && rm -f dist-electron/builder-debug.yml",
+    "build:mac": "npm run build:backend:mac && APPLE_SIGNING_IDENTITY='EdgeView Dev' tauri build --target aarch64-apple-darwin",
     "build:frontend": "cd frontend && npm run build",
-    "build:backend:mac": "VERSION=$(node -p \"require('./package.json').version\") && GOOS=darwin GOARCH=arm64 go build -ldflags=\"-X main.Version=$VERSION\" -o edgeview-backend ./cmd/edgeview-backend",
-    "build:backend:windows": "VERSION=$(node -p \"require('./package.json').version\") && GOOS=windows GOARCH=amd64 go build -ldflags=\"-X main.Version=$VERSION\" -o edgeview-backend.exe ./cmd/edgeview-backend",
-    "build:backend:linux": "VERSION=$(node -p \"require('./package.json').version\") && GOOS=linux GOARCH=amd64 go build -ldflags=\"-X main.Version=$VERSION\" -o edgeview-backend ./cmd/edgeview-backend",
-    "build:windows": "npm run build:frontend && npm run build:backend:windows && electron-builder --win --x64 && rm -f dist-electron/builder-debug.yml",
-    "build:linux": "npm run build:frontend && npm run build:backend:linux && electron-builder --linux --x64 && rm -f dist-electron/builder-debug.yml",
+    "build:backend:mac": "VERSION=$(node -p \"require('./package.json').version\") && GOOS=darwin GOARCH=arm64 go build -ldflags=\"-X main.Version=$VERSION\" -o src-tauri/binaries/edgeview-backend-aarch64-apple-darwin ./cmd/edgeview-backend",
+    "build:backend:windows": "VERSION=$(node -p \"require('./package.json').version\") && GOOS=windows GOARCH=amd64 go build -ldflags=\"-X main.Version=$VERSION\" -o src-tauri/binaries/edgeview-backend-x86_64-pc-windows-msvc.exe ./cmd/edgeview-backend",
+    "build:backend:linux": "VERSION=$(node -p \"require('./package.json').version\") && GOOS=linux GOARCH=amd64 go build -ldflags=\"-X main.Version=$VERSION\" -o src-tauri/binaries/edgeview-backend-x86_64-unknown-linux-gnu ./cmd/edgeview-backend",
+    "build:windows": "npm run build:backend:windows && tauri build --target x86_64-pc-windows-msvc",
+    "build:linux": "npm run build:backend:linux && tauri build --target x86_64-unknown-linux-gnu",
+    "tauri": "tauri",
     "test": "cd frontend && npm test"
   },
   "keywords": [],
@@ -27,109 +27,8 @@
     "type": "git",
     "url": "https://github.com/sergio-zededa/edgeViewLauncher.git"
   },
-  "dependencies": {
-    "electron-updater": "^6.7.3"
-  },
   "devDependencies": {
-    "cross-env": "^10.1.0",
-    "electron": "^40.1.0",
-    "electron-builder": "^26.7.0"
-  },
-  "build": {
-    "appId": "com.edgeview.launcher",
-    "productName": "EdgeView Launcher",
-    "publish": {
-      "provider": "github",
-      "owner": "sergey-zededa",
-      "repo": "edgeViewLauncher",
-      "private": true
-    },
-    "win": {
-      "artifactName": "${name}-Setup-${version}.${ext}",
-      "icon": "assets/icon.ico",
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "extraResources": [
-        {
-          "from": "edgeview-backend.exe",
-          "to": "edgeview-backend.exe"
-        }
-      ]
-    },
-    "mac": {
-      "artifactName": "${name}-${version}-${arch}.${ext}",
-      "category": "public.app-category.developer-tools",
-      "target": [
-        {
-          "target": "zip",
-          "arch": [
-            "arm64",
-            "x64"
-          ]
-        },
-        {
-          "target": "dmg",
-          "arch": [
-            "arm64",
-            "x64"
-          ]
-        }
-      ],
-      "icon": "assets/icon.icns",
-      "hardenedRuntime": true,
-      "gatekeeperAssess": false,
-      "entitlements": "assets/entitlements.mac.plist",
-      "entitlementsInherit": "assets/entitlements.mac.plist",
-      "extraResources": [
-        {
-          "from": "edgeview-backend",
-          "to": "edgeview-backend"
-        }
-      ]
-    },
-    "linux": {
-      "artifactName": "${name}-${version}-${arch}.${ext}",
-      "icon": "assets/icon.png",
-      "maintainer": "ZEDEDA <support@zededa.com>",
-      "target": [
-        {
-          "target": "AppImage",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "deb",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "extraResources": [
-        {
-          "from": "edgeview-backend",
-          "to": "edgeview-backend"
-        }
-      ],
-      "category": "Development"
-    },
-    "files": [
-      "electron-main.js",
-      "electron-preload.js",
-      "electron-secure-storage.js",
-      "backendClient.js",
-      "build-info.json",
-      "frontend/dist/**/*",
-      "assets/**/*"
-    ],
-    "directories": {
-      "output": "dist-electron"
-    }
+    "@tauri-apps/cli": "^2.10.1",
+    "cross-env": "^10.1.0"
   }
 }

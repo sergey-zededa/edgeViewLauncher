@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"edgeViewLauncher/internal/cache"
 	"edgeViewLauncher/internal/config"
+	"errors"
 	"edgeViewLauncher/internal/session"
 	"edgeViewLauncher/internal/ssh"
 	"edgeViewLauncher/internal/zededa"
@@ -17,7 +19,8 @@ import (
 type zededaAPI interface {
 	GetEnterprise() (*zededa.Enterprise, error)
 	GetProjects() ([]zededa.Project, error)
-	SearchNodes(query string) ([]zededa.Node, error)
+	SearchNodes(query string, limit, skip int, projectID string) (*zededa.SearchResult, error)                                      // legacy compat
+	SearchNodesWithToken(query string, limit int, pageToken string, projectID string) (*zededa.SearchResult, error) // cursor-based
 	UpdateConfig(baseURL, token string)
 	InitSession(targetID string) (string, error)
 	ParseEdgeViewScript(script string) (*zededa.SessionConfig, error)
@@ -54,6 +57,8 @@ type sessionAPI interface {
 	InvalidateSession(nodeID string)
 	StartCollectInfo(nodeID string) (string, error)
 	GetCollectInfoJob(jobID string) *session.CollectInfoJob
+	StartComposeDiagnostics(nodeID, appName, appIP, username, password string) (string, error)
+	GetComposeDiagnosticsJob(jobID string) *session.ComposeDiagnosticsJob
 }
 
 // App struct
@@ -83,6 +88,9 @@ type App struct {
 	// Track currently enriching nodes to avoid redundant work and allow waiting
 	enrichingJobs map[string]chan struct{}
 	enrichingMu_  sync.Mutex
+
+	// Device/project cache
+	deviceCache *cache.Manager
 }
 
 // NewApp creates a new App application struct
@@ -115,7 +123,7 @@ func NewApp() *App {
 		}
 	}
 
-	return &App{
+	a := &App{
 		config:             cfg,
 		zededaClient:       zededa.NewClient(baseURL, apiToken),
 		sessionManager:     session.NewManager(),
@@ -123,7 +131,15 @@ func NewApp() *App {
 		nodeMetaCache:      make(map[string]NodeMeta),
 		connectionProgress: make(map[string]string),
 		enrichingJobs:      make(map[string]chan struct{}),
+		deviceCache:        cache.NewManager(),
 	}
+
+	// Load disk cache for the active cluster
+	if cfg.ActiveCluster != "" {
+		a.deviceCache.SwitchCluster(cfg.ActiveCluster)
+	}
+
+	return a
 }
 
 // SetConnectionProgress updates the connection status for a node
@@ -169,11 +185,37 @@ func (a *App) SaveSettings(clusters []config.ClusterConfig, activeCluster string
 
 	if found {
 		// Update client with new active cluster settings
-		// Update client with new active cluster settings
 		a.zededaClient.UpdateConfig(activeConfig.BaseURL, activeConfig.APIToken)
+
+		// Clear cached token info and re-fetch for the new cluster
+		a.mu.Lock()
+		a.tokenInfoCache = nil
+		a.mu.Unlock()
+		a.fetchTokenInfo(activeConfig.APIToken)
+
+		// Switch device cache to the new cluster and start background refresh
+		a.deviceCache.SwitchCluster(activeCluster)
+		if activeConfig.APIToken != "" {
+			a.deviceCache.StartBackground(a.zededaClient, 75*time.Second)
+		}
 	}
 
 	return config.Save(a.config)
+}
+
+// GetDeviceCache returns the current device/project cache.
+func (a *App) GetDeviceCache() *cache.ClusterCache {
+	return a.deviceCache.Get()
+}
+
+// IsDeviceCacheRefreshing returns true if a cache refresh is in progress.
+func (a *App) IsDeviceCacheRefreshing() bool {
+	return a.deviceCache.IsRefreshing()
+}
+
+// RefreshDeviceCache triggers an async cache refresh.
+func (a *App) RefreshDeviceCache() {
+	go a.deviceCache.Refresh(a.zededaClient)
 }
 
 // GetUserInfo returns cluster URL and enterprise for display
@@ -261,8 +303,36 @@ func (a *App) GetProjects() ([]zededa.Project, error) {
 }
 
 // SearchNodes searches for nodes matching the query
-func (a *App) SearchNodes(query string) ([]zededa.Node, error) {
-	return a.zededaClient.SearchNodes(query)
+func (a *App) SearchNodes(query string, limit int, pageToken string, projectID string, nodeID string) (*zededa.SearchResult, error) {
+	if nodeID != "" {
+		// Fetch a specific node using its status endpoint
+		status, err := a.zededaClient.GetDeviceStatus(nodeID)
+		if err != nil || status == nil {
+			// Not found or error -> return empty search result
+			return &zededa.SearchResult{Nodes: []zededa.Node{}}, nil
+		}
+		
+		// Convert DeviceStatus to Node format for the frontend
+		runState := strings.TrimSpace(status.RunState)
+		nodeStatus := "offline"
+		if runState == "RUN_STATE_ONLINE" || runState == "ONLINE" {
+			nodeStatus = "online"
+		} else {
+			nodeStatus = strings.TrimPrefix(runState, "RUN_STATE_")
+			nodeStatus = strings.ToLower(nodeStatus)
+		}
+		
+		return &zededa.SearchResult{
+			Nodes: []zededa.Node{{
+				ID:       status.ID,
+				Name:     status.Name,
+				Project:  status.ProjectID,
+				Status:   nodeStatus,
+				EdgeView: true,
+			}},
+		}, nil
+	}
+	return a.zededaClient.SearchNodesWithToken(query, limit, pageToken, projectID)
 }
 
 // AddRecentDevice adds a device ID to the recent list
@@ -581,6 +651,11 @@ func (a *App) StartTunnel(nodeID, targetIP string, targetPort int, protocol stri
 		if err == nil {
 			fmt.Printf("Tunnel started on localhost:%d -> %s (ID: %s)\n", port, target, tunnelID)
 			return port, tunnelID, nil
+		}
+
+		// External policy denial — don't retry, return immediately with user-friendly message
+		if errors.Is(err, session.ErrExternalPolicyDenied) {
+			return 0, "", err
 		}
 
 		// Handle "no device online" specifically (or timeouts which might be same cause)
@@ -1047,6 +1122,7 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 		Containers    []zededa.ContainerInfo `json:"containers,omitempty"`
 		AppType       string                 `json:"appType,omitempty"`
 		DockerCompose string                 `json:"dockerCompose,omitempty"`
+		AppVersion    string                 `json:"appVersion,omitempty"`
 		InternalIPs   []string               `json:"internalIps,omitempty"`
 		Error         string                 `json:"error,omitempty"`
 	}
@@ -1062,10 +1138,10 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 	var dockerRuntimeIPs []string
 
 	for _, app := range apps {
-		// fmt.Printf("DEBUG: Fetching Cloud API status for app %s...\n", app.Name)
+		fmt.Printf("DEBUG: Fetching Cloud API status for app %s (ID: %s)...\n", app.Name, app.ID)
 		status, err := a.zededaClient.GetAppInstanceDetails(app.ID)
 		if err != nil {
-			// fmt.Printf("DEBUG: Failed to get status for app %s: %v\n", app.Name, err)
+			fmt.Printf("DEBUG: Failed to get status for app %s: %v\n", app.Name, err)
 			continue
 		}
 		appDetails[app.ID] = (*zededa.AppInstanceStatus)(status)
@@ -1077,10 +1153,6 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 		} else {
 			appConfigs[app.ID] = config
 		}
-
-		// Log status for investigation
-		// statusJSON, _ := json.MarshalIndent(status, "", "  ")
-		// fmt.Printf("DEBUG: API Status for app %s:\n%s\n", app.Name, string(statusJSON))
 
 		// Collect Docker Runtime IPs for fallback (if still needed)
 		if status.DeploymentType == "DEPLOYMENT_TYPE_DOCKER_RUNTIME" {
@@ -1106,6 +1178,8 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 			Status: app.RunState,
 			ID:     app.ID,
 		}
+
+		// App version will be populated from config.UserDefinedVersion below
 
 		status, hasStatus := appDetails[app.ID]
 		config, hasConfig := appConfigs[app.ID]
@@ -1152,27 +1226,58 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 			svc.AppType = status.AppType
 			if hasConfig {
 				svc.DockerCompose = config.DockerCompose
+				if config.UserDefinedVersion != "" {
+					svc.AppVersion = config.UserDefinedVersion
+				}
 			}
+			fmt.Printf("DEBUG-VER: App %s appType=%s deploymentType=%s appVersion=%q\n", app.Name, svc.AppType, status.DeploymentType, svc.AppVersion)
 
-			// Identify internal IPs by checking Network Instance kind
+			// Identify internal (airgapped) IPs by correlating:
+			//   config.Interfaces[i].netinstid → GetNetworkInstanceDetails → kind
+			//   config.Interfaces[i].intfname  → status.NetStatusList[j].ifName → ipAddrs
 			var internalIPs []string
-			for _, ns := range status.NetStatusList {
-				if ns.NetworkID != "" {
-					ni, err := a.zededaClient.GetNetworkInstanceDetails(ns.NetworkID)
-					if err == nil && ni != nil {
-						// Debug log to identify the correct Kind
-						fmt.Printf("DEBUG-NET: App %s, NetID %s, Kind=%s, Type=%s, Name=%s\n", app.Name, ns.NetworkID, ni.Kind, ni.Type, ni.Name)
+			if hasConfig {
+				for _, iface := range config.Interfaces {
+					netInstID, _ := iface["netinstid"].(string)
+					if netInstID == "" {
+						continue
+					}
+					ni, err := a.zededaClient.GetNetworkInstanceDetails(netInstID)
+					if err != nil {
+						fmt.Printf("DEBUG-NET: App %s, failed to get NetInst %s: %v\n", app.Name, netInstID, err)
+						continue
+					}
+					fmt.Printf("DEBUG-NET: App %s, NetInst %s, Kind=%s, Name=%s\n", app.Name, netInstID, ni.Kind, ni.Name)
 
-						// Kind "NETWORK_INSTANCE_KIND_LOCAL" indicates an airgapped/local network
-						if ni.Kind == "NETWORK_INSTANCE_KIND_LOCAL" {
+					if ni.Kind != "NETWORK_INSTANCE_KIND_LOCAL" {
+						continue
+					}
+
+					// Find matching status entry by interface name
+					intfName, _ := iface["intfname"].(string)
+					for _, ns := range status.NetStatusList {
+						if ns.IfName == intfName && intfName != "" {
+							fmt.Printf("DEBUG-NET: App %s, LOCAL network %s matched ifName=%s, IPs=%v\n", app.Name, ni.Name, intfName, ns.IPs)
 							internalIPs = append(internalIPs, ns.IPs...)
+							break
 						}
-					} else if err != nil {
-						fmt.Printf("DEBUG-NET: Failed to get NI details for %s: %v\n", ns.NetworkID, err)
+					}
+
+					// Fallback: if interface name didn't match, try by index
+					if len(internalIPs) == 0 {
+						for i, cfgIf := range config.Interfaces {
+							cfgNetInstID, _ := cfgIf["netinstid"].(string)
+							if cfgNetInstID == netInstID && i < len(status.NetStatusList) {
+								fmt.Printf("DEBUG-NET: App %s, LOCAL network %s matched by index=%d, IPs=%v\n", app.Name, ni.Name, i, status.NetStatusList[i].IPs)
+								internalIPs = append(internalIPs, status.NetStatusList[i].IPs...)
+								break
+							}
+						}
 					}
 				}
 			}
 			svc.InternalIPs = uniqueStrings(internalIPs)
+			fmt.Printf("DEBUG-NET: App %s final IPs=%v, InternalIPs=%v\n", app.Name, svc.IPs, svc.InternalIPs)
 
 			// Extract VNC info (from Config)
 			if hasConfig && config.VMInfo.VNC {
@@ -1361,6 +1466,43 @@ func (a *App) StartCollectInfo(nodeID string) (string, error) {
 // GetCollectInfoJob returns the job status
 func (a *App) GetCollectInfoJob(jobID string) *session.CollectInfoJob {
 	return a.sessionManager.GetCollectInfoJob(jobID)
+}
+
+// StartComposeDiagnostics starts a diagnostics collection from a compose runtime VM.
+func (a *App) StartComposeDiagnostics(nodeID, appName, appIP, username, password string) (string, error) {
+	fmt.Printf("DEBUG: App.StartComposeDiagnostics for node %s, app %s, ip %s\n", nodeID, appName, appIP)
+
+	// Ensure we have a cached session (revive from Cloud API if needed)
+	_, ok := a.sessionManager.GetCachedSession(nodeID)
+	if !ok {
+		evStatus, err := a.zededaClient.GetEdgeViewStatus(nodeID)
+		if err == nil && evStatus != nil && evStatus.Token != "" && evStatus.DispURL != "" {
+			sc, parseErr := a.zededaClient.ParseEdgeViewToken(evStatus.Token)
+			if parseErr == nil {
+				if !strings.HasPrefix(sc.URL, "wss://") && !strings.HasPrefix(sc.URL, "ws://") {
+					if sc.URL == "" {
+						sc.URL = evStatus.DispURL
+						if !strings.HasPrefix(sc.URL, "http") && !strings.HasPrefix(sc.URL, "ws") {
+							sc.URL = "wss://" + sc.URL
+						}
+					}
+				}
+				expiresAt := time.Now().Add(4*time.Hour + 50*time.Minute)
+				a.sessionManager.StoreCachedSession(nodeID, sc, 0, expiresAt)
+			} else {
+				return "", fmt.Errorf("failed to parse active token: %w", parseErr)
+			}
+		} else {
+			return "", fmt.Errorf("no active EdgeView session found")
+		}
+	}
+
+	return a.sessionManager.StartComposeDiagnostics(nodeID, appName, appIP, username, password)
+}
+
+// GetComposeDiagnosticsJob returns the compose diagnostics job status
+func (a *App) GetComposeDiagnosticsJob(jobID string) *session.ComposeDiagnosticsJob {
+	return a.sessionManager.GetComposeDiagnosticsJob(jobID)
 }
 
 // VerifyToken checks if the provided token is valid

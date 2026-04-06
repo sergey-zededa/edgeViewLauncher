@@ -2,10 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import React from 'react';
 import App from './App';
-import * as electronAPI from './electronAPI';
+import * as tauriAPI from './tauriAPI';
 
 // Mock all electron API methods
-vi.mock('./electronAPI', () => ({
+vi.mock('./tauriAPI', () => ({
   SearchNodes: vi.fn(),
   ConnectToNode: vi.fn(),
   GetSettings: vi.fn(),
@@ -30,47 +30,49 @@ vi.mock('./electronAPI', () => ({
   ListTunnels: vi.fn(),
   AddRecentDevice: vi.fn(),
   VerifyToken: vi.fn(),
-  OnUpdateAvailable: vi.fn(() => () => {}),
-  OnUpdateNotAvailable: vi.fn(() => () => {}),
-  OnUpdateDownloadProgress: vi.fn(() => () => {}),
-  OnUpdateDownloaded: vi.fn(() => () => {}),
-  OnUpdateError: vi.fn(() => () => {}),
+  OnUpdateAvailable: vi.fn(() => () => { }),
+  OnUpdateNotAvailable: vi.fn(() => () => { }),
+  OnUpdateDownloadProgress: vi.fn(() => () => { }),
+  OnUpdateDownloaded: vi.fn(() => () => { }),
+  OnUpdateError: vi.fn(() => () => { }),
   DownloadUpdate: vi.fn(),
   InstallUpdate: vi.fn(),
   SecureStorageStatus: vi.fn(),
   SecureStorageMigrate: vi.fn(),
   SecureStorageGetSettings: vi.fn(),
   SecureStorageSaveSettings: vi.fn(),
-}));
-
-// Mock window.electronAPI for version info
-global.window.electronAPI = {
+  InjectSecureConfig: vi.fn().mockResolvedValue(),
+  GetDeviceCache: vi.fn().mockResolvedValue({ devices: [], projects: [], updatedAt: new Date().toISOString(), isRefreshing: false }),
+  RefreshDeviceCache: vi.fn().mockResolvedValue({ started: true }),
   getElectronAppInfo: vi.fn().mockResolvedValue({
     version: '1.0.0',
     buildNumber: 'test',
     buildDate: '2024-01-01',
     gitCommit: 'abc123'
   }),
-  getSystemTimeFormat: vi.fn().mockResolvedValue(false)
-};
+  getSystemTimeFormat: vi.fn().mockResolvedValue(false),
+  openExternal: vi.fn()
+}));
+
+// Mock window.tauriAPI for version info is no longer needed as we import directly
 
 describe('Secure Storage Integration', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    
+
     // Default mocks
-    electronAPI.SearchNodes.mockResolvedValue([]);
-    electronAPI.ListTunnels.mockResolvedValue([]);
-    electronAPI.GetUserInfo.mockResolvedValue({
+    tauriAPI.SearchNodes.mockResolvedValue([]);
+    tauriAPI.ListTunnels.mockResolvedValue([]);
+    tauriAPI.GetUserInfo.mockResolvedValue({
       clusterUrl: 'https://test.com',
       enterprise: 'test-ent',
       clusterName: 'Test Cluster'
     });
-    electronAPI.GetEnterprise.mockResolvedValue({
+    tauriAPI.GetEnterprise.mockResolvedValue({
       id: 'ent-1',
       name: 'Test Enterprise'
     });
-    electronAPI.GetProjects.mockResolvedValue([]);
+    tauriAPI.GetProjects.mockResolvedValue([]);
   });
 
   describe('Initial Load with Secure Storage', () => {
@@ -83,14 +85,14 @@ describe('Secure Storage Integration', () => {
         recentDevices: []
       };
 
-      electronAPI.SecureStorageStatus.mockResolvedValue({
+      tauriAPI.SecureStorageStatus.mockResolvedValue({
         encryptionAvailable: true,
         secureTokensExist: true,
         needsMigration: false,
         backupExists: false
       });
 
-      electronAPI.SecureStorageGetSettings.mockResolvedValue({
+      tauriAPI.SecureStorageGetSettings.mockResolvedValue({
         ...mockConfig,
         clusters: [
           { ...mockConfig.clusters[0], apiToken: 'ent:token123' }
@@ -100,20 +102,20 @@ describe('Secure Storage Integration', () => {
       render(<App />);
 
       await waitFor(() => {
-        expect(electronAPI.SecureStorageStatus).toHaveBeenCalled();
-        expect(electronAPI.SecureStorageGetSettings).toHaveBeenCalled();
+        expect(tauriAPI.SecureStorageStatus).toHaveBeenCalled();
+        expect(tauriAPI.SecureStorageGetSettings).toHaveBeenCalled();
       });
     });
 
     it('should show settings dialog if no config exists', async () => {
-      electronAPI.SecureStorageStatus.mockResolvedValue({
+      tauriAPI.SecureStorageStatus.mockResolvedValue({
         encryptionAvailable: true,
         secureTokensExist: false,
         needsMigration: false,
         backupExists: false
       });
 
-      electronAPI.SecureStorageGetSettings.mockResolvedValue(null);
+      tauriAPI.SecureStorageGetSettings.mockResolvedValue(null);
 
       render(<App />);
 
@@ -126,7 +128,7 @@ describe('Secure Storage Integration', () => {
 
   describe('Migration Flow', () => {
     it('should detect migration needed and auto-migrate', async () => {
-      electronAPI.SecureStorageStatus.mockResolvedValue({
+      tauriAPI.SecureStorageStatus.mockResolvedValue({
         encryptionAvailable: true,
         secureTokensExist: false,
         needsMigration: true,
@@ -134,7 +136,7 @@ describe('Secure Storage Integration', () => {
       });
 
       // Delay migration to allow checking loading state
-      electronAPI.SecureStorageMigrate.mockImplementation(() => 
+      tauriAPI.SecureStorageMigrate.mockImplementation(() =>
         new Promise(resolve => setTimeout(() => resolve({
           success: true,
           message: 'Successfully migrated 1 token(s) to secure storage',
@@ -142,7 +144,7 @@ describe('Secure Storage Integration', () => {
         }), 100))
       );
 
-      electronAPI.SecureStorageGetSettings.mockResolvedValue({
+      tauriAPI.SecureStorageGetSettings.mockResolvedValue({
         clusters: [
           { name: 'Test', baseUrl: 'https://test.com', tokenEncrypted: true, apiToken: 'ent:token' }
         ],
@@ -159,25 +161,25 @@ describe('Secure Storage Integration', () => {
 
       // Should complete migration
       await waitFor(() => {
-        expect(electronAPI.SecureStorageMigrate).toHaveBeenCalled();
+        expect(tauriAPI.SecureStorageMigrate).toHaveBeenCalled();
         expect(screen.getByText(/successfully migrated to secure storage/i)).toBeInTheDocument();
       });
     });
 
     it('should show error if migration fails', async () => {
-      electronAPI.SecureStorageStatus.mockResolvedValue({
+      tauriAPI.SecureStorageStatus.mockResolvedValue({
         encryptionAvailable: true,
         secureTokensExist: false,
         needsMigration: true,
         backupExists: false
       });
 
-      electronAPI.SecureStorageMigrate.mockResolvedValue({
+      tauriAPI.SecureStorageMigrate.mockResolvedValue({
         success: false,
         error: 'Migration failed: Config file not found'
       });
 
-      electronAPI.SecureStorageGetSettings.mockResolvedValue({
+      tauriAPI.SecureStorageGetSettings.mockResolvedValue({
         clusters: [],
         activeCluster: '',
         recentDevices: []
@@ -191,14 +193,14 @@ describe('Secure Storage Integration', () => {
     });
 
     it('should not migrate if encryption is unavailable', async () => {
-      electronAPI.SecureStorageStatus.mockResolvedValue({
+      tauriAPI.SecureStorageStatus.mockResolvedValue({
         encryptionAvailable: false,
         secureTokensExist: false,
         needsMigration: true,
         backupExists: false
       });
 
-      electronAPI.SecureStorageGetSettings.mockResolvedValue({
+      tauriAPI.SecureStorageGetSettings.mockResolvedValue({
         clusters: [],
         activeCluster: '',
         recentDevices: []
@@ -207,8 +209,8 @@ describe('Secure Storage Integration', () => {
       render(<App />);
 
       await waitFor(() => {
-        expect(electronAPI.SecureStorageMigrate).not.toHaveBeenCalled();
-        expect(screen.getByText(/Secure storage is not available/i)).toBeInTheDocument();
+        expect(tauriAPI.SecureStorageMigrate).not.toHaveBeenCalled();
+        expect(screen.getByText(/Secure storage not available/i)).toBeInTheDocument();
       });
     });
   });
@@ -223,31 +225,29 @@ describe('Secure Storage Integration', () => {
         recentDevices: []
       };
 
-      electronAPI.SecureStorageStatus.mockResolvedValue({
+      tauriAPI.SecureStorageStatus.mockResolvedValue({
         encryptionAvailable: true,
         secureTokensExist: true,
         needsMigration: false,
         backupExists: false
       });
 
-      electronAPI.SecureStorageGetSettings.mockResolvedValue(mockConfig);
-      electronAPI.SecureStorageSaveSettings.mockResolvedValue({ success: true });
+      tauriAPI.SecureStorageGetSettings.mockResolvedValue(mockConfig);
+      tauriAPI.SecureStorageSaveSettings.mockResolvedValue({ success: true });
 
       // Open settings by finding the container
       const { container } = render(<App />);
-      
+
       await waitFor(() => {
-        expect(electronAPI.SecureStorageGetSettings).toHaveBeenCalled();
+        expect(tauriAPI.SecureStorageGetSettings).toHaveBeenCalled();
       });
 
-      // Find the settings icon by class name directly from container
-      // There are two icons with class settings-icon: Info (About) and Settings
-      // The Settings icon is the second one
-      const icons = container.querySelectorAll('.settings-icon');
-      if (icons.length >= 2) {
-        fireEvent.click(icons[1]);
+      // Find the Settings icon by its title attribute
+      const settingsIcon = container.querySelector('.settings-icon[title="Settings"]');
+      if (settingsIcon) {
+        fireEvent.click(settingsIcon);
       } else {
-         throw new Error('Could not find settings icon');
+        throw new Error('Could not find settings icon');
       }
 
       // Wait for settings panel
@@ -262,7 +262,7 @@ describe('Secure Storage Integration', () => {
       fireEvent.click(saveButton);
 
       await waitFor(() => {
-        expect(electronAPI.SecureStorageSaveSettings).toHaveBeenCalledWith(
+        expect(tauriAPI.SecureStorageSaveSettings).toHaveBeenCalledWith(
           expect.objectContaining({
             clusters: expect.arrayContaining([
               expect.objectContaining({
@@ -277,20 +277,20 @@ describe('Secure Storage Integration', () => {
     });
 
     it('should handle save errors gracefully', async () => {
-      electronAPI.SecureStorageStatus.mockResolvedValue({
+      tauriAPI.SecureStorageStatus.mockResolvedValue({
         encryptionAvailable: true,
         secureTokensExist: true,
         needsMigration: false,
         backupExists: false
       });
 
-      electronAPI.SecureStorageGetSettings.mockResolvedValue({
+      tauriAPI.SecureStorageGetSettings.mockResolvedValue({
         clusters: [{ name: 'Test', baseUrl: 'https://test.com', apiToken: 'ent:token' }],
         activeCluster: 'Test',
         recentDevices: []
       });
 
-      electronAPI.SecureStorageSaveSettings.mockRejectedValue(
+      tauriAPI.SecureStorageSaveSettings.mockRejectedValue(
         new Error('Failed to encrypt tokens')
       );
 
@@ -298,14 +298,14 @@ describe('Secure Storage Integration', () => {
       const { container } = render(<App />);
 
       await waitFor(() => {
-        expect(electronAPI.SecureStorageGetSettings).toHaveBeenCalled();
+        expect(tauriAPI.SecureStorageGetSettings).toHaveBeenCalled();
       });
 
-      const icons = container.querySelectorAll('.settings-icon');
-      if (icons.length >= 2) {
-        fireEvent.click(icons[1]);
+      const settingsIcon = container.querySelector('.settings-icon[title="Settings"]');
+      if (settingsIcon) {
+        fireEvent.click(settingsIcon);
       } else {
-         throw new Error('Could not find settings icon');
+        throw new Error('Could not find settings icon');
       }
 
       // Wait for settings panel to open
@@ -323,7 +323,7 @@ describe('Secure Storage Integration', () => {
 
   describe('Fallback Behavior', () => {
     it('should fallback to legacy GetSettings if secure storage fails', async () => {
-      electronAPI.SecureStorageStatus.mockRejectedValue(
+      tauriAPI.SecureStorageStatus.mockRejectedValue(
         new Error('Secure storage not available')
       );
 
@@ -333,12 +333,12 @@ describe('Secure Storage Integration', () => {
         recentDevices: []
       };
 
-      electronAPI.GetSettings.mockResolvedValue(legacyConfig);
+      tauriAPI.GetSettings.mockResolvedValue(legacyConfig);
 
       render(<App />);
 
       await waitFor(() => {
-        expect(electronAPI.GetSettings).toHaveBeenCalled();
+        expect(tauriAPI.GetSettings).toHaveBeenCalled();
       });
     });
   });
@@ -351,25 +351,30 @@ describe('Secure Storage Integration', () => {
         status: 'online'
       };
 
-      electronAPI.SecureStorageStatus.mockResolvedValue({
+      tauriAPI.SecureStorageStatus.mockResolvedValue({
         encryptionAvailable: true,
         secureTokensExist: true,
         needsMigration: false,
         backupExists: false
       });
 
-      electronAPI.SecureStorageGetSettings.mockResolvedValue({
+      tauriAPI.SecureStorageGetSettings.mockResolvedValue({
         clusters: [{ name: 'Test', baseUrl: 'https://test.com', apiToken: 'ent:token' }],
         activeCluster: 'Test',
         recentDevices: []
       });
 
-      electronAPI.SearchNodes.mockResolvedValue([mockNode]);
-      electronAPI.AddRecentDevice.mockResolvedValue({});
-      electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify({ apps: [] }));
-      electronAPI.GetSSHStatus.mockResolvedValue({ status: 'disabled' });
-      electronAPI.GetSessionStatus.mockResolvedValue({ active: false });
-      electronAPI.VerifyTunnel.mockResolvedValue({});
+      tauriAPI.GetDeviceCache.mockResolvedValue({
+        devices: [mockNode],
+        projects: [],
+        updatedAt: new Date().toISOString(),
+        isRefreshing: false,
+      });
+      tauriAPI.AddRecentDevice.mockResolvedValue({});
+      tauriAPI.GetDeviceServices.mockResolvedValue(JSON.stringify({ apps: [] }));
+      tauriAPI.GetSSHStatus.mockResolvedValue({ status: 'disabled' });
+      tauriAPI.GetSessionStatus.mockResolvedValue({ active: false });
+      tauriAPI.VerifyTunnel.mockResolvedValue({});
 
       render(<App />);
 
@@ -377,41 +382,37 @@ describe('Secure Storage Integration', () => {
         expect(screen.getByPlaceholderText(/Search nodes/i)).toBeInTheDocument();
       });
 
-      // Type search query
-      const searchInput = screen.getByPlaceholderText(/Search nodes/i);
-      fireEvent.change(searchInput, { target: { value: 'Test' } });
-
-      // Wait for search results
+      // Device should appear from cache
       await waitFor(() => {
-        expect(electronAPI.SearchNodes).toHaveBeenCalledWith('Test');
+        expect(tauriAPI.GetDeviceCache).toHaveBeenCalled();
       });
 
       // Connect to node (simulate)
-      electronAPI.ConnectToNode.mockResolvedValue('Connected');
+      tauriAPI.ConnectToNode.mockResolvedValue('Connected');
 
       // Click on device would trigger handleConnect
       // which calls AddRecentDevice and SecureStorageGetSettings
       // Note: This would require more complex interaction simulation
       // For now, we verify the mock is set up correctly
-      expect(electronAPI.SecureStorageGetSettings).toBeDefined();
+      expect(tauriAPI.SecureStorageGetSettings).toBeDefined();
     });
   });
 
   describe('Banner Dismissal', () => {
     it('should allow dismissing migration success banner', async () => {
-      electronAPI.SecureStorageStatus.mockResolvedValue({
+      tauriAPI.SecureStorageStatus.mockResolvedValue({
         encryptionAvailable: true,
         secureTokensExist: false,
         needsMigration: true,
         backupExists: false
       });
 
-      electronAPI.SecureStorageMigrate.mockResolvedValue({
+      tauriAPI.SecureStorageMigrate.mockResolvedValue({
         success: true,
         message: 'Migration successful'
       });
 
-      electronAPI.SecureStorageGetSettings.mockResolvedValue({
+      tauriAPI.SecureStorageGetSettings.mockResolvedValue({
         clusters: [{ name: 'Test', baseUrl: 'https://test.com', apiToken: 'ent:token' }],
         activeCluster: 'Test',
         recentDevices: []
@@ -426,7 +427,7 @@ describe('Secure Storage Integration', () => {
 
       // Find and click dismiss button
       const dismissButtons = screen.getAllByRole('button');
-      const dismissButton = dismissButtons.find(btn => 
+      const dismissButton = dismissButtons.find(btn =>
         btn.querySelector('svg') // Looking for the X icon
       );
 
@@ -440,19 +441,19 @@ describe('Secure Storage Integration', () => {
     });
 
     it('should allow dismissing migration error banner', async () => {
-      electronAPI.SecureStorageStatus.mockResolvedValue({
+      tauriAPI.SecureStorageStatus.mockResolvedValue({
         encryptionAvailable: true,
         secureTokensExist: false,
         needsMigration: true,
         backupExists: false
       });
 
-      electronAPI.SecureStorageMigrate.mockResolvedValue({
+      tauriAPI.SecureStorageMigrate.mockResolvedValue({
         success: false,
         error: 'Test error'
       });
 
-      electronAPI.SecureStorageGetSettings.mockResolvedValue({
+      tauriAPI.SecureStorageGetSettings.mockResolvedValue({
         clusters: [],
         activeCluster: '',
         recentDevices: []
@@ -466,7 +467,7 @@ describe('Secure Storage Integration', () => {
 
       // Find and click dismiss button
       const dismissButtons = screen.getAllByRole('button');
-      const dismissButton = dismissButtons.find(btn => 
+      const dismissButton = dismissButtons.find(btn =>
         btn.querySelector('svg')
       );
 

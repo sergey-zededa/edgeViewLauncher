@@ -25,40 +25,41 @@ func NewWSConnAdapter(conn *websocket.Conn) *WSConnAdapter {
 }
 
 func (a *WSConnAdapter) Read(b []byte) (n int, err error) {
-	a.mu.Lock()
-	if a.failed {
+	for {
+		a.mu.Lock()
+		if a.failed {
+			a.mu.Unlock()
+			return 0, io.EOF
+		}
 		a.mu.Unlock()
-		return 0, io.EOF
-	}
-	a.mu.Unlock()
 
-	if a.reader == nil {
-		messageType, reader, err := a.Conn.NextReader()
+		if a.reader == nil {
+			messageType, reader, err := a.Conn.NextReader()
+			if err != nil {
+				fmt.Printf("WSConnAdapter: NextReader error: %v\n", err)
+				a.mu.Lock()
+				a.failed = true
+				a.mu.Unlock()
+				return 0, err
+			}
+			if messageType != websocket.BinaryMessage && messageType != websocket.TextMessage {
+				continue // Skip non-data messages and try next
+			}
+			a.reader = reader
+		}
+		n, err = a.reader.Read(b)
+		if err == io.EOF {
+			a.reader = nil
+			continue // Get next message via loop instead of recursion
+		}
 		if err != nil {
-			fmt.Printf("WSConnAdapter: NextReader error: %v\n", err)
+			fmt.Printf("WSConnAdapter: Reader.Read error: %v\n", err)
 			a.mu.Lock()
 			a.failed = true
 			a.mu.Unlock()
-			return 0, err
 		}
-		if messageType != websocket.BinaryMessage && messageType != websocket.TextMessage {
-			return 0, nil // Skip non-data messages
-		}
-		a.reader = reader
+		return n, err
 	}
-	n, err = a.reader.Read(b)
-	if err == io.EOF {
-		a.reader = nil
-		// Recursively call Read to get next message
-		return a.Read(b)
-	}
-	if err != nil {
-		fmt.Printf("WSConnAdapter: Reader.Read error: %v\n", err)
-		a.mu.Lock()
-		a.failed = true
-		a.mu.Unlock()
-	}
-	return n, err
 }
 
 func (a *WSConnAdapter) Write(b []byte) (n int, err error) {

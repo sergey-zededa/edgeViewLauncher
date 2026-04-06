@@ -21,5 +21,9 @@
     <!-- Allow JIT compilation (for Node.js/Electron) -->
     <key>com.apple.security.cs.allow-jit</key>
     <true/>
+
+    <!-- get-task-allow must be false for production (Apple rejects notarization otherwise) -->
+    <key>com.apple.security.get-task-allow</key>
+    <false/>
 </dict>
 </plist>

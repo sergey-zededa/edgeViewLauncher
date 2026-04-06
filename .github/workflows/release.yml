@@ -31,16 +31,10 @@ jobs:
             package-lock.json
             frontend/package-lock.json
 
-      - name: Cache electron-builder artifacts
-        uses: actions/cache@v5
+      - name: Cache Cargo and Tauri artifacts
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/Library/Caches/electron-builder
-            ~/.cache/electron-builder
-            ~\AppData\Local\electron-builder\Cache
-          key: ${{ runner.os }}-electron-builder-${{ hashFiles('package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-electron-builder-
+          workspaces: src-tauri -> target
 
       - name: Install dependencies
         run: |
@@ -53,35 +47,108 @@ jobs:
       - name: Build Go backend (ARM64)
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          GOOS=darwin GOARCH=arm64 go build -ldflags="-X 'main.Version=$VERSION'" -o edgeview-backend-arm64 ./cmd/edgeview-backend
+          GOOS=darwin GOARCH=arm64 go build -ldflags="-X 'main.Version=$VERSION'" -o src-tauri/binaries/edgeview-backend-aarch64-apple-darwin ./cmd/edgeview-backend
 
       - name: Build Go backend (x64)
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          GOOS=darwin GOARCH=amd64 go build -ldflags="-X 'main.Version=$VERSION'" -o edgeview-backend-amd64 ./cmd/edgeview-backend
+          GOOS=darwin GOARCH=amd64 go build -ldflags="-X 'main.Version=$VERSION'" -o src-tauri/binaries/edgeview-backend-x86_64-apple-darwin ./cmd/edgeview-backend
 
-      - name: Create universal Go binary
-        run: |
-          lipo -create -output edgeview-backend edgeview-backend-arm64 edgeview-backend-amd64
-          rm edgeview-backend-arm64 edgeview-backend-amd64
+      - name: Create universal Go backend binary
+        run: lipo -create -output src-tauri/binaries/edgeview-backend-universal-apple-darwin src-tauri/binaries/edgeview-backend-aarch64-apple-darwin src-tauri/binaries/edgeview-backend-x86_64-apple-darwin
 
       - name: Generate build info
-        run: npm run prebuild
+        run: node scripts/generate-build-info.js
 
-      - name: Build Electron app (macOS universal)
+      - name: Install x86_64 Rust target for universal build
+        run: rustup target add x86_64-apple-darwin
+
+      - name: Configure Apple code signing
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --mac --publish always
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+          CERT_PASS: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          SIGN_ID: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          A_ID: ${{ secrets.APPLE_ID }}
+          A_PASS: ${{ secrets.APPLE_PASSWORD }}
+          A_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "$CERT" ]; then
+            echo "APPLE_CERTIFICATE<<EOCERT" >> $GITHUB_ENV
+            echo "$CERT" >> $GITHUB_ENV
+            echo "EOCERT" >> $GITHUB_ENV
+            echo "APPLE_CERTIFICATE_PASSWORD=$CERT_PASS" >> $GITHUB_ENV
+            echo "APPLE_SIGNING_IDENTITY=$SIGN_ID" >> $GITHUB_ENV
+            echo "APPLE_ID=$A_ID" >> $GITHUB_ENV
+            echo "APPLE_PASSWORD=$A_PASS" >> $GITHUB_ENV
+            echo "APPLE_TEAM_ID=$A_TEAM" >> $GITHUB_ENV
+            echo "Apple code signing configured"
+          else
+            echo "Apple code signing skipped (no certificate configured)"
+          fi
+
+      - name: Build Tauri app (macOS universal)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx tauri build --target universal-apple-darwin
+
+      - name: Stage macOS release files
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          MACOS_DIR="src-tauri/target/universal-apple-darwin/release/bundle/macos"
+          DMG_DIR="src-tauri/target/universal-apple-darwin/release/bundle/dmg"
+          mkdir -p staging
+
+          # Copy DMG installer
+          find "$DMG_DIR" -maxdepth 1 -name "*.dmg" -exec cp {} staging/ \;
+
+          # Create updater archive from .app bundle
+          APP_TAR="EdgeView Launcher.app.tar.gz"
+          tar czf "staging/${APP_TAR}" -C "$MACOS_DIR" "EdgeView Launcher.app"
+
+          # Sign the updater archive (reads key from TAURI_SIGNING_PRIVATE_KEY env)
+          npx tauri signer sign "staging/${APP_TAR}"
+
+          # Electron bridge: zip of .app bundle
+          cd "$MACOS_DIR"
+          ditto -c -k --sequesterRsrc --keepParent "EdgeView Launcher.app" "EdgeViewLauncher-${VERSION}-mac.zip"
+          cd -
+          cp "${MACOS_DIR}/EdgeViewLauncher-${VERSION}-mac.zip" staging/
+
+          # Electron bridge: latest-mac.yml
+          SHA512=$(shasum -a 512 "staging/EdgeViewLauncher-${VERSION}-mac.zip" | cut -f1 -d' ' | xxd -r -p | base64)
+          SIZE=$(stat -f%z "staging/EdgeViewLauncher-${VERSION}-mac.zip")
+          DATE=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+          cat > staging/latest-mac.yml << EOYML
+          version: ${VERSION}
+          files:
+            - url: EdgeViewLauncher-${VERSION}-mac.zip
+              sha512: ${SHA512}
+              size: ${SIZE}
+          path: EdgeViewLauncher-${VERSION}-mac.zip
+          sha512: ${SHA512}
+          releaseDate: '${DATE}'
+          EOYML
+
+          # Updater info for latest.json
+          if [ -f "staging/${APP_TAR}.sig" ]; then
+            cp "staging/${APP_TAR}.sig" staging/updater-mac-sig.txt
+            echo -n "${APP_TAR}" | tr ' ' '.' > staging/updater-mac-filename.txt
+          else
+            echo "WARNING: No .sig file generated for macOS updater archive"
+          fi
+
+          echo "Staged macOS files:"
+          ls -la staging/
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
           name: macos
-          path: |
-            dist-electron/*.dmg
-            dist-electron/*.zip
-            dist-electron/latest-mac.yml
-            dist-electron/*.blockmap
+          path: staging
           retention-days: 5
 
   build-windows:
@@ -106,13 +173,10 @@ jobs:
             package-lock.json
             frontend/package-lock.json
 
-      - name: Cache electron-builder artifacts
-        uses: actions/cache@v5
+      - name: Cache Cargo and Tauri artifacts
+        uses: Swatinem/rust-cache@v2
         with:
-          path: ~\AppData\Local\electron-builder\Cache
-          key: ${{ runner.os }}-electron-builder-${{ hashFiles('package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-electron-builder-
+          workspaces: src-tauri -> target
 
       - name: Install dependencies
         run: |
@@ -127,24 +191,80 @@ jobs:
           $VERSION = node -p "require('./package.json').version"
           $env:GOOS = "windows"
           $env:GOARCH = "amd64"
-          go build -ldflags="-X 'main.Version=$VERSION'" -o edgeview-backend.exe ./cmd/edgeview-backend
+          go build -ldflags="-X 'main.Version=$VERSION'" -o src-tauri\binaries\edgeview-backend-x86_64-pc-windows-msvc.exe ./cmd/edgeview-backend
 
       - name: Generate build info
-        run: npm run prebuild
+        run: node scripts/generate-build-info.js
 
-      - name: Build Electron app (NSIS installer)
+      - name: Build Tauri app (Windows)
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --win --x64 --publish always
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx tauri build --target x86_64-pc-windows-msvc
+
+      - name: Stage Windows release files
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          $VERSION = node -p "require('./package.json').version"
+          $NSIS_DIR = "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis"
+          $MSI_DIR = "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi"
+          New-Item -ItemType Directory -Force -Path staging | Out-Null
+
+          # Main artifacts
+          Copy-Item "$NSIS_DIR/*.exe" staging/
+          Copy-Item "$MSI_DIR/*.msi" staging/ -ErrorAction SilentlyContinue
+
+          # Create updater archive (zip the NSIS exe)
+          $EXE = Get-ChildItem "staging/*-setup.exe" | Select-Object -First 1
+          $NSIS_ZIP_NAME = $EXE.BaseName + ".nsis.zip"
+          Compress-Archive -Path $EXE.FullName -DestinationPath "staging/$NSIS_ZIP_NAME"
+
+          # Sign the updater archive (reads key from TAURI_SIGNING_PRIVATE_KEY env)
+          npx tauri signer sign "staging/$NSIS_ZIP_NAME"
+
+          # Electron bridge: latest.yml
+          $HASH = (Get-FileHash -Algorithm SHA512 $EXE.FullName).Hash
+          $BYTES = [byte[]]::new($HASH.Length / 2)
+          for ($i = 0; $i -lt $HASH.Length; $i += 2) {
+            $BYTES[$i/2] = [Convert]::ToByte($HASH.Substring($i, 2), 16)
+          }
+          $SHA512 = [Convert]::ToBase64String($BYTES)
+          $SIZE = $EXE.Length
+          $DATE = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.000Z")
+          # GitHub replaces spaces with dots in release asset names
+          $FILENAME = $EXE.Name.Replace(' ', '.')
+
+          @"
+          version: $VERSION
+          files:
+            - url: $FILENAME
+              sha512: $SHA512
+              size: $SIZE
+          path: $FILENAME
+          sha512: $SHA512
+          releaseDate: '$DATE'
+          "@ | Set-Content -Path "staging/latest.yml" -Encoding utf8
+
+          # Updater info for latest.json
+          $SIG_FILE = "staging/$NSIS_ZIP_NAME.sig"
+          if (Test-Path $SIG_FILE) {
+            Copy-Item $SIG_FILE "staging/updater-win-sig.txt"
+            $NSIS_ZIP_NAME.Replace(' ', '.') | Set-Content "staging/updater-win-filename.txt" -NoNewline
+          } else {
+            Write-Output "WARNING: No .sig file generated for Windows updater archive"
+          }
+
+          Write-Output "Staged Windows files:"
+          Get-ChildItem staging/
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
           name: windows-x64
-          path: |
-            dist-electron/*.exe
-            dist-electron/latest.yml
-            dist-electron/*.blockmap
+          path: staging
           retention-days: 5
 
   build-linux:
@@ -160,6 +280,9 @@ jobs:
           go-version: '1.24'
           cache: true
 
+      - name: Install Tauri System Dependencies
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -169,13 +292,10 @@ jobs:
             package-lock.json
             frontend/package-lock.json
 
-      - name: Cache electron-builder artifacts
-        uses: actions/cache@v5
+      - name: Cache Cargo and Tauri artifacts
+        uses: Swatinem/rust-cache@v2
         with:
-          path: ~/.cache/electron-builder
-          key: ${{ runner.os }}-electron-builder-${{ hashFiles('package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-electron-builder-
+          workspaces: src-tauri -> target
 
       - name: Install dependencies
         run: |
@@ -188,26 +308,75 @@ jobs:
       - name: Build Go backend (Linux x64)
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          GOOS=linux GOARCH=amd64 go build -ldflags="-X 'main.Version=$VERSION'" -o edgeview-backend ./cmd/edgeview-backend
+          GOOS=linux GOARCH=amd64 go build -ldflags="-X 'main.Version=$VERSION'" -o src-tauri/binaries/edgeview-backend-x86_64-unknown-linux-gnu ./cmd/edgeview-backend
 
       - name: Generate build info
-        run: npm run prebuild
+        run: node scripts/generate-build-info.js
 
-      - name: Build Electron app (AppImage & deb)
+      - name: Build Tauri app (Linux)
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --linux --x64 --publish always
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx tauri build --target x86_64-unknown-linux-gnu
+
+      - name: Stage Linux release files
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          APPIMAGE_DIR="src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage"
+          DEB_DIR="src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb"
+          RPM_DIR="src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/rpm"
+          mkdir -p staging
+
+          # Copy main installer artifacts
+          find "$APPIMAGE_DIR" -maxdepth 1 -name "*.AppImage" ! -name "*.sig" -exec cp {} staging/ \;
+          find "$DEB_DIR" -maxdepth 1 -name "*.deb" ! -name "*.sig" -exec cp {} staging/ \;
+          find "$RPM_DIR" -maxdepth 1 -name "*.rpm" ! -name "*.sig" -exec cp {} staging/ \;
+
+          # Create updater archive from AppImage
+          APPIMAGE=$(find staging -maxdepth 1 -name "*.AppImage" | head -1)
+          APPIMAGE_BASENAME=$(basename "$APPIMAGE")
+          APPIMAGE_TAR="${APPIMAGE_BASENAME}.tar.gz"
+          tar czf "staging/${APPIMAGE_TAR}" -C staging "$APPIMAGE_BASENAME"
+
+          # Sign the updater archive (reads key from TAURI_SIGNING_PRIVATE_KEY env)
+          npx tauri signer sign "staging/${APPIMAGE_TAR}"
+
+          # Electron bridge: latest-linux.yml
+          # GitHub replaces spaces with dots in release asset names
+          FILENAME=$(echo "$APPIMAGE_BASENAME" | tr ' ' '.')
+          SHA512=$(sha512sum "$APPIMAGE" | cut -f1 -d' ' | xxd -r -p | base64 -w0)
+          SIZE=$(stat --printf="%s" "$APPIMAGE")
+          DATE=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+          cat > staging/latest-linux.yml << EOYML
+          version: ${VERSION}
+          files:
+            - url: ${FILENAME}
+              sha512: ${SHA512}
+              size: ${SIZE}
+          path: ${FILENAME}
+          sha512: ${SHA512}
+          releaseDate: '${DATE}'
+          EOYML
+
+          # Updater info for latest.json
+          if [ -f "staging/${APPIMAGE_TAR}.sig" ]; then
+            cp "staging/${APPIMAGE_TAR}.sig" staging/updater-linux-sig.txt
+            echo -n "${APPIMAGE_TAR}" | tr ' ' '.' > staging/updater-linux-filename.txt
+          else
+            echo "WARNING: No .sig file generated for Linux updater archive"
+          fi
+
+          echo "Staged Linux files:"
+          ls -la staging/
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
           name: linux-x64
-          path: |
-            dist-electron/*.AppImage
-            dist-electron/*.deb
-            dist-electron/*.rpm
-            dist-electron/latest-linux.yml
-            dist-electron/*.blockmap
+          path: staging
           retention-days: 5
 
   release:
@@ -223,19 +392,96 @@ jobs:
         with:
           path: artifacts
 
-      - name: Display structure of downloaded files
-        run: ls -R artifacts
+      - name: Display artifact structure
+        run: find artifacts -type f | sort
+
+      - name: Generate latest.json for Tauri updater
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="${{ github.ref_name }}"
+          REPO="sergey-zededa/edgeViewLauncher"
+          DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          # Read per-platform signatures
+          for p in mac win linux; do
+            echo -n "" > /tmp/${p}_sig.txt
+            echo -n "" > /tmp/${p}_url.txt
+          done
+
+          if [ -f artifacts/macos/updater-mac-sig.txt ]; then
+            cp artifacts/macos/updater-mac-sig.txt /tmp/mac_sig.txt
+            FNAME=$(cat artifacts/macos/updater-mac-filename.txt)
+            echo -n "https://github.com/${REPO}/releases/download/${TAG}/${FNAME}" > /tmp/mac_url.txt
+            echo "macOS updater: ${FNAME}"
+          fi
+
+          if [ -f artifacts/windows-x64/updater-win-sig.txt ]; then
+            cp artifacts/windows-x64/updater-win-sig.txt /tmp/win_sig.txt
+            FNAME=$(cat artifacts/windows-x64/updater-win-filename.txt)
+            echo -n "https://github.com/${REPO}/releases/download/${TAG}/${FNAME}" > /tmp/win_url.txt
+            echo "Windows updater: ${FNAME}"
+          fi
+
+          if [ -f artifacts/linux-x64/updater-linux-sig.txt ]; then
+            cp artifacts/linux-x64/updater-linux-sig.txt /tmp/linux_sig.txt
+            FNAME=$(cat artifacts/linux-x64/updater-linux-filename.txt)
+            echo -n "https://github.com/${REPO}/releases/download/${TAG}/${FNAME}" > /tmp/linux_url.txt
+            echo "Linux updater: ${FNAME}"
+          fi
+
+          node -e "
+            const fs = require('fs');
+            const read = (f) => { try { return fs.readFileSync(f, 'utf8').trim(); } catch { return ''; } };
+            const json = {
+              version: '${VERSION}',
+              notes: 'See release notes on GitHub',
+              pub_date: '${DATE}',
+              platforms: {}
+            };
+            const macSig = read('/tmp/mac_sig.txt');
+            const macUrl = read('/tmp/mac_url.txt');
+            const winSig = read('/tmp/win_sig.txt');
+            const winUrl = read('/tmp/win_url.txt');
+            const linuxSig = read('/tmp/linux_sig.txt');
+            const linuxUrl = read('/tmp/linux_url.txt');
+            if (macSig && macUrl) {
+              json.platforms['darwin-universal'] = { signature: macSig, url: macUrl };
+              json.platforms['darwin-aarch64'] = { signature: macSig, url: macUrl };
+              json.platforms['darwin-x86_64'] = { signature: macSig, url: macUrl };
+            }
+            if (winSig && winUrl) {
+              json.platforms['windows-x86_64'] = { signature: winSig, url: winUrl };
+            }
+            if (linuxSig && linuxUrl) {
+              json.platforms['linux-x86_64'] = { signature: linuxSig, url: linuxUrl };
+            }
+            fs.writeFileSync('artifacts/latest.json', JSON.stringify(json, null, 2));
+            console.log(JSON.stringify(json, null, 2));
+          "
+
+      - name: Collect release files
+        run: |
+          mkdir -p release-assets
+          for dir in artifacts/macos artifacts/windows-x64 artifacts/linux-x64; do
+            for f in "$dir"/*; do
+              [ -f "$f" ] || continue
+              name=$(basename "$f")
+              # Skip updater temp files
+              case "$name" in updater-*) continue ;; esac
+              cp "$f" "release-assets/$name"
+            done
+          done
+          cp artifacts/latest.json release-assets/
+          echo "Release assets:"
+          ls -la release-assets/
 
       - name: Create GitHub Release
         uses: ncipollo/release-action@v1
         with:
-          artifacts: |
-            artifacts/macos/*
-            artifacts/windows-x64/*
-            artifacts/linux-x64/*
+          artifacts: "release-assets/*"
           generateReleaseNotes: true
           draft: false
           prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-alpha') || contains(github.ref, '-rc') }}
           allowUpdates: true
-          removeArtifacts: false
+          removeArtifacts: true
           token: ${{ secrets.GITHUB_TOKEN }}

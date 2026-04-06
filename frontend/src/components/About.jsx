@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getElectronAppInfo, openExternal } from '../tauriAPI';
 import { X, ExternalLink } from 'lucide-react';
 import zededaLogo from '../assets/zededa-logo.png';
 import './About.css';
@@ -12,7 +13,7 @@ const About = ({ onClose }) => {
     });
 
     useEffect(() => {
-        window.electronAPI.getElectronAppInfo().then(info => {
+        getElectronAppInfo().then(info => {
             setAppInfo(info);
         }).catch(err => {
             console.error('Failed to get app info:', err);
@@ -42,7 +43,7 @@ const About = ({ onClose }) => {
                                 href="#"
                                 onClick={(e) => {
                                     e.preventDefault();
-                                    window.electronAPI.openExternal('https://zededa.com');
+                                    openExternal('https://zededa.com');
                                 }}
                                 className="website-link"
                             >
@@ -53,7 +54,7 @@ const About = ({ onClose }) => {
                                 href="#"
                                 onClick={(e) => {
                                     e.preventDefault();
-                                    window.electronAPI.openExternal('https://github.com/sergey-zededa/edgeViewLauncher/releases');
+                                    openExternal('https://github.com/sergey-zededa/edgeViewLauncher/releases');
                                 }}
                                 className="website-link"
                             >

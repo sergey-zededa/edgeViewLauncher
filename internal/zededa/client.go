@@ -23,9 +23,16 @@ type Node struct {
 	EdgeView bool   `json:"edgeview"` // Check if this field exists or we need to check config
 }
 
+type SearchResult struct {
+	Nodes     []Node `json:"nodes"`
+	NextToken string `json:"nextToken"` // Cursor for next page, empty if no more results
+}
+
 // API Response structures
 type DeviceListResponse struct {
-	List []Device `json:"list"`
+	List    []Device        `json:"list"`
+	Next    json.RawMessage `json:"next"`  // Cursor for next page — may be a string or an object
+	Total   int             `json:"totalCount,omitempty"`
 }
 
 type Device struct {
@@ -38,13 +45,15 @@ type Device struct {
 }
 
 type AppInstance struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	AppType    string `json:"appType"`
-	RunState   string `json:"runState"`
-	AdminState string `json:"adminState"` // Add adminState
-	ProjectID  string `json:"projectId"`
-	DeviceID   string `json:"deviceId"` // Device UUID this app belongs to
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	AppType        string   `json:"appType"`
+	RunState       string   `json:"runState"`
+	AdminState     string   `json:"adminState"`
+	ProjectID      string   `json:"projectId"`
+	DeviceID       string   `json:"deviceId"`
+	DeploymentType string   `json:"deploymentType"`
+	SwInfo         []SWInfo `json:"swInfo,omitempty"`
 }
 
 type AppInstanceListResponse struct {
@@ -106,7 +115,11 @@ func (c *Client) UpdateConfig(baseURL, token string) {
 	c.Token = token
 }
 
-func (c *Client) SearchNodes(query string) ([]Node, error) {
+func (c *Client) SearchNodes(query string, limit, skip int, projectID string) (*SearchResult, error) {
+	return c.SearchNodesWithToken(query, limit, "", projectID)
+}
+
+func (c *Client) SearchNodesWithToken(query string, limit int, pageToken string, projectID string) (*SearchResult, error) {
 	if c.Token == "" {
 		return nil, fmt.Errorf("API token not configured")
 	}
@@ -118,11 +131,39 @@ func (c *Client) SearchNodes(query string) ([]Node, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	q := req.URL.Query()
+	// Add pagination parameters
+	if limit > 0 {
+		q.Add("top", fmt.Sprintf("%d", limit))
+	}
+	if pageToken != "" {
+		// The next cursor from the API is a JSON object like
+		// {"pageToken":"200","orderBy":["name:ASC"],"pageNum":1,"pageSize":200,"totalPages":24}
+		// Extract the pageToken value and pass as next.pageToken query parameter.
+		var nextObj struct {
+			PageToken string `json:"pageToken"`
+		}
+		if json.Unmarshal([]byte(pageToken), &nextObj) == nil && nextObj.PageToken != "" {
+			q.Add("next.pageToken", nextObj.PageToken)
+		} else {
+			// Plain string token — pass as-is
+			q.Add("next.pageToken", pageToken)
+		}
+	}
+
+	// Add filtering parameters
+	if projectID != "" {
+		q.Add("projectId", projectID)
+	}
+	if query != "" {
+		q.Add("namePattern", query)
+	}
+
+	req.URL.RawQuery = q.Encode()
+
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 	req.Header.Set("Content-Type", "application/json")
-
-	// fmt.Printf("DEBUG: API Request: [%s] %s\n", req.Method, req.URL.String())
-	// fmt.Printf("DEBUG: API Auth: %s\n", req.Header.Get("Authorization"))
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -131,7 +172,8 @@ func (c *Client) SearchNodes(query string) ([]Node, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API request failed with status: %d, body: %s", resp.StatusCode, string(body))
 	}
 
 	var deviceResp DeviceListResponse
@@ -140,19 +182,12 @@ func (c *Client) SearchNodes(query string) ([]Node, error) {
 	}
 
 	var results []Node
-	query = strings.ToLower(query)
 	for _, d := range deviceResp.List {
-		// Simple client-side filter for MVP
-		if query != "" && !strings.Contains(strings.ToLower(d.Name), query) && !strings.Contains(strings.ToLower(d.ProjectID), query) {
-			continue
-		}
-
 		runState := strings.TrimSpace(d.RunState)
 		status := "offline"
 		if runState == "RUN_STATE_ONLINE" || runState == "ONLINE" {
 			status = "online"
 		} else {
-			// Cleanup status string for display (e.g. RUN_STATE_REBOOTING -> REBOOTING)
 			status = strings.TrimPrefix(runState, "RUN_STATE_")
 			status = strings.ToLower(status)
 		}
@@ -160,12 +195,38 @@ func (c *Client) SearchNodes(query string) ([]Node, error) {
 		results = append(results, Node{
 			ID:       d.ID,
 			Name:     d.Name,
-			Project:  d.ProjectID, // TODO: Resolve project name
+			Project:  d.ProjectID,
 			Status:   status,
-			EdgeView: true, // TODO: Check actual EdgeView status
+			EdgeView: true,
 		})
 	}
-	return results, nil
+	// Extract next-page cursor.  The API always returns a Cursor object
+	// (even on the last page), so we must inspect its fields to decide
+	// whether more pages remain.
+	nextToken := ""
+	if len(deviceResp.Next) > 0 && string(deviceResp.Next) != "null" {
+		// Try to parse as a cursor object with pagination metadata
+		var cursor struct {
+			PageToken  string `json:"pageToken"`
+			PageNum    int    `json:"pageNum"`
+			TotalPages int    `json:"totalPages"`
+		}
+		if json.Unmarshal(deviceResp.Next, &cursor) == nil {
+			// There are more pages only if pageNum < totalPages
+			if cursor.TotalPages > 0 && cursor.PageNum < cursor.TotalPages {
+				nextToken = string(deviceResp.Next)
+			}
+		} else {
+			// Fallback: treat as opaque string token
+			var s string
+			if json.Unmarshal(deviceResp.Next, &s) == nil && s != "" {
+				nextToken = s
+			} else {
+				nextToken = string(deviceResp.Next)
+			}
+		}
+	}
+	return &SearchResult{Nodes: results, NextToken: nextToken}, nil
 }
 
 // GetDeviceAppInstances fetches the list of app instances for a specific device
@@ -221,10 +282,9 @@ type VMInfo struct {
 }
 
 type NetStatus struct {
-	Up        bool     `json:"up"`
-	IfName    string   `json:"ifName"`
-	IPs       []string `json:"ipAddrs"`
-	NetworkID string   `json:"networkId"`
+	Up     bool     `json:"up"`
+	IfName string   `json:"ifName"`
+	IPs    []string `json:"ipAddrs"`
 }
 
 type PortMap struct {
@@ -245,18 +305,24 @@ type ContainerInfo struct {
 
 // AppInstanceConfig matches the configuration schema for an edge app instance
 type AppInstanceConfig struct {
-	ID            string                   `json:"id"`
-	Name          string                   `json:"name"`
-	Activate      bool                     `json:"activate"`
-	VMInfo        VMInfo                   `json:"vminfo,omitempty"`
-	Interfaces    []map[string]interface{} `json:"interfaces,omitempty"`
-	DockerCompose string                   `json:"dockerComposeYamlText,omitempty"`
+	ID                 string                   `json:"id"`
+	Name               string                   `json:"name"`
+	Activate           bool                     `json:"activate"`
+	VMInfo             VMInfo                   `json:"vminfo,omitempty"`
+	Interfaces         []map[string]interface{} `json:"interfaces,omitempty"`
+	DockerCompose      string                   `json:"dockerComposeYamlText,omitempty"`
+	UserDefinedVersion string                   `json:"userDefinedVersion,omitempty"`
 }
 
 type DeviceError struct {
 	Description string `json:"description"`
 	Severity    string `json:"severity"`
 	// Timestamp might be an object or string depending on API version, ignoring for now or mapping to interface{}
+}
+
+// SWInfo represents software version information from the API
+type SWInfo struct {
+	Version string `json:"version"`
 }
 
 // AppInstanceStatus matches the AppInstStatusMsg schema for an edge app instance
@@ -270,6 +336,7 @@ type AppInstanceStatus struct {
 	DeploymentType string          `json:"deploymentType"`
 	Containers     []ContainerInfo `json:"containerStatusList,omitempty"`
 	ErrInfo        []DeviceError   `json:"errInfo,omitempty"`
+	SwInfo         []SWInfo        `json:"swInfo,omitempty"`
 }
 
 // AppInstanceDetails is kept for compatibility and represents the status message
@@ -291,7 +358,7 @@ func (c *Client) GetAppInstanceDetails(appInstanceID string) (*AppInstanceDetail
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %v", err)
 	}
@@ -318,13 +385,15 @@ type NetworkInstanceStatus struct {
 	Type string `json:"type"`
 }
 
-// GetNetworkInstanceDetails fetches detailed network instance status information
+// GetNetworkInstanceDetails fetches network instance configuration to determine its kind.
+// Uses the config endpoint (/api/v1/netinsts/id/{id}) because the 'kind' field
+// (e.g. NETWORK_INSTANCE_KIND_LOCAL) is a configuration property, not a runtime status field.
 func (c *Client) GetNetworkInstanceDetails(niID string) (*NetworkInstanceStatus, error) {
 	if c.Token == "" {
 		return nil, fmt.Errorf("API token not configured")
 	}
 
-	url := fmt.Sprintf("%s/api/v1/netinsts/id/%s/status", c.BaseURL, niID)
+	url := fmt.Sprintf("%s/api/v1/netinsts/id/%s", c.BaseURL, niID)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %v", err)
@@ -333,7 +402,7 @@ func (c *Client) GetNetworkInstanceDetails(niID string) (*NetworkInstanceStatus,
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %v", err)
 	}
@@ -367,7 +436,7 @@ func (c *Client) GetAppInstanceConfig(appInstanceID string) (*AppInstanceConfig,
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %v", err)
 	}

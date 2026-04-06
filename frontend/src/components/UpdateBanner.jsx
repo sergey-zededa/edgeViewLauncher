@@ -1,6 +1,14 @@
 import React from 'react';
-import { Download, RefreshCw, X, AlertCircle } from 'lucide-react';
+import { Download, ExternalLink, RefreshCw, X, AlertCircle } from 'lucide-react';
+import { openExternal } from '../tauriAPI';
 import './UpdateBanner.css';
+
+const RELEASES_URL = 'https://github.com/sergey-zededa/edgeViewLauncher/releases/latest';
+
+const isMacOS = typeof navigator !== 'undefined' && (
+    navigator.platform?.startsWith('Mac') ||
+    navigator.userAgent?.includes('Macintosh')
+);
 
 function UpdateBanner({ updateState, onDownload, onInstall, onDismiss }) {
     const { status, version, downloadProgress, error } = updateState;
@@ -9,7 +17,42 @@ function UpdateBanner({ updateState, onDownload, onInstall, onDismiss }) {
         return null;
     }
 
+    // On macOS, auto-updates fail due to missing code signing.
+    // Show a manual download message instead of download/install controls.
+    const renderMacOSManualUpdate = () => (
+        <>
+            <div className="update-banner-message">
+                <AlertCircle size={18} />
+                <div className="update-text-container">
+                    <span>Version <strong>{version}</strong> is available.</span>
+                    <span className="update-macos-note">Auto-updates are temporarily unavailable on macOS. Please download the latest version manually.</span>
+                </div>
+            </div>
+            <div className="update-banner-actions">
+                <button
+                    className="update-banner-button primary"
+                    onClick={() => openExternal(RELEASES_URL)}
+                >
+                    <ExternalLink size={16} />
+                    Download from GitHub
+                </button>
+                <button
+                    className="update-banner-button secondary"
+                    onClick={onDismiss}
+                >
+                    <X size={16} />
+                    Dismiss
+                </button>
+            </div>
+        </>
+    );
+
     const renderContent = () => {
+        // Intercept all update-in-progress states on macOS
+        if (isMacOS && (status === 'available' || status === 'downloading' || status === 'downloaded')) {
+            return renderMacOSManualUpdate();
+        }
+
         switch (status) {
             case 'available':
                 return (
@@ -18,12 +61,12 @@ function UpdateBanner({ updateState, onDownload, onInstall, onDismiss }) {
                             <AlertCircle size={18} />
                             <div className="update-text-container">
                                 <span>New version <strong>{version}</strong> is available</span>
-                                <a 
-                                    href="#" 
+                                <a
+                                    href="#"
                                     className="update-whats-new-link"
                                     onClick={(e) => {
                                         e.preventDefault();
-                                        window.electronAPI.openExternal('https://github.com/sergey-zededa/edgeViewLauncher/releases');
+                                        openExternal('https://github.com/sergey-zededa/edgeViewLauncher/releases');
                                     }}
                                 >
                                     (What's new?)
@@ -31,14 +74,14 @@ function UpdateBanner({ updateState, onDownload, onInstall, onDismiss }) {
                             </div>
                         </div>
                         <div className="update-banner-actions">
-                            <button 
+                            <button
                                 className="update-banner-button primary"
                                 onClick={onDownload}
                             >
                                 <Download size={16} />
                                 Download
                             </button>
-                            <button 
+                            <button
                                 className="update-banner-button secondary"
                                 onClick={onDismiss}
                             >
@@ -57,8 +100,8 @@ function UpdateBanner({ updateState, onDownload, onInstall, onDismiss }) {
                             <span>Downloading update... {downloadProgress}%</span>
                         </div>
                         <div className="update-banner-progress">
-                            <div 
-                                className="update-banner-progress-bar" 
+                            <div
+                                className="update-banner-progress-bar"
                                 style={{ width: `${downloadProgress}%` }}
                             />
                         </div>
@@ -73,14 +116,14 @@ function UpdateBanner({ updateState, onDownload, onInstall, onDismiss }) {
                             <span>Update <strong>{version}</strong> is ready to install</span>
                         </div>
                         <div className="update-banner-actions">
-                            <button 
+                            <button
                                 className="update-banner-button primary"
                                 onClick={onInstall}
                             >
                                 <RefreshCw size={16} />
                                 Restart & Install
                             </button>
-                            <button 
+                            <button
                                 className="update-banner-button secondary"
                                 onClick={onDismiss}
                             >
@@ -98,7 +141,7 @@ function UpdateBanner({ updateState, onDownload, onInstall, onDismiss }) {
                             <span>Update failed: {error || 'Unknown error'}</span>
                         </div>
                         <div className="update-banner-actions">
-                            <button 
+                            <button
                                 className="update-banner-button secondary"
                                 onClick={onDismiss}
                             >

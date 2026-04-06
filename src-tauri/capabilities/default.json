@@ -1,0 +1,21 @@
+{
+  "identifier": "default",
+  "description": "Default permissions for the app",
+  "windows": ["main", "terminal-*", "vnc-*"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "shell:allow-open",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "edgeview-backend",
+          "cmd": "edgeview-backend",
+          "sidecar": true,
+          "args": true
+        }
+      ]
+    }
+  ]
+}

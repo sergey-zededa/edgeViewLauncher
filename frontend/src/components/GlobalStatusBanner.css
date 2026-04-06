@@ -5,12 +5,14 @@
     gap: 16px;
     padding: 10px 20px;
     color: white;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    border: none;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
     animation: slideDown 0.3s ease-out;
     font-size: 13px;
     min-height: 40px;
     box-sizing: border-box;
+    position: relative;
+    z-index: 10000;
 }
 
 @keyframes slideDown {

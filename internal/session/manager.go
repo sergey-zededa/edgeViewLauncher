@@ -67,19 +67,22 @@ type Tunnel struct {
 }
 
 type Manager struct {
-	sessions    map[string]*CachedSession  // key is nodeID
-	tunnels     map[string]*Tunnel         // key is tunnel ID
-	collectJobs map[string]*CollectInfoJob // key is job ID
-	mu          sync.RWMutex
-	tunnelMu    sync.RWMutex
-	collectMu   sync.RWMutex
+	sessions        map[string]*CachedSession           // key is nodeID
+	tunnels         map[string]*Tunnel                  // key is tunnel ID
+	collectJobs     map[string]*CollectInfoJob          // key is job ID
+	composeDiagJobs map[string]*ComposeDiagnosticsJob   // key is job ID
+	mu              sync.RWMutex
+	tunnelMu        sync.RWMutex
+	collectMu       sync.RWMutex
+	composeDiagMu   sync.RWMutex
 }
 
 func NewManager() *Manager {
 	return &Manager{
-		sessions:    make(map[string]*CachedSession),
-		tunnels:     make(map[string]*Tunnel),
-		collectJobs: make(map[string]*CollectInfoJob),
+		sessions:        make(map[string]*CachedSession),
+		tunnels:         make(map[string]*Tunnel),
+		collectJobs:     make(map[string]*CollectInfoJob),
+		composeDiagJobs: make(map[string]*ComposeDiagnosticsJob),
 	}
 }
 
@@ -243,6 +246,10 @@ var (
 	// ErrBusyInstance is returned when EdgeView reports that the
 	// instance limit has been reached ("can't have more than 2 peers").
 	ErrBusyInstance = errors.New("device instance limit reached (can't have more than 2 peers)")
+
+	// ErrExternalPolicyDenied is returned when the device rejects the
+	// connection because the External Connection Policy is disabled.
+	ErrExternalPolicyDenied = errors.New("The target IP is not recognized as an internal EVE-OS address and the device's External Connection Policy is disabled. Enable it using the \"Enable Ext. Policy\" button in Device Configuration below, or in the device's EdgeView settings on ZEDEDA Cloud.")
 )
 
 // envelopeMsg matches original EdgeView crypto.go:30-33
@@ -401,6 +408,11 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 			seenNoDeviceOnline = true
 			fmt.Printf("DEBUG: Device is not online (attempt %d/%d). The device may not be connected to EdgeView yet.\n", attempt, maxRetries)
 			reportProgress(fmt.Sprintf("Device not online yet (attempt %d/%d)...", attempt, maxRetries))
+		} else if setupErr == ErrExternalPolicyDenied {
+			fmt.Printf("DEBUG: External connection policy denied — not retrying\n")
+			wsConn.Close()
+			listener.Close()
+			return 0, "", ErrExternalPolicyDenied
 		} else {
 			fmt.Printf("DEBUG: Tunnel setup failed: %v (attempt %d/%d)\n", setupErr, attempt, maxRetries)
 		}
@@ -488,9 +500,18 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 
 	m.RegisterTunnel(tunnel)
 
+	// Send an immediate keepalive to prevent the dispatcher/LB from timing out
+	// the idle WebSocket before the first TCP client connects (which may take
+	// several seconds as the frontend creates and loads the terminal window).
+	keepaliveData := tcpData{Version: 0, MappingID: 1, ChanNum: 0, Data: []byte{}}
+	kaBytes, _ := json.Marshal(keepaliveData)
+	if err := sendWrappedMessage(wsConn, kaBytes, config.Key, websocket.BinaryMessage, config.Enc); err != nil {
+		fmt.Printf("TUNNEL[%s] Initial keepalive failed: %v\n", tunnel.ID, err)
+	}
+
 	// Start the WebSocket reader that dispatches to TCP clients
 	go m.tunnelWSReader(tunnelCtx, tunnel)
-	// Start keep-alive loop
+	// Start keep-alive loop (reduced to 15s to stay well within dispatcher timeouts)
 	go m.tunnelKeepAlive(tunnelCtx, tunnel)
 
 	// Handle protocol-specific logic
@@ -594,6 +615,18 @@ func (m *Manager) waitForTcpSetupOK(wsConn *websocket.Conn, key string, timeout 
 
 			if strings.Contains(payloadStr, "+++tcpSetupOK+++") {
 				setupDone <- nil
+				return
+			}
+			if strings.Contains(payloadStr, "cmd policy check failed") {
+				if strings.Contains(payloadStr, "External policy not allow") {
+					setupDone <- ErrExternalPolicyDenied
+				} else {
+					setupDone <- fmt.Errorf("device rejected tunnel: %s", payloadStr)
+				}
+				return
+			}
+			if strings.Contains(payloadStr, "Error:") {
+				setupDone <- fmt.Errorf("device returned error: %s", payloadStr)
 				return
 			}
 			if strings.Contains(payloadStr, "+++Done+++") {
@@ -1340,11 +1373,10 @@ func (m *Manager) attemptTunnelReconnect(tunnel *Tunnel) bool {
 // 3. Must use BinaryMessage for TCP data to be processed correctly
 // 4. The DEVICE's keepalive is 90 seconds, but we see ~30s timeouts - cloud may be timing out device connection
 func (m *Manager) tunnelKeepAlive(ctx context.Context, tunnel *Tunnel) {
-	// Less aggressive: 30 seconds. The observed timeout is ~30-40s, so this should be safe
-	// while avoiding flooding the device with keepalives.
-	ticker := time.NewTicker(30 * time.Second)
+	// 15 seconds to stay well within dispatcher/LB idle timeouts.
+	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
-	fmt.Printf("TUNNEL[%s] Keep-alive started (30s BinaryMessage)\n", tunnel.ID)
+	fmt.Printf("TUNNEL[%s] Keep-alive started (15s BinaryMessage)\n", tunnel.ID)
 
 	keepaliveCount := 0
 	for {
@@ -1509,18 +1541,29 @@ func (m *Manager) tunnelWSReader(ctx context.Context, tunnel *Tunnel) {
 			if len(td.Data) > 0 {
 				tunnel.AddBytesReceived(len(td.Data))
 
+				// Copy td.Data so the next WebSocket read cannot overwrite it
+				// while it sits in the channel buffer waiting to be consumed.
+				dataCopy := make([]byte, len(td.Data))
+				copy(dataCopy, td.Data)
+
 				// Dispatch to the appropriate channel
 				tunnel.channelMu.RLock()
 				ch, ok := tunnel.channels[td.ChanNum]
 				tunnel.channelMu.RUnlock()
 
+				if !ok {
+					fmt.Printf("TUNNEL[%s] ChanNum=%d: WARNING no channel registered, dropping %d bytes\n",
+						tunnel.ID, td.ChanNum, len(dataCopy))
+				}
+
 				if ok {
 					select {
-					case ch <- td.Data:
+					case ch <- dataCopy:
 					case <-ctx.Done():
 						return
-					default:
-						// Channel full, drop data
+					case <-time.After(10 * time.Second):
+						fmt.Printf("TUNNEL[%s] ChanNum=%d: WARNING channel full for 10s, dropping %d bytes (queue=%d/%d)\n",
+							tunnel.ID, td.ChanNum, len(dataCopy), len(ch), cap(ch))
 					}
 				}
 			}
@@ -1552,8 +1595,9 @@ func (m *Manager) tunnelAcceptLoop(ctx context.Context, listener net.Listener, t
 			// Allocate a channel number for this TCP client
 			chanNum := uint16(atomic.AddUint32(&tunnel.nextChan, 1))
 
-			// Create a channel for incoming data from WebSocket
-			dataChan := make(chan []byte, 100)
+			// Create a channel for incoming data from WebSocket.
+			// Use a large buffer to avoid dropping SSH packets under load.
+			dataChan := make(chan []byte, 1000)
 			tunnel.channelMu.Lock()
 			if tunnel.channels == nil {
 				tunnel.channels = make(map[uint16]chan []byte)
@@ -1603,9 +1647,9 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 	if tunnel.wsConn != nil {
 		if err := sendWrappedMessage(tunnel.wsConn, initBytes, tunnel.config.Key, websocket.BinaryMessage, tunnel.config.Enc); err != nil {
 			fmt.Printf("TUNNEL[%s] ChanNum=%d: Failed to send init packet: %v\n", tunnel.ID, chanNum, err)
-		} else {
-			// fmt.Printf("TUNNEL[%s] ChanNum=%d: Sent init packet (empty tcpData)\n", tunnel.ID, chanNum)
 		}
+	} else {
+		fmt.Printf("TUNNEL[%s] ChanNum=%d: WARNING wsConn is nil, cannot send init packet\n", tunnel.ID, chanNum)
 	}
 	tunnel.wsMu.Unlock()
 
@@ -1725,8 +1769,9 @@ func (m *Manager) handleWSClient(ctx context.Context, wsConn *websocket.Conn, tu
 	// Allocate a channel number for this client
 	chanNum := uint16(atomic.AddUint32(&tunnel.nextChan, 1))
 
-	// Create a channel for incoming data from WebSocket
-	dataChan := make(chan []byte, 100)
+	// Create a channel for incoming data from WebSocket.
+	// Use a large buffer to avoid dropping SSH packets under load.
+	dataChan := make(chan []byte, 1000)
 	tunnel.channelMu.Lock()
 	if tunnel.channels == nil {
 		tunnel.channels = make(map[uint16]chan []byte)

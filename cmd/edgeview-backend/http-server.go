@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"edgeViewLauncher/internal/config"
@@ -37,7 +38,12 @@ func NewHTTPServer(port int) *HTTPServer {
 
 // Request/Response types
 type SearchNodesRequest struct {
-	Query string `json:"query"`
+	Query     string `json:"query"`
+	Limit     int    `json:"limit,omitempty"`
+	Skip      int    `json:"skip,omitempty"`      // Deprecated: kept for compatibility
+	PageToken string `json:"pageToken,omitempty"` // Cursor for next page
+	ProjectID string `json:"projectId,omitempty"`
+	NodeID    string `json:"nodeId,omitempty"`    // Fetch a specific node
 }
 
 type ConnectRequest struct {
@@ -94,13 +100,13 @@ func (s *HTTPServer) handleSearchNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nodes, err := s.app.SearchNodes(req.Query)
+	result, err := s.app.SearchNodes(req.Query, req.Limit, req.PageToken, req.ProjectID, req.NodeID)
 	if err != nil {
 		s.sendError(w, err)
 		return
 	}
 
-	s.sendSuccess(w, nodes)
+	s.sendSuccess(w, result)
 }
 
 func (s *HTTPServer) handleConnect(w http.ResponseWriter, r *http.Request) {
@@ -423,6 +429,49 @@ func (s *HTTPServer) handleContainerShell(w http.ResponseWriter, r *http.Request
 	})
 }
 
+func (s *HTTPServer) handleGetDeviceCache(w http.ResponseWriter, r *http.Request) {
+	cc := s.app.GetDeviceCache()
+
+	type respDevice struct {
+		ID      string `json:"id"`
+		Name    string `json:"name"`
+		Project string `json:"project"`
+		Status  string `json:"status"`
+	}
+	type respProject struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+
+	resp := map[string]interface{}{
+		"devices":      []respDevice{},
+		"projects":     []respProject{},
+		"updatedAt":    nil,
+		"isRefreshing": s.app.IsDeviceCacheRefreshing(),
+	}
+
+	if cc != nil {
+		devices := make([]respDevice, len(cc.Devices))
+		for i, d := range cc.Devices {
+			devices[i] = respDevice{ID: d.ID, Name: d.Name, Project: d.Project, Status: d.Status}
+		}
+		projects := make([]respProject, len(cc.Projects))
+		for i, p := range cc.Projects {
+			projects[i] = respProject{ID: p.ID, Name: p.Name}
+		}
+		resp["devices"] = devices
+		resp["projects"] = projects
+		resp["updatedAt"] = cc.UpdatedAt
+	}
+
+	s.sendSuccess(w, resp)
+}
+
+func (s *HTTPServer) handleRefreshDeviceCache(w http.ResponseWriter, r *http.Request) {
+	s.app.RefreshDeviceCache()
+	s.sendSuccess(w, map[string]bool{"started": true})
+}
+
 // Helper methods
 func (s *HTTPServer) sendSuccess(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
@@ -531,7 +580,12 @@ func (s *HTTPServer) Start() {
 	router.HandleFunc("/api/collect-info/start", s.handleStartCollectInfo).Methods("POST")
 	router.HandleFunc("/api/collect-info/status", s.handleGetCollectInfoStatus).Methods("GET")
 	router.HandleFunc("/api/collect-info/download", s.handleDownloadCollectInfo).Methods("GET")
+	router.HandleFunc("/api/compose-diagnostics/start", s.handleStartComposeDiagnostics).Methods("POST")
+	router.HandleFunc("/api/compose-diagnostics/status", s.handleGetComposeDiagnosticsStatus).Methods("GET")
+	router.HandleFunc("/api/compose-diagnostics/download", s.handleDownloadComposeDiagnostics).Methods("GET")
 	router.HandleFunc("/api/container-shell", s.handleContainerShell).Methods("POST")
+	router.HandleFunc("/api/device-cache", s.handleGetDeviceCache).Methods("GET")
+	router.HandleFunc("/api/device-cache/refresh", s.handleRefreshDeviceCache).Methods("POST")
 
 	// Health check
 	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -812,59 +866,56 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 		}))
 		authMethods = append(authMethods, ssh.PublicKeys(signer))
 	} else {
-		// New Logic: Interactive Auth
+		// Helper to prompt user for input via WebSocket
+		promptUser := func(prompt string) (string, error) {
+			wsConn.WriteMessage(websocket.TextMessage, []byte(prompt))
+			var answerBuf []rune
+			for {
+				select {
+				case chunk := <-authResponseChan:
+					for _, r := range chunk {
+						switch r {
+						case '\r', '\n':
+							wsConn.WriteMessage(websocket.TextMessage, []byte("\r\n"))
+							return string(answerBuf), nil
+						case 127, 8: // Backspace (DEL) or BS
+							if len(answerBuf) > 0 {
+								answerBuf = answerBuf[:len(answerBuf)-1]
+							}
+						default:
+							answerBuf = append(answerBuf, r)
+						}
+					}
+				case <-time.After(60 * time.Second):
+					log.Printf("SSH Auth: Timeout waiting for user input")
+					return "", fmt.Errorf("authentication timed out")
+				}
+			}
+		}
+
+		// Auth order: try publickey first (EVE-OS SSH uses key-only auth),
+		// then fall back to interactive methods for app containers.
 		authMethods = []ssh.AuthMethod{
 			ssh.PublicKeys(signer),
+			ssh.PasswordCallback(func() (string, error) {
+				log.Printf("SSH Auth: PasswordCallback called, prompting user")
+				return promptUser("\r\nPassword: ")
+			}),
 			ssh.KeyboardInteractive(func(user, instruction string, questions []string, echos []bool) (answers []string, err error) {
-				// Log the request for debugging
 				log.Printf("SSH Auth: KeyboardInteractive called. Instruction: %q, Questions: %v", instruction, questions)
-
-				// If no questions, just return
 				if len(questions) == 0 {
 					return nil, nil
 				}
-
-				// Prompt user for each question
 				answers = make([]string, len(questions))
 				for i, question := range questions {
-					// Format prompt cleanly
 					prompt := fmt.Sprintf("\r\n%s", question)
 					if instruction != "" {
 						prompt = fmt.Sprintf("\r\n%s\r\n%s", instruction, question)
 					}
-
-					// Send prompt to frontend
-					wsConn.WriteMessage(websocket.TextMessage, []byte(prompt))
-
-					// Wait for response - buffer input until newline
-					var answerBuf []rune
-				inputLoop:
-					for {
-						select {
-						case chunk := <-authResponseChan:
-							for _, r := range chunk {
-								switch r {
-								case '\r', '\n':
-									// Enter pressed, we're done
-									// Echo a newline so the user sees the prompt move down
-									wsConn.WriteMessage(websocket.TextMessage, []byte("\r\n"))
-									break inputLoop
-								case 127, 8: // Backspace (DEL) or BS
-									if len(answerBuf) > 0 {
-										answerBuf = answerBuf[:len(answerBuf)-1]
-									}
-								default:
-									// Append regular character
-									answerBuf = append(answerBuf, r)
-									// Do NOT echo password characters
-								}
-							}
-						case <-time.After(60 * time.Second):
-							log.Printf("SSH Auth: Timeout waiting for user input")
-							return nil, fmt.Errorf("authentication timed out")
-						}
+					answers[i], err = promptUser(prompt)
+					if err != nil {
+						return nil, err
 					}
-					answers[i] = string(answerBuf)
 					log.Printf("SSH Auth: Received answer length %d", len(answers[i]))
 				}
 				return answers, nil
@@ -888,13 +939,17 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rawConn.Close()
 
-	// Peek at the first few bytes to check for SSH version string vs plaintext error
-	// The standard requires the server to send "SSH-2.0-..."
+	// Peek at the first few bytes to check for SSH version string vs plaintext error.
+	// The standard requires the server to send "SSH-2.0-...".
+	// Use a generous timeout (30s) because for app containers, the EdgeView device
+	// must first dial the target IP:port through container networking, which can
+	// take several seconds (the device has a 30s dial timeout).
 	peekBuf := make([]byte, 4)
-	rawConn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	wsConn.WriteMessage(websocket.TextMessage, []byte("\r\nWaiting for remote SSH server...\r\n"))
+	rawConn.SetReadDeadline(time.Now().Add(30 * time.Second))
 	if _, err := io.ReadFull(rawConn, peekBuf); err != nil {
 		rawConn.SetReadDeadline(time.Time{}) // Reset deadline
-		wsConn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\nFailed to read protocol header: %v\r\n", err)))
+		wsConn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\n\x1b[1;31mSSH server did not respond within 30s.\x1b[0m\r\nThe device may be unable to reach the target host.\r\nCheck that the application is running and its SSH service is accessible.\r\n")))
 		return
 	}
 	rawConn.SetReadDeadline(time.Time{}) // Reset deadline
@@ -928,9 +983,16 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 		log.Printf("SSH: Authentication failed: %v", err)
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "unexpected message type 51") || strings.Contains(errMsg, "handshake failed") {
-			wsConn.WriteMessage(websocket.TextMessage, []byte("\r\n\x1b[1;33mAuthentication Failed: The device rejected the SSH key.\x1b[0m\r\n"))
-			wsConn.WriteMessage(websocket.TextMessage, []byte("If you recently updated the key, the device may still be applying the configuration.\r\n"))
-			wsConn.WriteMessage(websocket.TextMessage, []byte("Please wait 1-2 minutes and try again.\r\n"))
+			if password != "" {
+				// Password was provided upfront - likely a key issue
+				wsConn.WriteMessage(websocket.TextMessage, []byte("\r\n\x1b[1;33mAuthentication Failed: The device rejected the credentials.\x1b[0m\r\n"))
+				wsConn.WriteMessage(websocket.TextMessage, []byte("Please check your password and try again.\r\n"))
+			} else {
+				// Interactive auth was attempted
+				wsConn.WriteMessage(websocket.TextMessage, []byte("\r\n\x1b[1;33mAuthentication Failed: The device rejected all authentication methods.\x1b[0m\r\n"))
+				wsConn.WriteMessage(websocket.TextMessage, []byte("The device may not support interactive login, or the credentials were incorrect.\r\n"))
+				wsConn.WriteMessage(websocket.TextMessage, []byte("If using SSH key auth, the device may still be applying the configuration — wait 1-2 minutes and try again.\r\n"))
+			}
 		} else if strings.Contains(err.Error(), "unable to authenticate") {
 			wsConn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("\r\n\x1b[1;31mAuthentication failed:\x1b[0m %v\r\n", err)))
 		} else {
@@ -1000,13 +1062,19 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	// Mutex to protect concurrent WebSocket writes from stdout/stderr goroutines.
+	// gorilla/websocket does not support concurrent writers.
+	var wsMu sync.Mutex
+
 	// SSH -> WebSocket (Stdout)
 	go func() {
 		buf := make([]byte, 4096)
 		for {
 			n, err := stdout.Read(buf)
 			if n > 0 {
+				wsMu.Lock()
 				wsConn.WriteMessage(websocket.BinaryMessage, buf[:n])
+				wsMu.Unlock()
 			}
 			if err != nil {
 				wsConn.Close()
@@ -1021,7 +1089,9 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 		for {
 			n, err := stderr.Read(buf)
 			if n > 0 {
+				wsMu.Lock()
 				wsConn.WriteMessage(websocket.TextMessage, buf[:n])
+				wsMu.Unlock()
 			}
 			if err != nil {
 				return
@@ -1090,6 +1160,68 @@ func (s *HTTPServer) handleDownloadCollectInfo(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", job.Filename))
+	http.ServeFile(w, r, job.FilePath)
+}
+
+// ── Compose Diagnostics ──────────────────────────────────────────────────────
+
+func (s *HTTPServer) handleStartComposeDiagnostics(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		NodeID   string `json:"nodeId"`
+		AppName  string `json:"appName"`
+		AppIP    string `json:"appIP"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, err)
+		return
+	}
+	if req.NodeID == "" || req.AppIP == "" {
+		s.sendError(w, fmt.Errorf("nodeId and appIP are required"))
+		return
+	}
+	if req.Username == "" {
+		req.Username = "root"
+	}
+	jobID, err := s.app.StartComposeDiagnostics(req.NodeID, req.AppName, req.AppIP, req.Username, req.Password)
+	if err != nil {
+		s.sendError(w, err)
+		return
+	}
+	s.sendSuccess(w, map[string]string{"jobId": jobID})
+}
+
+func (s *HTTPServer) handleGetComposeDiagnosticsStatus(w http.ResponseWriter, r *http.Request) {
+	jobID := r.URL.Query().Get("jobId")
+	if jobID == "" {
+		s.sendError(w, fmt.Errorf("jobId required"))
+		return
+	}
+	job := s.app.GetComposeDiagnosticsJob(jobID)
+	if job == nil {
+		s.sendError(w, fmt.Errorf("job not found"))
+		return
+	}
+	s.sendSuccess(w, job)
+}
+
+func (s *HTTPServer) handleDownloadComposeDiagnostics(w http.ResponseWriter, r *http.Request) {
+	jobID := r.URL.Query().Get("jobId")
+	if jobID == "" {
+		http.Error(w, "jobId required", http.StatusBadRequest)
+		return
+	}
+	job := s.app.GetComposeDiagnosticsJob(jobID)
+	if job == nil {
+		http.Error(w, "job not found", http.StatusNotFound)
+		return
+	}
+	if job.Status != "completed" {
+		http.Error(w, "job not completed", http.StatusBadRequest)
+		return
+	}
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", job.Filename))
 	http.ServeFile(w, r, job.FilePath)
 }

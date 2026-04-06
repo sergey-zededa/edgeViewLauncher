@@ -102,6 +102,8 @@
             display: flex;
             flex-direction: column;
             gap: 2px;
+            user-select: none;
+            pointer-events: none;
         }
 
         #vnc-status {
@@ -191,7 +193,7 @@
 
 <body>
     <div id="vnc-container">
-        <div id="vnc-header">
+        <div id="vnc-header" data-tauri-drag-region>
             <div id="vnc-info">
                 <div id="vnc-status">
                     <span class="status-dot disconnected"></span>
@@ -200,7 +202,18 @@
                 <div id="vnc-details"></div>
             </div>
             <div id="vnc-header-controls">
-                <button class="header-btn" id="btn-close" title="Close Window">
+                <button class="header-btn" id="btn-close" title="Close Window (Leave Tunnel Open)">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="m19 5 3-3"></path>
+                        <path d="m2 22 3-3"></path>
+                        <path d="M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z"></path>
+                        <path d="M7.5 13.5 10 11"></path>
+                        <path d="M10.5 16.5 13 14"></path>
+                        <path d="m12 6 6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0Z"></path>
+                    </svg>
+                </button>
+                <button class="header-btn" id="btn-stop-tunnel" title="Stop Tunnel & Close Window" style="color: #ef4444; display: none;">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                         stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -224,6 +237,7 @@
 
     <script type="module">
         import RFB from '@novnc/novnc/lib/rfb.js';
+        import { resizeWindow, closeCurrentWindow, CloseTunnel } from './src/tauriAPI.js';
 
         const urlParams = new URLSearchParams(window.location.search);
         const port = urlParams.get('port');
@@ -331,8 +345,8 @@
 
                         console.log(`Resizing window to ${totalWidthInt}x${totalHeight} (Remote: ${width}x${height}, Header: ${headerHeight}, Controls: ${controlsHeight})`);
 
-                        if (window.electronAPI && window.electronAPI.resizeWindow) {
-                            window.electronAPI.resizeWindow(totalWidthInt, totalHeight);
+                        if (resizeWindow) {
+                            resizeWindow(totalWidthInt, totalHeight);
                         }
                     } else {
                         console.warn('Could not determine remote screen dimensions');
@@ -442,13 +456,23 @@
             }
         });
 
+        // Stop tunnel & close window button
+        if (tunnelId) {
+            const btnStopTunnel = document.getElementById('btn-stop-tunnel');
+            btnStopTunnel.style.display = 'flex';
+            btnStopTunnel.addEventListener('click', async () => {
+                try {
+                    await CloseTunnel(tunnelId);
+                } catch (err) {
+                    console.error('Failed to close tunnel:', err);
+                }
+                closeCurrentWindow().catch(() => window.close());
+            });
+        }
+
         // Close window button
         document.getElementById('btn-close').addEventListener('click', () => {
-            if (window.electronAPI && window.electronAPI.closeWindow) {
-                window.electronAPI.closeWindow();
-            } else {
-                window.close();
-            }
+            closeCurrentWindow().catch(() => window.close());
         });
     </script>
 </body>
