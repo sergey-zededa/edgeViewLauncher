@@ -1,8 +1,8 @@
-/// File-download command with native save dialog.
-///
-/// Replaces ipcMain.handle('save-collected-file', ...) from electron-main.js.
-/// Downloads a streaming response from the Go backend and saves it to a
-/// user-chosen path via the native macOS/Windows/Linux save dialog.
+// File-download command with native save dialog.
+//
+// Replaces ipcMain.handle('save-collected-file', ...) from electron-main.js.
+// Downloads a streaming response from the Go backend and saves it to a
+// user-chosen path via the native macOS/Windows/Linux save dialog.
 
 use crate::state::AppState;
 use serde_json::Value;

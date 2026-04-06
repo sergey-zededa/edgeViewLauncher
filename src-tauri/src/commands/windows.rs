@@ -1,10 +1,10 @@
-/// Window management commands.
-///
-/// Replaces the following ipcMain.handle calls from electron-main.js:
-///   - open-terminal-window
-///   - open-vnc-window
-///   - resize-window
-///   - close-current-window
+// Window management commands.
+//
+// Replaces the following ipcMain.handle calls from electron-main.js:
+//   - open-terminal-window
+//   - open-vnc-window
+//   - resize-window
+//   - close-current-window
 
 use serde::Deserialize;
 use serde_json::Value;

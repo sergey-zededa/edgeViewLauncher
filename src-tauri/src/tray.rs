@@ -1,7 +1,7 @@
-/// System tray implementation.
-///
-/// Replaces createTray() and updateTrayMenu() from electron-main.js.
-/// The tray menu is rebuilt every 30 seconds by polling the Go backend.
+// System tray implementation.
+//
+// Replaces createTray() and updateTrayMenu() from electron-main.js.
+// The tray menu is rebuilt every 30 seconds by polling the Go backend.
 
 use crate::state::AppState;
 use tauri::{
@@ -139,11 +139,11 @@ async fn update_tray_menu(app: &AppHandle) {
                 let submenu = SubmenuBuilder::new(app_ref, &label)
                     .item(&MenuItemBuilder::with_id(
                         format!("type-{i}"),
-                        &format!("Type: {ttype}"),
+                        format!("Type: {ttype}"),
                     ).enabled(false).build(app_ref)?)
                     .item(&MenuItemBuilder::with_id(
                         format!("port-{i}"),
-                        &format!("Local Port: {port_val}"),
+                        format!("Local Port: {port_val}"),
                     ).enabled(false).build(app_ref)?)
                     .separator()
                     .item(&close_item)

@@ -1,8 +1,8 @@
-/// Spawns the Go HTTP backend as a Tauri sidecar and captures its dynamic port.
-///
-/// The binary is declared in tauri.conf.json under `bundle.externalBin` as
-/// `"binaries/edgeview-backend"`.  Tauri resolves the correct platform triple
-/// (e.g. `edgeview-backend-aarch64-apple-darwin`) automatically.
+// Spawns the Go HTTP backend as a Tauri sidecar and captures its dynamic port.
+//
+// The binary is declared in tauri.conf.json under `bundle.externalBin` as
+// `"binaries/edgeview-backend"`.  Tauri resolves the correct platform triple
+// (e.g. `edgeview-backend-aarch64-apple-darwin`) automatically.
 
 use crate::state::AppState;
 use tauri::{AppHandle, Manager};

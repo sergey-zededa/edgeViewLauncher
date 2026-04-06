@@ -1,16 +1,16 @@
-/// Secure token storage using the OS keychain (macOS Keychain, Windows Credential
-/// Manager, Linux Secret Service).
-///
-/// Replaces `electron-secure-storage.js` which used `electron.safeStorage`.
-///
-/// ⚠️  IMPORTANT: The Electron `secure-tokens.enc` file (AES-256-GCM encrypted
-/// with the OS signing key via safeStorage) is NOT readable by this module.
-/// On first launch after migration the app detects this and sets
-/// `requires_reauth: true` in the status response, prompting the user to
-/// re-enter their API tokens once.
-///
-/// Service name: "edgeview-launcher"
-/// Account name: "tokens"  (stores a JSON-encoded map of clusterName → apiToken)
+// Secure token storage using the OS keychain (macOS Keychain, Windows Credential
+// Manager, Linux Secret Service).
+//
+// Replaces `electron-secure-storage.js` which used `electron.safeStorage`.
+//
+// IMPORTANT: The Electron `secure-tokens.enc` file (AES-256-GCM encrypted
+// with the OS signing key via safeStorage) is NOT readable by this module.
+// On first launch after migration the app detects this and sets
+// `requires_reauth: true` in the status response, prompting the user to
+// re-enter their API tokens once.
+//
+// Service name: "edgeview-launcher"
+// Account name: "tokens"  (stores a JSON-encoded map of clusterName → apiToken)
 
 #[cfg(not(target_os = "macos"))]
 use keyring::Entry;
@@ -22,7 +22,8 @@ use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
 // In-memory cache: None = not loaded yet. Some(None) = loaded but empty. Some(Some(map)) = loaded with tokens.
-static TOKEN_CACHE: OnceLock<Mutex<Option<Option<HashMap<String, String>>>>> = OnceLock::new();
+type TokenMap = Option<Option<HashMap<String, String>>>;
+static TOKEN_CACHE: OnceLock<Mutex<TokenMap>> = OnceLock::new();
 
 // ── Config file location (same path as the old Electron app) ─────────────────
 
@@ -133,7 +134,7 @@ fn get_tokens() -> Result<Option<HashMap<String, String>>, String> {
                     }
                 }
                 // Empty password or invalid JSON -> treat as None
-                return Ok(None);
+                Ok(None)
             }
             Ok(out) => {
                 let stderr = String::from_utf8_lossy(&out.stderr);
@@ -158,11 +159,11 @@ fn get_tokens() -> Result<Option<HashMap<String, String>>, String> {
                 } else {
                     println!("[SecureStorage] CLI read failed: {}", stderr);
                 }
-                return Ok(None);
+                Ok(None)
             }
             Err(e) => {
                 println!("[SecureStorage] CLI execution failed: {}", e);
-                return Err(format!("Failed to execute security CLI: {e}"));
+                Err(format!("Failed to execute security CLI: {e}"))
             }
         }
     }

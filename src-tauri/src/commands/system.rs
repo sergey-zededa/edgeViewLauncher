@@ -1,10 +1,10 @@
-/// System integration commands.
-///
-/// Replaces:
-///   - ipcMain.handle('open-external', ...)
-///   - ipcMain.handle('open-external-terminal', ...)
-///   - ipcMain.handle('get-system-time-format', ...)
-///   - ipcMain.handle('get-electron-app-info', ...)
+// System integration commands.
+//
+// Replaces:
+//   - ipcMain.handle('open-external', ...)
+//   - ipcMain.handle('open-external-terminal', ...)
+//   - ipcMain.handle('get-system-time-format', ...)
+//   - ipcMain.handle('get-electron-app-info', ...)
 
 use tauri_plugin_opener::OpenerExt;
 use tauri::AppHandle;

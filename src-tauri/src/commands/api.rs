@@ -1,7 +1,7 @@
-/// Generic HTTP proxy command that forwards all frontend API calls to the Go backend.
-///
-/// Replaces the `api-call` ipcMain.handle in electron-main.js.
-/// All ~30 frontend API calls funnel through this single Tauri command.
+// Generic HTTP proxy command that forwards all frontend API calls to the Go backend.
+//
+// Replaces the `api-call` ipcMain.handle in electron-main.js.
+// All ~30 frontend API calls funnel through this single Tauri command.
 
 use crate::state::AppState;
 use serde_json::Value;

@@ -1,8 +1,8 @@
-/// Auto-update commands using tauri-plugin-updater.
-///
-/// Replaces the electron-updater IPC handlers in electron-main.js.
-/// Update availability and download events are pushed to the frontend
-/// via tauri::Emitter::emit() instead of ipcRenderer.on().
+// Auto-update commands using tauri-plugin-updater.
+//
+// Replaces the electron-updater IPC handlers in electron-main.js.
+// Update availability and download events are pushed to the frontend
+// via tauri::Emitter::emit() instead of ipcRenderer.on().
 
 use serde_json::Value;
 use tauri::{AppHandle, Emitter};
