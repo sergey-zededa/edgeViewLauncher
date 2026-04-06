@@ -234,7 +234,8 @@ jobs:
           $SHA512 = [Convert]::ToBase64String($BYTES)
           $SIZE = $EXE.Length
           $DATE = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.000Z")
-          $FILENAME = $EXE.Name
+          # GitHub replaces spaces with dots in release asset names
+          $FILENAME = $EXE.Name.Replace(' ', '.')
 
           @"
           version: $VERSION
@@ -344,7 +345,8 @@ jobs:
           npx tauri signer sign "staging/${APPIMAGE_TAR}"
 
           # Electron bridge: latest-linux.yml
-          FILENAME="$APPIMAGE_BASENAME"
+          # GitHub replaces spaces with dots in release asset names
+          FILENAME=$(echo "$APPIMAGE_BASENAME" | tr ' ' '.')
           SHA512=$(sha512sum "$APPIMAGE" | cut -f1 -d' ' | xxd -r -p | base64 -w0)
           SIZE=$(stat --printf="%s" "$APPIMAGE")
           DATE=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
@@ -481,5 +483,5 @@ jobs:
           draft: false
           prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-alpha') || contains(github.ref, '-rc') }}
           allowUpdates: true
-          removeArtifacts: false
+          removeArtifacts: true
           token: ${{ secrets.GITHUB_TOKEN }}
