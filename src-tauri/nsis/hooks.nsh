@@ -1,5 +1,6 @@
 ; Custom NSIS hooks for EdgeView Launcher installer
-; Kill lingering processes, match the old Electron install path, and clean up
+; Kill lingering processes and set the install path to match the old Electron app.
+; No need to run uninstallers — NSIS overwrites existing files during upgrade.
 
 !macro NSIS_HOOK_PREINSTALL
   ; Kill the Go sidecar backend if still running
@@ -10,13 +11,4 @@
 
   ; Match the old Electron install path so the upgrade is seamless
   StrCpy $INSTDIR "$LOCALAPPDATA\Programs\edgeview-launcher"
-
-  ; Remove the old Electron uninstaller if it exists
-  IfFileExists "$INSTDIR\Uninstall EdgeView Launcher.exe" 0 +2
-    nsExec::Exec '"$INSTDIR\Uninstall EdgeView Launcher.exe" /S'
-
-  ; Remove a previous Tauri NSIS uninstaller if it exists
-  ; /UPDATE tells it to run silently in update mode (no "Unable to uninstall!" dialog)
-  IfFileExists "$INSTDIR\uninstall.exe" 0 +2
-    nsExec::Exec '"$INSTDIR\uninstall.exe" /UPDATE'
 !macroend
