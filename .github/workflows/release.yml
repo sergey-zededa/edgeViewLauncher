@@ -217,10 +217,11 @@ jobs:
           Copy-Item "$NSIS_DIR/*.exe" staging/
           Copy-Item "$MSI_DIR/*.msi" staging/ -ErrorAction SilentlyContinue
 
-          # Create updater archive (zip the NSIS exe)
+          # Create updater archive (zip the NSIS exe with standard Deflate compression)
+          # PowerShell's Compress-Archive uses a method Tauri's zip crate can't read
           $EXE = Get-ChildItem "staging/*-setup.exe" | Select-Object -First 1
           $NSIS_ZIP_NAME = $EXE.BaseName + ".nsis.zip"
-          Compress-Archive -Path $EXE.FullName -DestinationPath "staging/$NSIS_ZIP_NAME"
+          7z a -tzip "staging/$NSIS_ZIP_NAME" $EXE.FullName
 
           # Sign the updater archive (reads key from TAURI_SIGNING_PRIVATE_KEY env)
           npx tauri signer sign "staging/$NSIS_ZIP_NAME"
