@@ -5,8 +5,12 @@
 // via tauri::Emitter::emit() instead of ipcRenderer.on().
 
 use serde_json::Value;
-use tauri::{AppHandle, Emitter};
-use tauri_plugin_updater::UpdaterExt;
+use std::sync::Mutex;
+use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_updater::{Update, UpdaterExt};
+
+/// Holds a downloaded update ready for installation.
+pub struct PendingUpdate(pub Mutex<Option<(Update, Vec<u8>)>>);
 
 /// Check for a new version.  Emits `update-available` or `update-not-available`
 /// to ALL windows.
@@ -38,7 +42,7 @@ pub async fn check_for_updates(app: AppHandle) -> Result<Value, String> {
     }
 }
 
-/// Download the pending update, emitting progress events.
+/// Download the update without installing. Stores the bytes for later install.
 #[tauri::command]
 pub async fn download_update(app: AppHandle) -> Result<Value, String> {
     let updater = app
@@ -51,11 +55,14 @@ pub async fn download_update(app: AppHandle) -> Result<Value, String> {
         .map_err(|e| format!("Update check failed: {e}"))?
         .ok_or_else(|| "No update available".to_string())?;
 
-    println!("[Updater] Found update v{}, downloading from: {}", update.version, update.download_url);
+    println!(
+        "[Updater] Found update v{}, downloading from: {}",
+        update.version, update.download_url
+    );
 
     let app_clone = app.clone();
-    update
-        .download_and_install(
+    let bytes = update
+        .download(
             move |downloaded, total| {
                 let pct = total
                     .map(|t| (downloaded as f64 / t as f64 * 100.0).round() as u64)
@@ -65,20 +72,42 @@ pub async fn download_update(app: AppHandle) -> Result<Value, String> {
                     serde_json::json!({ "percent": pct, "downloaded": downloaded, "total": total }),
                 );
             },
-            move || {
-                let _ = app.emit("update-downloaded", serde_json::json!({}));
-            },
+            || {},
         )
         .await
-        .map_err(|e| format!("Download/install failed: {e}"))?;
+        .map_err(|e| format!("Download failed: {e}"))?;
+
+    println!("[Updater] Download complete ({} bytes), ready to install", bytes.len());
+
+    // Store the downloaded bytes for later installation
+    let pending = app.state::<PendingUpdate>();
+    *pending.0.lock().unwrap() = Some((update, bytes));
+
+    let _ = app.emit("update-downloaded", serde_json::json!({}));
 
     Ok(serde_json::json!({ "success": true }))
 }
 
-/// Restart and install the downloaded update.
+/// Install the previously downloaded update. On Windows this launches the
+/// NSIS installer and exits; on other platforms it restarts the app.
 #[tauri::command]
 pub async fn install_update(app: AppHandle) -> Result<Value, String> {
+    let pending = app.state::<PendingUpdate>();
+    let (update, bytes) = pending
+        .0
+        .lock()
+        .unwrap()
+        .take()
+        .ok_or_else(|| "No pending update to install".to_string())?;
+
+    println!("[Updater] Installing update...");
+
+    update
+        .install(bytes)
+        .map_err(|e| format!("Install failed: {e}"))?;
+
     app.restart();
+
     #[allow(unreachable_code)]
     Ok(serde_json::json!({ "success": true }))
 }

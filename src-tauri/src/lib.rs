@@ -17,7 +17,15 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // Focus the existing window when a second instance tries to launch
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .manage(AppState::new())
+        .manage(updater::PendingUpdate(std::sync::Mutex::new(None)))
         .setup(|app| {
             let app_handle = app.handle().clone();
 

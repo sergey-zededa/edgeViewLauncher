@@ -11,7 +11,12 @@
   ; Match the old Electron install path so the upgrade is seamless
   StrCpy $INSTDIR "$LOCALAPPDATA\Programs\edgeview-launcher"
 
-  ; Remove the old Electron uninstaller if it exists (files will be overwritten)
+  ; Remove the old Electron uninstaller if it exists
   IfFileExists "$INSTDIR\Uninstall EdgeView Launcher.exe" 0 +2
     nsExec::Exec '"$INSTDIR\Uninstall EdgeView Launcher.exe" /S'
+
+  ; Remove a previous Tauri NSIS uninstaller if it exists
+  ; /UPDATE tells it to run silently in update mode (no "Unable to uninstall!" dialog)
+  IfFileExists "$INSTDIR\uninstall.exe" 0 +2
+    nsExec::Exec '"$INSTDIR\uninstall.exe" /UPDATE'
 !macroend
