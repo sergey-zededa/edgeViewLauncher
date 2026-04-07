@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import RFB from '@novnc/novnc/lib/rfb';
+import rfbModule from '@novnc/novnc/lib/rfb';
+// noVNC uses CJS with exports["default"] — Vite 8 requires explicit destructure
+const RFB = rfbModule.default || rfbModule;
 import { Maximize, Minimize, Unplug, X } from 'lucide-react';
 import { CloseTunnel } from '../tauriAPI';
 
