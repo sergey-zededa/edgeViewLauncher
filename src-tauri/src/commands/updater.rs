@@ -48,8 +48,10 @@ pub async fn download_update(app: AppHandle) -> Result<Value, String> {
     let update = updater
         .check()
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("Update check failed: {e}"))?
         .ok_or_else(|| "No update available".to_string())?;
+
+    println!("[Updater] Found update v{}, downloading from: {}", update.version, update.download_url);
 
     let app_clone = app.clone();
     update
@@ -68,7 +70,7 @@ pub async fn download_update(app: AppHandle) -> Result<Value, String> {
             },
         )
         .await
-        .map_err(|e| format!("Download failed: {e}"))?;
+        .map_err(|e| format!("Download/install failed: {e}"))?;
 
     Ok(serde_json::json!({ "success": true }))
 }

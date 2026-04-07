@@ -2629,10 +2629,11 @@ Do you want to try connecting anyway?`)) {
       await DownloadUpdate();
     } catch (err) {
       console.error('Failed to download update:', err);
+      const msg = typeof err === 'string' ? err : err?.message || String(err);
       setUpdateState(prev => ({
         ...prev,
         status: 'error',
-        error: 'Failed to download update'
+        error: msg
       }));
     }
   };
