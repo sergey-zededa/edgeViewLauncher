@@ -236,7 +236,8 @@
     </div>
 
     <script type="module">
-        import RFB from '@novnc/novnc/lib/rfb.js';
+        import rfbModule from '@novnc/novnc/lib/rfb.js';
+        const RFB = rfbModule.default || rfbModule;
         import { resizeWindow, closeCurrentWindow, CloseTunnel } from './src/tauriAPI.js';
 
         const urlParams = new URLSearchParams(window.location.search);
