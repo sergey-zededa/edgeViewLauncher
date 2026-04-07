@@ -247,12 +247,11 @@ describe('App configuration and tunnels', () => {
 
     await waitFor(() => {
       expect(electronAPI.SecureStorageSaveSettings).toHaveBeenCalledTimes(1);
+      const [configArg] = electronAPI.SecureStorageSaveSettings.mock.calls[0];
+      expect(configArg.clusters).toHaveLength(1);
+      expect(configArg.clusters[0].name).toBe('Cluster 1');
+      expect(configArg.activeCluster).toBe('Cluster 1');
     });
-
-    const [configArg] = electronAPI.SecureStorageSaveSettings.mock.calls[0];
-    expect(configArg.clusters).toHaveLength(1);
-    expect(configArg.clusters[0].name).toBe('Cluster 1');
-    expect(configArg.activeCluster).toBe('Cluster 1');
 
     await waitFor(() => {
       expect(electronAPI.GetEnterprise).toHaveBeenCalled();
