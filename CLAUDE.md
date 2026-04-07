@@ -21,11 +21,14 @@ Tauri Core (Rust) — src-tauri/
   All frontend API calls go through the generic api_call IPC command,
   which proxies HTTP requests to the Go backend on a dynamic port.
 
-Frontend (React + Vite) — frontend/src/
-  App.jsx: main UI — clusters, devices, tunnels, settings
-  tauriAPI.js: wraps all Tauri invoke() calls
-  components/TerminalView.jsx: xterm.js terminal over WebSocket
-  components/VncViewer.jsx: noVNC remote desktop viewer
+Frontend (React + Vite) — frontend/
+  src/App.jsx: main UI — clusters, devices, tunnels, settings
+  src/tauriAPI.js: wraps all Tauri invoke() calls
+  src/components/TerminalView.jsx: xterm.js terminal over WebSocket
+  src/components/VncViewer.jsx: noVNC embedded viewer (overlay in main window)
+  vnc.html: standalone VNC window (separate Vite entry point, NOT in src/)
+  ⚠️  vnc.html imports noVNC independently from VncViewer.jsx — both
+     must be kept in sync for any dependency or import changes.
 
 Go Backend (sidecar) — cmd/edgeview-backend/
   http-server.go: HTTP routes and WebSocket SSH terminal handler
