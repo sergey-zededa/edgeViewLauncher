@@ -83,7 +83,7 @@ func (f *fakeZededaClient) StopEdgeView(nodeID string) error {
 func (f *fakeZededaClient) StartEdgeView(nodeID string) error {
 	return f.startErr
 }
-func (f *fakeZededaClient) GetDeviceAppInstances(deviceID string) ([]zededa.AppInstance, error) {
+func (f *fakeZededaClient) GetDeviceAppInstances(deviceID, deviceName string) ([]zededa.AppInstance, error) {
 	return f.deviceApps, f.deviceErr
 }
 func (f *fakeZededaClient) GetAppInstanceDetails(id string) (*zededa.AppInstanceDetails, error) {

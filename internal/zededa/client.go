@@ -229,25 +229,29 @@ func (c *Client) SearchNodesWithToken(query string, limit int, pageToken string,
 	return &SearchResult{Nodes: results, NextToken: nextToken}, nil
 }
 
-// GetDeviceAppInstances fetches the list of app instances for a specific device
-func (c *Client) GetDeviceAppInstances(deviceId string) ([]AppInstance, error) {
+// GetDeviceAppInstances fetches the list of app instances for a specific device.
+// deviceName is the human-readable device name (e.g. "TO952963") used as the
+// server-side filter; deviceId is the UUID used as a fallback client-side filter.
+func (c *Client) GetDeviceAppInstances(deviceId, deviceName string) ([]AppInstance, error) {
 	if c.Token == "" {
 		return nil, fmt.Errorf("API token not configured")
 	}
 
-	// Use apps/instances/status endpoint
-	// We use the device name here because the API likely expects it for the deviceId filter
-	url := fmt.Sprintf("%s/api/v1/apps/instances/status?deviceId=%s", c.BaseURL, deviceId)
+	baseURL := fmt.Sprintf("%s/api/v1/apps/instances/status", c.BaseURL)
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", baseURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 	req.Header.Set("Content-Type", "application/json")
 
-	// fmt.Printf("DEBUG: API Request: [%s] %s\n", req.Method, req.URL.String())
-	// fmt.Printf("DEBUG: API Auth: %s\n", req.Header.Get("Authorization"))
+	q := req.URL.Query()
+	// The API ignores "deviceId" but supports "deviceName" for server-side filtering.
+	if deviceName != "" {
+		q.Set("deviceName", deviceName)
+	}
+	req.URL.RawQuery = q.Encode()
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -264,7 +268,8 @@ func (c *Client) GetDeviceAppInstances(deviceId string) ([]AppInstance, error) {
 		return nil, err
 	}
 
-	// Client-side filter: API ignores deviceId query param, so filter manually
+	// Server-side filter by deviceName should be sufficient, but apply
+	// a client-side deviceId guard in case other devices matched the name pattern.
 	filteredApps := []AppInstance{}
 	for _, app := range appResp.List {
 		if app.DeviceID == deviceId {

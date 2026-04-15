@@ -33,7 +33,7 @@ type zededaAPI interface {
 	SetVGAEnabled(nodeID string, enabled bool) error
 	SetUSBEnabled(nodeID string, enabled bool) error
 	SetConsoleEnabled(nodeID string, enabled bool) error
-	GetDeviceAppInstances(deviceID string) ([]zededa.AppInstance, error)
+	GetDeviceAppInstances(deviceID, deviceName string) ([]zededa.AppInstance, error)
 	GetAppInstanceDetails(appInstanceID string) (*zededa.AppInstanceDetails, error)
 	GetAppInstanceConfig(appInstanceID string) (*zededa.AppInstanceConfig, error)
 	GetNetworkInstanceDetails(niID string) (*zededa.NetworkInstanceStatus, error)
@@ -1105,8 +1105,8 @@ func (a *App) ResetEdgeView(nodeID string) error {
 }
 
 func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
-	// Use Cloud API to fetch app instances
-	apps, err := a.zededaClient.GetDeviceAppInstances(nodeID)
+	// Use Cloud API to fetch app instances (deviceName enables server-side filter)
+	apps, err := a.zededaClient.GetDeviceAppInstances(nodeID, deviceName)
 	if err != nil {
 		return "", fmt.Errorf("failed to get app instances: %w", err)
 	}

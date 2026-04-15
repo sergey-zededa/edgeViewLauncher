@@ -1010,6 +1010,17 @@ function App() {
     };
   }, [selectedNode, showSettings]);
 
+  // Keep selectedNode.status in sync with the latest device cache.
+  // This ensures the device details view reflects status changes (e.g. offline→online)
+  // that occur after the user opened the device details panel.
+  useEffect(() => {
+    if (!selectedNode || !deviceCache?.devices) return;
+    const fresh = deviceCache.devices.find(d => d.id === selectedNode.id);
+    if (fresh && fresh.status !== selectedNode.status) {
+      setSelectedNode(prev => ({ ...prev, status: fresh.status }));
+    }
+  }, [deviceCache?.devices]);
+
   // Cache polling effect — fetches device cache from backend periodically.
   // Runs independently of showSettings so cluster switches populate data
   // immediately while the settings panel is still closing.
@@ -1850,6 +1861,9 @@ function App() {
     setGlobalStatus({ type: 'loading', message: "Fetching device services..." });
     addLog(`Opening ${node.name} details...`);
 
+    // Trigger a background cache refresh so device online/offline status is up-to-date
+    RefreshDeviceCache().catch(() => {});
+
     GetDeviceServices(node.id, node.name).then(result => {
       try {
         const parsed = JSON.parse(result);
@@ -2489,6 +2503,34 @@ Do you want to try connecting anyway?`)) {
     setSshPopover(null);
   };
 
+  const [refreshingDevice, setRefreshingDevice] = useState(false);
+  const handleRefreshDeviceStatus = async () => {
+    if (!selectedNode || refreshingDevice) return;
+    setRefreshingDevice(true);
+    addLog(`Refreshing ${selectedNode.name} status...`);
+    try {
+      // Trigger a backend cache refresh so the next cache poll picks up fresh data
+      await RefreshDeviceCache();
+      // Also re-fetch services and SSH status for the current device
+      const [servicesResult] = await Promise.all([
+        GetDeviceServices(selectedNode.id, selectedNode.name),
+        loadSSHStatus(selectedNode.id, true),
+      ]);
+      try {
+        const parsed = JSON.parse(servicesResult);
+        setServices(parsed);
+        addLog("Services list updated", 'success');
+      } catch (e) {
+        console.error("Failed to parse services JSON:", e);
+      }
+    } catch (err) {
+      console.error("Failed to refresh device status:", err);
+      addLog(`Refresh failed: ${err}`, 'error');
+    } finally {
+      setRefreshingDevice(false);
+    }
+  };
+
   const recentIds = config.recentDevices || [];
   const recentNodes = nodes.filter(n => recentIds.includes(n.id));
   recentNodes.sort((a, b) => recentIds.indexOf(a.id) - recentIds.indexOf(b.id));
@@ -2895,6 +2937,15 @@ Do you want to try connecting anyway?`)) {
               <span className="node-name">{selectedNode.name}</span>
             </Copyable>
             <span className={`status-dot ${statusClass(selectedNode.status)}`} title={formatStatus(selectedNode.status)}></span>
+            <button
+              className="inline-icon-btn"
+              title="Refresh device status"
+              onClick={handleRefreshDeviceStatus}
+              disabled={refreshingDevice}
+              style={{ marginLeft: '4px', opacity: refreshingDevice ? 0.5 : 0.7 }}
+            >
+              <RefreshCw size={14} className={refreshingDevice ? 'animate-spin' : ''} />
+            </button>
           </div>
         ) : (
           <input
@@ -3878,31 +3929,48 @@ Do you want to try connecting anyway?`)) {
                           </div>
                         </div>
 
-                        {sshStatus.managementIPs && sshStatus.managementIPs.length > 0 && (
-                          <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: '1px solid rgba(255, 255, 255, 0.05)' }}>
-                            <div className="status-label" style={{ marginBottom: '6px' }}>MANAGEMENT IPS</div>
-                            <div className="status-value" style={{
-                              display: 'flex',
-                              flexWrap: 'wrap',
-                              gap: '6px'
-                            }}>
-                              {sshStatus.managementIPs.map((ip, i) => (
-                                <Copyable key={i} text={ip}>
-                                  <span style={{
-                                    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-                                    padding: '2px 6px',
-                                    borderRadius: '4px',
-                                    fontSize: '11px',
-                                    fontFamily: 'monospace',
-                                    whiteSpace: 'nowrap'
-                                  }}>
-                                    {ip}
-                                  </span>
-                                </Copyable>
-                              ))}
+                        {sshStatus.managementIPs && sshStatus.managementIPs.length > 0 && (() => {
+                          const ipv4 = sshStatus.managementIPs.filter(ip => !ip.includes(':'));
+                          const ipv6 = sshStatus.managementIPs.filter(ip => ip.includes(':'));
+                          const renderBadge = (ip, i) => (
+                            <Copyable key={i} text={ip}>
+                              <span style={{
+                                backgroundColor: 'var(--bg-tertiary, rgba(255, 255, 255, 0.08))',
+                                padding: '3px 10px',
+                                borderRadius: '6px',
+                                fontSize: '11px',
+                                fontFamily: 'monospace',
+                                whiteSpace: 'nowrap',
+                                border: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.06))',
+                              }}>
+                                {ip}
+                              </span>
+                            </Copyable>
+                          );
+                          return (
+                            <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.05))' }}>
+                              <div className="status-label" style={{ marginBottom: '10px', textAlign: 'center' }}>MANAGEMENT IPS</div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                {ipv4.length > 0 && (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <span style={{ fontSize: '10px', fontWeight: 600, color: 'var(--text-tertiary, #888)', textTransform: 'uppercase', letterSpacing: '0.5px', minWidth: '32px', flexShrink: 0 }}>IPv4</span>
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                      {ipv4.map(renderBadge)}
+                                    </div>
+                                  </div>
+                                )}
+                                {ipv6.length > 0 && (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <span style={{ fontSize: '10px', fontWeight: 600, color: 'var(--text-tertiary, #888)', textTransform: 'uppercase', letterSpacing: '0.5px', minWidth: '32px', flexShrink: 0 }}>IPv6</span>
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                      {ipv6.map(renderBadge)}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                          </div>
-                        )}
+                          );
+                        })()}
 
                         {/* Configuration Controls */}
                         <div className="config-container" style={{ marginTop: '15px', borderTop: '1px solid #333', paddingTop: '15px' }}>
