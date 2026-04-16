@@ -12,6 +12,7 @@ type ClusterConfig struct {
 	BaseURL        string `json:"baseUrl"`
 	APIToken       string `json:"apiToken,omitempty"`       // Optional: only used for legacy/migration
 	TokenEncrypted bool   `json:"tokenEncrypted,omitempty"` // Indicates token is stored in secure storage
+	Environment    string `json:"environment,omitempty"`    // Optional tag: prod | staging | demo
 }
 
 type Config struct {
