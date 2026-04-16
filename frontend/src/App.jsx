@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, EnableExternalPolicy, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo, StartComposeDiagnostics, GetComposeDiagnosticsStatus, SaveComposeDiagnostics, CheckForUpdates, openTerminalWindow, openVncWindow, openExternalTerminal, getElectronAppInfo, startContainerShell, getSystemTimeFormat, openExternal, InjectSecureConfig, GetDeviceCache, RefreshDeviceCache } from './tauriAPI';
-import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers, Shield, Moon, Sun, HelpCircle } from 'lucide-react';
+import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, ChevronRight, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers, Shield, Moon, Sun, HelpCircle } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
 import Tooltip from './components/Tooltip';
 import About from './components/About';
@@ -735,6 +735,7 @@ function App() {
   // Settings editing state
   const [editingCluster, setEditingCluster] = useState({ name: '', baseUrl: '', apiToken: '', environment: '' });
   const [clusterFilter, setClusterFilter] = useState('');
+  const [refreshSpinHold, setRefreshSpinHold] = useState(false);
   const [viewingClusterName, setViewingClusterName] = useState('');
   const [viewingUserInfo, setViewingUserInfo] = useState(null);
   const [loadingTokenInfo, setLoadingTokenInfo] = useState(false);
@@ -2506,6 +2507,15 @@ Do you want to try connecting anyway?`)) {
       setShowSettings(false);
       return;
     }
+    if (e.key === 'Escape' && selectedNode) {
+      // Skip when a modal/popover/input already wants Escape.
+      const target = e.target;
+      const isEditable = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+      if (isEditable || showGlobalTunnels || sshTunnelConfig || sshPopover || showTerminalMenu) return;
+      e.preventDefault();
+      handleBack();
+      return;
+    }
     if (showSettings || selectedNode) return;
     if (e.key === 'ArrowDown') {
       setSelectedIndex(prev => Math.min(prev + 1, displayNodes.length - 1));
@@ -2866,7 +2876,15 @@ Do you want to try connecting anyway?`)) {
       )}
       <div className="search-bar" data-tauri-drag-region style={selectedNode ? { paddingLeft: '80px' } : {}}>
         {selectedNode ? (
-          <ArrowLeft className="back-icon" size={20} onClick={handleBack} />
+          <button
+            type="button"
+            className="back-icon-btn"
+            onClick={handleBack}
+            title="Back (Esc)"
+            aria-label="Back"
+          >
+            <ArrowLeft size={24} />
+          </button>
         ) : (
           <Search className="search-icon" size={20} />
         )}
@@ -2979,13 +2997,24 @@ Do you want to try connecting anyway?`)) {
           {!selectedNode && (
             <Tooltip text="Refresh device list" simple position="bottom">
               <RefreshCw
-                className={`settings-icon ${deviceCache?.isRefreshing ? 'spinning' : ''}`}
+                className={`settings-icon ${deviceCache?.isRefreshing || refreshSpinHold ? 'spinning' : ''}`}
                 size={20}
                 title="Refresh device list"
                 onClick={async () => {
-                  await RefreshDeviceCache();
-                  const data = await GetDeviceCache();
-                  if (data) setDeviceCache(data);
+                  setRefreshSpinHold(true);
+                  const holdUntil = Date.now() + 500;
+                  try {
+                    await RefreshDeviceCache();
+                    const data = await GetDeviceCache();
+                    if (data) setDeviceCache(data);
+                  } finally {
+                    const remaining = holdUntil - Date.now();
+                    if (remaining > 0) {
+                      setTimeout(() => setRefreshSpinHold(false), remaining);
+                    } else {
+                      setRefreshSpinHold(false);
+                    }
+                  }
                 }}
               />
             </Tooltip>
@@ -5039,11 +5068,12 @@ Do you want to try connecting anyway?`)) {
                         <span className={`status-dot ${statusClass(node.status)}`}></span>
                         {formatStatus(node.status)}
                       </div>
-                      {index === selectedIndex && (
-                        <div className="node-actions">
-                          <span className="shortcut">↵ Details</span>
-                        </div>
-                      )}
+                      <div className="node-trailing">
+                        {index === selectedIndex && (
+                          <span className="shortcut" title="Press Enter to open">↵</span>
+                        )}
+                        <ChevronRight size={16} className="node-chevron" />
+                      </div>
                     </div>
                   ))}
                   {!(loading && !cacheLoaded) && (recentNodes.length > 0 && otherNodes.length > 0) && (
@@ -5073,11 +5103,12 @@ Do you want to try connecting anyway?`)) {
                           <span className={`status-dot ${statusClass(node.status)}`}></span>
                           {formatStatus(node.status)}
                         </div>
-                        {globalIndex === selectedIndex && (
-                          <div className="node-actions">
-                            <span className="shortcut">↵ Details</span>
-                          </div>
-                        )}
+                        <div className="node-trailing">
+                          {globalIndex === selectedIndex && (
+                            <span className="shortcut" title="Press Enter to open">↵</span>
+                          )}
+                          <ChevronRight size={16} className="node-chevron" />
+                        </div>
                       </div>
                     )
                   })}

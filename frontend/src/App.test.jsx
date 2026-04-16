@@ -1127,7 +1127,7 @@ describe('Navigation and interaction flows', () => {
     await screen.findByText('Activity Log');
 
     // Click back arrow
-    const backIcon = document.querySelector('.back-icon');
+    const backIcon = screen.getByRole('button', { name: /back/i });
     expect(backIcon).not.toBeNull();
     fireEvent.click(backIcon);
 
@@ -1136,6 +1136,27 @@ describe('Navigation and interaction flows', () => {
       expect(screen.queryByText('Activity Log')).not.toBeInTheDocument();
     });
     expect(screen.getByText('BackNav-Device')).toBeInTheDocument();
+  });
+
+  it('pressing Escape on device details returns to device list', async () => {
+    const node = { id: 'node-1', name: 'EscNav-Device', status: 'online', project: 'proj-1' };
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([node]));
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'disabled' });
+
+    render(<App />);
+
+    const nodeItem = await screen.findByText('EscNav-Device');
+    fireEvent.click(nodeItem);
+    await screen.findByText('Activity Log');
+
+    const appContainer = document.querySelector('.app-container');
+    fireEvent.keyDown(appContainer, { key: 'Escape' });
+
+    await waitFor(() => {
+      expect(screen.queryByText('Activity Log')).not.toBeInTheDocument();
+    });
+    expect(screen.getByText('EscNav-Device')).toBeInTheDocument();
   });
 
   it('selecting a device calls GetDeviceServices and GetSSHStatus', async () => {
