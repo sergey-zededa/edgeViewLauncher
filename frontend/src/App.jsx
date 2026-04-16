@@ -12,6 +12,7 @@ import Button from './components/Button';
 import Badge from './components/Badge';
 import './components/Tooltip.css';
 import TokenGuide from './components/TokenGuide';
+import TokenField from './components/TokenField';
 import { DeviceListSkeleton, ServicesListSkeleton, SshDetailsSkeleton } from './components/Skeleton';
 import './App.css';
 
@@ -3268,11 +3269,9 @@ Do you want to try connecting anyway?`)) {
                       title="How to get your API token"
                     />
                   </label>
-                  <textarea
-                    className="token-input"
-                    rows="3"
+                  <TokenField
                     value={editingCluster.apiToken}
-                    onChange={(e) => handleTokenPaste(e.target.value)}
+                    onChange={handleTokenPaste}
                     placeholder="Paste token from ZEDEDA Cloud..."
                   />
                   {tokenStatus && (
