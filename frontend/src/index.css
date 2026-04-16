@@ -28,8 +28,8 @@
   /* Links, IPs, Ports */
 
   /* Semantic Colors */
-  --color-accent: #58a6ff;
-  /* Primary actions */
+  --color-accent: #2dd4bf;
+  /* Signature EdgeView teal — distinctive vs. generic system blue */
   --color-success: #238636;
   /* Online, valid, success */
   --color-warning: #d29922;
@@ -38,12 +38,12 @@
   /* Offline, error, delete */
   --color-info: #388bfd;
   /* Info messages */
-  --color-accent-hover: #79c0ff;
+  --color-accent-hover: #5eead4;
   /* Hover state for accent buttons (Lighten for Dark Mode) */
 
   /* Borders */
   --border-subtle: #30363d;
-  --border-focus: #58a6ff;
+  --border-focus: #2dd4bf;
 
   /* Font Families */
   --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -61,7 +61,7 @@
   --bg-tertiary: var(--bg-surface);
   --border-color: var(--border-subtle);
   --accent-color: var(--color-accent);
-  --highlight-color: rgba(88, 166, 255, 0.15);
+  --highlight-color: rgba(45, 212, 191, 0.15);
   /* Derived from accent */
 
   /* Legacy text colors that matched old names but need new values */
@@ -85,18 +85,21 @@
   --text-accent: #0066cc;
 
   /* Semantic Colors - Vibrant, professional */
-  --color-accent: #007aff;
+  --color-accent: #0d9488;
+  /* Signature EdgeView teal, darker variant for light mode */
   --color-success: #34c759;
   --color-warning: #ff9500;
   --color-danger: #ff3b30;
   --color-info: #5ac8fa;
 
-  --color-accent-hover: #004494;
+  --color-accent-hover: #115e59;
   /* Hover state for accent buttons (Darken for Light Mode) */
 
   /* Borders - Clear definition */
   --border-subtle: #d2d2d7;
-  --border-focus: #007aff;
+  --border-focus: #0d9488;
+
+  --highlight-color: rgba(13, 148, 136, 0.12);
 
   /* Scrollbars */
   --scrollbar-thumb: rgba(0, 0, 0, 0.2);
