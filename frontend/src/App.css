@@ -1145,8 +1145,72 @@ body {
 .token-input {
     font-family: monospace;
     font-size: 11px;
-    resize: vertical;
-    min-height: 60px;
+    flex: 1;
+    min-width: 0;
+    padding: 8px 10px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    outline: none;
+}
+
+.token-input:focus {
+    border-color: var(--accent-color, var(--color-info));
+}
+
+.token-field {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+}
+
+.token-field--masked {
+    padding: 6px 8px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+}
+
+.token-field-value {
+    flex: 1;
+    min-width: 0;
+    font-family: monospace;
+    font-size: 12px;
+    letter-spacing: 0.5px;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding: 2px 4px;
+    user-select: all;
+}
+
+.token-field-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 4px 6px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 11px;
+    line-height: 1;
+    transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+
+.token-field-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    border-color: var(--border-color);
+}
+
+.token-field-btn:active {
+    background: var(--bg-tertiary);
 }
 
 .token-status {
