@@ -30,6 +30,6 @@
     "jsdom": "^29.0.2",
     "vite": "^8.0.8",
     "vite-plugin-top-level-await": "^1.6.0",
-    "vitest": "^4.1.2"
+    "vitest": "^4.1.4"
   }
 }
