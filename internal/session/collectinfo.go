@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"edgeViewLauncher/internal/security"
 	"edgeViewLauncher/internal/zededa"
 	"encoding/json"
 	"fmt"
@@ -47,6 +48,9 @@ const (
 // StartCollectInfo initiates the collect info process
 func (m *Manager) StartCollectInfo(nodeID string) (string, error) {
 	fmt.Printf("DEBUG: StartCollectInfo called for node %s\n", nodeID)
+	if err := security.ValidateNodeID(nodeID); err != nil {
+		return "", err
+	}
 	// Get cached session
 	m.mu.RLock()
 	cached, ok := m.sessions[nodeID]
@@ -294,8 +298,12 @@ func (m *Manager) runCollectInfo(ctx context.Context, job *CollectInfoJob, confi
 						totalSize = info.DirSize
 					}
 
-					filename := filepath.Clean(info.Name)
-					fullPath := filepath.Join(downloadDir, filename)
+					filename := filepath.Base(info.Name)
+					fullPath, err := security.SafeJoin(downloadDir, filename)
+					if err != nil {
+						m.updateJobError(job, fmt.Sprintf("Rejected unsafe filename %q: %v", info.Name, err))
+						return
+					}
 
 					m.collectMu.Lock()
 					job.Status = "downloading"

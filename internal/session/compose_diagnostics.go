@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"edgeViewLauncher/internal/security"
 	internalssh "edgeViewLauncher/internal/ssh"
 
 	"golang.org/x/crypto/ssh"
@@ -56,6 +57,9 @@ var collectInfoOutputRegex = regexp.MustCompile(`runtime info collected to (/tmp
 // StartComposeDiagnostics initiates a diagnostics collection from a compose runtime VM.
 func (m *Manager) StartComposeDiagnostics(nodeID, appName, appIP, username, password string) (string, error) {
 	fmt.Printf("DEBUG: StartComposeDiagnostics called for node %s, app %s, ip %s\n", nodeID, appName, appIP)
+	if err := security.ValidateNodeID(nodeID); err != nil {
+		return "", err
+	}
 
 	// Verify cached session exists
 	m.mu.RLock()
@@ -146,7 +150,7 @@ func (m *Manager) runComposeDiagnostics(ctx context.Context, job *ComposeDiagnos
 	}()
 
 	// Step 2: SSH connect
-	sshClient, err := m.dialSSH(ctx, localPort, username, password)
+	sshClient, err := m.dialSSH(ctx, job.NodeID, localPort, username, password)
 	if err != nil {
 		m.updateComposeDiagError(job, fmt.Sprintf("SSH authentication failed: %v", err))
 		return
@@ -201,13 +205,22 @@ func (m *Manager) runComposeDiagnostics(ctx context.Context, job *ComposeDiagnos
 
 	filename := filepath.Base(remoteFilePath)
 
-	// Create temp directory for download
+	// Create temp directory for download. job.NodeID is validated at job creation,
+	// but re-validate here so a compromised job state cannot traverse.
+	if err := security.ValidateNodeID(job.NodeID); err != nil {
+		m.updateComposeDiagError(job, fmt.Sprintf("Rejected unsafe node id: %v", err))
+		return
+	}
 	downloadDir := filepath.Join(os.TempDir(), "edgeview-downloads", job.NodeID)
 	if err := os.MkdirAll(downloadDir, 0755); err != nil {
 		m.updateComposeDiagError(job, fmt.Sprintf("Failed to create download directory: %v", err))
 		return
 	}
-	localFilePath := filepath.Join(downloadDir, filename)
+	localFilePath, err := security.SafeJoin(downloadDir, filename)
+	if err != nil {
+		m.updateComposeDiagError(job, fmt.Sprintf("Rejected unsafe filename %q: %v", filename, err))
+		return
+	}
 
 	m.composeDiagMu.Lock()
 	job.Status = "downloading"
@@ -239,8 +252,10 @@ func (m *Manager) runComposeDiagnostics(ctx context.Context, job *ComposeDiagnos
 	fmt.Printf("DEBUG: Compose diagnostics completed. File: %s (%d bytes)\n", localFilePath, info.Size())
 }
 
-// dialSSH establishes an SSH connection through a local tunnel port.
-func (m *Manager) dialSSH(ctx context.Context, localPort int, username, password string) (*ssh.Client, error) {
+// dialSSH establishes an SSH connection through a local tunnel port. The
+// nodeID scopes the trust-on-first-use host-key cache, so reconnects to the
+// same edge device must present the same host key.
+func (m *Manager) dialSSH(ctx context.Context, nodeID string, localPort int, username, password string) (*ssh.Client, error) {
 	var authMethods []ssh.AuthMethod
 
 	// Load SSH keys for public key auth
@@ -274,7 +289,7 @@ func (m *Manager) dialSSH(ctx context.Context, localPort int, username, password
 	config := &ssh.ClientConfig{
 		User:            username,
 		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: security.TOFUHostKey("compose-" + nodeID),
 		Timeout:         30 * time.Second,
 	}
 

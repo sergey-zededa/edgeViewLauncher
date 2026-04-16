@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"edgeViewLauncher/internal/security"
 )
 
 type Node struct {
@@ -1357,9 +1359,12 @@ func (c *Client) GetRoleName(roleId string) (string, error) {
 		return "", fmt.Errorf("roleId is empty")
 	}
 
-	url := fmt.Sprintf("%s/api/v1/roles/id/%s", c.BaseURL, roleId)
+	reqURL, err := security.BuildAPIURL(c.BaseURL, fmt.Sprintf("/api/v1/roles/id/%s", roleId))
+	if err != nil {
+		return "", err
+	}
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", reqURL, nil)
 	if err != nil {
 		return "", err
 	}
@@ -1435,12 +1440,12 @@ func (c *Client) VerifyToken(token string) (*TokenInfo, error) {
 	}
 
 	// Use the /api/v1/users/self endpoint to get current user info
-	url := fmt.Sprintf("%s/api/v1/users/self", c.BaseURL)
+	reqURL, err := security.BuildAPIURL(c.BaseURL, "/api/v1/users/self")
+	if err != nil {
+		return nil, err
+	}
 
-	// Debug: Print curl command for manual testing
-	// fmt.Printf("DEBUG: VerifyToken curl command:\ncurl -X GET '%s' -H 'Authorization: Bearer %s'\n", url, token)
-
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", reqURL, nil)
 	if err != nil {
 		return nil, err
 	}
