@@ -244,6 +244,19 @@ body {
     background: var(--color-warning);
 }
 
+.status-dot.maintenance {
+    background: var(--color-info);
+    box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.25);
+}
+
+.status-dot.provisioned {
+    background: var(--text-secondary);
+}
+
+.status-dot.unknown {
+    background: #666;
+}
+
 .node-actions {
     margin-left: 12px;
     font-size: 11px;

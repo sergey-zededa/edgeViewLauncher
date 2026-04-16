@@ -13,6 +13,7 @@ import Badge from './components/Badge';
 import './components/Tooltip.css';
 import TokenGuide from './components/TokenGuide';
 import { DeviceListSkeleton, ServicesListSkeleton, SshDetailsSkeleton } from './components/Skeleton';
+import { formatStatus, statusClass, isInteractive } from './utils/status';
 import './App.css';
 
 // Simple component to display version info
@@ -1192,7 +1193,7 @@ function App() {
   // Session is connected if we have a valid active session (non-expired with timestamp)
   // tunnelConnected is just a bonus verification, not required
   const isSessionConnected = !sessionExpired && expiryInfo.timestamp !== null;
-  const isDeviceOnline = selectedNode?.status === 'online';
+  const isDeviceOnline = isInteractive(selectedNode?.status);
 
   // State for time format preference
   const [use24HourTime, setUse24HourTime] = useState(false);
@@ -2873,7 +2874,7 @@ Do you want to try connecting anyway?`)) {
             <Copyable text={selectedNode.name}>
               <span className="node-name">{selectedNode.name}</span>
             </Copyable>
-            <span className={`status-dot ${selectedNode.status}`}></span>
+            <span className={`status-dot ${statusClass(selectedNode.status)}`} title={formatStatus(selectedNode.status)}></span>
           </div>
         ) : (
           <input
@@ -3635,7 +3636,7 @@ Do you want to try connecting anyway?`)) {
             {selectedNode && !isDeviceOnline && (
               <div className="device-offline-banner">
                 <AlertTriangle size={14} />
-                Device is {selectedNode.status} — EdgeView tunnel operations are unavailable.
+                Device is {formatStatus(selectedNode.status)} — EdgeView tunnel operations are unavailable.
                 Cloud configuration and last-known status are shown below.
               </div>
             )}
@@ -4084,15 +4085,14 @@ Do you want to try connecting anyway?`)) {
                                       {app.status && (
                                         <div style={{ display: 'flex', alignItems: 'center', marginLeft: '12px', gap: '6px' }}>
                                           <div
-                                            className={`status-dot ${app.status === 'RUN_STATE_ONLINE' || app.status === 'ONLINE' ? 'online' : 'offline'}`}
-                                            title={app.status}
+                                            className={`status-dot ${statusClass(app.status)}`}
+                                            title={formatStatus(app.status)}
                                           />
                                           <span style={{
                                             fontSize: '0.85em',
-                                            color: app.status === 'RUN_STATE_ONLINE' || app.status === 'ONLINE' ? 'var(--color-success)' : 'var(--text-secondary)',
-                                            textTransform: 'capitalize'
+                                            color: isInteractive(app.status) ? 'var(--color-success)' : 'var(--text-secondary)',
                                           }}>
-                                            {app.status.replace('RUN_STATE_', '').toLowerCase()}
+                                            {formatStatus(app.status)}
                                           </span>
                                           {/* Error Display */}
                                           {app.error && (
@@ -4138,11 +4138,11 @@ Do you want to try connecting anyway?`)) {
                                                     username: savedUser
                                                   });
                                                 }}
-                                                disabled={!!tunnelLoading || !isSessionConnected || (app.status !== 'RUN_STATE_ONLINE' && app.status !== 'ONLINE')}
+                                                disabled={!!tunnelLoading || !isSessionConnected || !isInteractive(app.status)}
                                                 title={(!isSessionConnected)
                                                   ? "EdgeView session not active"
-                                                  : (app.status !== 'RUN_STATE_ONLINE' && app.status !== 'ONLINE')
-                                                    ? `App is not online (${app.status?.replace('RUN_STATE_', '') || 'Unknown'})`
+                                                  : !isInteractive(app.status)
+                                                    ? `App is not online (${formatStatus(app.status) || 'Unknown'})`
                                                     : `SSH as ${savedUser}@${ip} — click to connect`}
                                                 style={{
                                                   backgroundColor: 'var(--bg-tertiary)',
@@ -4244,11 +4244,11 @@ Do you want to try connecting anyway?`)) {
                                                 // Docker Compose apps require localhost for eve-os guacd
                                                 startQuickVnc('localhost', app.vncPort, app.name);
                                               }}
-                                              disabled={!!tunnelLoading || !isSessionConnected || (app.status !== 'RUN_STATE_ONLINE' && app.status !== 'ONLINE')}
+                                              disabled={!!tunnelLoading || !isSessionConnected || !isInteractive(app.status)}
                                               title={(!isSessionConnected)
                                                 ? "EdgeView session not active"
-                                                : (app.status !== 'RUN_STATE_ONLINE' && app.status !== 'ONLINE')
-                                                  ? `App is not online (${app.status?.replace('RUN_STATE_', '') || 'Unknown'})`
+                                                : !isInteractive(app.status)
+                                                  ? `App is not online (${formatStatus(app.status) || 'Unknown'})`
                                                   : `Click to start VNC on port ${app.vncPort}`}
                                               style={{
                                                 backgroundColor: 'var(--bg-tertiary)',
@@ -4284,7 +4284,7 @@ Do you want to try connecting anyway?`)) {
                                             openDiagnosticsPrompt(app, idx);
                                           }
                                         }}
-                                        disabled={!isSessionConnected || (app.status !== 'RUN_STATE_ONLINE' && app.status !== 'ONLINE') || !!composeDiagJobRef.current}
+                                        disabled={!isSessionConnected || !isInteractive(app.status) || !!composeDiagJobRef.current}
                                         style={{ marginRight: '8px' }}
                                         title="Collect runtime diagnostics bundle from compose VM"
                                       >
@@ -4389,10 +4389,10 @@ Do you want to try connecting anyway?`)) {
                                     onClick={() => setExpandedServiceId(expandedServiceId === idx ? null : idx)}
                                     title={!isSessionConnected
                                       ? "EdgeView session not active"
-                                      : (app.status !== 'RUN_STATE_ONLINE' && app.status !== 'ONLINE')
-                                        ? `App is not online (${app.status?.replace('RUN_STATE_', '') || 'Unknown'})`
+                                      : !isInteractive(app.status)
+                                        ? `App is not online (${formatStatus(app.status) || 'Unknown'})`
                                         : "Connect to service"}
-                                    disabled={!isSessionConnected || (app.status !== 'RUN_STATE_ONLINE' && app.status !== 'ONLINE')}
+                                    disabled={!isSessionConnected || !isInteractive(app.status)}
                                   >
                                     <Globe size={14} /> {expandedServiceId === idx ? 'Close' : 'Connect'}
                                   </button>
@@ -4986,8 +4986,8 @@ Do you want to try connecting anyway?`)) {
                         </div>
                       </div>
                       <div className="node-status">
-                        <span className={`status-dot ${node.status}`}></span>
-                        {node.status}
+                        <span className={`status-dot ${statusClass(node.status)}`}></span>
+                        {formatStatus(node.status)}
                       </div>
                       {index === selectedIndex && (
                         <div className="node-actions">
@@ -5020,8 +5020,8 @@ Do you want to try connecting anyway?`)) {
                           </div>
                         </div>
                         <div className="node-status">
-                          <span className={`status-dot ${node.status}`}></span>
-                          {node.status}
+                          <span className={`status-dot ${statusClass(node.status)}`}></span>
+                          {formatStatus(node.status)}
                         </div>
                         {globalIndex === selectedIndex && (
                           <div className="node-actions">
