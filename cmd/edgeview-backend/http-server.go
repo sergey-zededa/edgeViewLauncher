@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"edgeViewLauncher/internal/config"
+	"edgeViewLauncher/internal/security"
 	"edgeViewLauncher/internal/session"
 	sshInternal "edgeViewLauncher/internal/ssh"
 
@@ -923,11 +924,14 @@ func (s *HTTPServer) handleSSHTerminal(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Connect to local SSH proxy
+	// Connect to local SSH proxy. Host-key pinning at build time is not
+	// possible because each edge device has a unique key; instead we use
+	// trust-on-first-use scoped to the local tunnel port, so a reconnect
+	// against the same tunnel must see the same host key.
 	config := &ssh.ClientConfig{
 		User:            user,
 		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: security.TOFUHostKey(fmt.Sprintf("sshterm-%d", port)),
 		Timeout:         30 * time.Second, // Increased timeout for interactive
 	}
 

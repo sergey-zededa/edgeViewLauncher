@@ -943,9 +943,14 @@ ipcMain.handle('open-external-terminal', async (event, command) => {
 
     try {
         if (process.platform === 'darwin') {
-            // macOS: Open Terminal.app and run command
-            // Escape double quotes for AppleScript
-            const escapedCommand = command.replace(/"/g, '\\"');
+            // macOS: Open Terminal.app and run command.
+            // Escape backslashes FIRST, then double quotes, for AppleScript. The
+            // old code only escaped quotes, so an input containing \" would become
+            // \\" which is a backslash plus an unescaped quote and lets a caller
+            // break out of the string literal.
+            const escapedCommand = command
+                .replace(/\\/g, '\\\\')
+                .replace(/"/g, '\\"');
             const appleScript = `tell application "Terminal" to do script "${escapedCommand}" activate`;
             exec(`osascript -e '${appleScript}'`);
         } else if (process.platform === 'win32') {
