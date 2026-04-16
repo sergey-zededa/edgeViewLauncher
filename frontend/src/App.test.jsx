@@ -1068,29 +1068,6 @@ describe('Status bar and global tunnels', () => {
     expect(screen.queryByText('All Active Tunnels')).not.toBeInTheDocument();
   });
 
-  it('status bar shows Ready when token is configured', async () => {
-    electronAPI.GetSettings.mockResolvedValue(configWithToken);
-    electronAPI.SecureStorageGetSettings.mockResolvedValue(configWithToken);
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getByText('Ready')).toBeInTheDocument();
-    });
-  });
-
-  it('status bar shows Setup Required with no token', async () => {
-    const emptyConfig = { baseUrl: '', apiToken: '', clusters: [], activeCluster: '', recentDevices: [] };
-    electronAPI.GetSettings.mockResolvedValue(emptyConfig);
-    electronAPI.SecureStorageGetSettings.mockResolvedValue(emptyConfig);
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getByText('Setup Required')).toBeInTheDocument();
-    });
-  });
-
   it('status bar shows result count on device list', async () => {
     electronAPI.GetSettings.mockResolvedValue(configWithToken);
     electronAPI.SecureStorageGetSettings.mockResolvedValue(configWithToken);

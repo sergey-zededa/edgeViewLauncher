@@ -385,13 +385,107 @@ body {
 }
 
 .cluster-list {
-    width: 200px;
+    width: 280px;
+    flex-shrink: 0;
     border-right: 1px solid var(--border-color);
     padding-right: 20px;
     display: flex;
     flex-direction: column;
     gap: 8px;
     overflow: hidden;
+}
+
+.cluster-search-row {
+    display: flex;
+    align-items: stretch;
+    gap: 6px;
+}
+
+.cluster-search-input-wrap {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 0 8px;
+    min-width: 0;
+}
+
+.cluster-search-input-wrap:focus-within {
+    border-color: var(--accent-color, var(--color-info));
+}
+
+.cluster-search-icon {
+    color: var(--text-secondary);
+    flex-shrink: 0;
+}
+
+.cluster-search-input {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text-primary);
+    font-size: 12px;
+    padding: 6px 8px;
+}
+
+.cluster-search-input::placeholder {
+    color: var(--text-placeholder);
+}
+
+.cluster-search-clear {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 2px;
+    display: flex;
+    align-items: center;
+}
+
+.cluster-search-clear:hover {
+    color: var(--text-primary);
+}
+
+.add-cluster-btn.icon-only {
+    padding: 0 8px;
+    gap: 0;
+}
+
+.cluster-name-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.env-pill {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+    flex-shrink: 0;
+}
+
+.env-pill.env-prod {
+    background: rgba(218, 54, 51, 0.15);
+    color: var(--color-danger);
+}
+
+.env-pill.env-staging {
+    background: rgba(210, 153, 34, 0.15);
+    color: var(--color-warning);
+}
+
+.env-pill.env-demo {
+    background: rgba(88, 166, 255, 0.15);
+    color: var(--color-info);
 }
 
 .cluster-item {
@@ -414,6 +508,8 @@ body {
     flex-direction: column;
     gap: 16px;
     padding-bottom: 40px;
+    max-width: 640px;
+    min-width: 0;
     /* Extra padding for bottom alignment */
 }
 
@@ -430,7 +526,8 @@ body {
 }
 
 .form-group input,
-.form-group textarea {
+.form-group textarea,
+.form-group select {
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
     border-radius: 4px;

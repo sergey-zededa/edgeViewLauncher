@@ -731,7 +731,8 @@ function App() {
   const sshPopoverRef = useRef(null);
 
   // Settings editing state
-  const [editingCluster, setEditingCluster] = useState({ name: '', baseUrl: '', apiToken: '' });
+  const [editingCluster, setEditingCluster] = useState({ name: '', baseUrl: '', apiToken: '', environment: '' });
+  const [clusterFilter, setClusterFilter] = useState('');
   const [viewingClusterName, setViewingClusterName] = useState('');
   const [viewingUserInfo, setViewingUserInfo] = useState(null);
   const [loadingTokenInfo, setLoadingTokenInfo] = useState(false);
@@ -2522,7 +2523,7 @@ Do you want to try connecting anyway?`)) {
     const newClusters = [...config.clusters, { name: newName, baseUrl: '', apiToken: '' }];
     setConfig({ ...config, clusters: newClusters });
     setViewingClusterName(newName);
-    setEditingCluster({ name: newName, baseUrl: '', apiToken: '' });
+    setEditingCluster({ name: newName, baseUrl: '', apiToken: '', environment: '' });
     setViewingUserInfo(null);
     setTokenStatus(null);
   };
@@ -3112,20 +3113,56 @@ Do you want to try connecting anyway?`)) {
             </div>
             <div className="clusters-container">
               <div className="cluster-list">
-                <div className="list-header">
-                  <span>CLUSTERS</span>
-                  <button className="add-cluster-btn" onClick={addNewCluster}>
-                    <Plus size={12} /> Add
+                <div className="cluster-search-row">
+                  <div className="cluster-search-input-wrap">
+                    <Search size={12} className="cluster-search-icon" />
+                    <input
+                      type="text"
+                      className="cluster-search-input"
+                      placeholder="Search clusters..."
+                      value={clusterFilter}
+                      onChange={(e) => setClusterFilter(e.target.value)}
+                      spellCheck={false}
+                    />
+                    {clusterFilter && (
+                      <button
+                        type="button"
+                        className="cluster-search-clear"
+                        onClick={() => setClusterFilter('')}
+                        title="Clear"
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
+                  </div>
+                  <button className="add-cluster-btn icon-only" onClick={addNewCluster} title="Add cluster">
+                    <Plus size={14} />
                   </button>
                 </div>
                 <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {config.clusters.map((cluster, idx) => (
+                  {config.clusters
+                    .map((cluster, idx) => ({ cluster, idx }))
+                    .filter(({ cluster }) => {
+                      const q = clusterFilter.trim().toLowerCase();
+                      if (!q) return true;
+                      return (
+                        cluster.name?.toLowerCase().includes(q) ||
+                        cluster.baseUrl?.toLowerCase().includes(q) ||
+                        cluster.environment?.toLowerCase().includes(q)
+                      );
+                    })
+                    .map(({ cluster, idx }) => (
                     <div
                       key={idx}
                       className={`cluster-item ${cluster.name === viewingClusterName ? 'active' : ''}`}
                       onClick={() => handleClusterSelect(cluster.name)}
                     >
-                      <div className="cluster-name">{cluster.name}</div>
+                      <div className="cluster-name-row">
+                        <div className="cluster-name">{cluster.name}</div>
+                        {cluster.environment && (
+                          <span className={`env-pill env-${cluster.environment}`}>{cluster.environment}</span>
+                        )}
+                      </div>
                       {cluster.name === config.activeCluster && <div className="active-badge">Active</div>}
                       {cluster.name !== config.activeCluster && (
                         <button
@@ -3255,6 +3292,20 @@ Do you want to try connecting anyway?`)) {
                     onChange={(e) => setEditingCluster({ ...editingCluster, baseUrl: e.target.value })}
                     placeholder="https://zedcontrol.zededa.net"
                   />
+                </div>
+                <div className="form-group">
+                  <Tooltip text="Optional tag to distinguish customer-prod from staging/demo clusters at a glance." simple>
+                    <label style={{ cursor: 'help' }}>Environment</label>
+                  </Tooltip>
+                  <select
+                    value={editingCluster.environment || ''}
+                    onChange={(e) => setEditingCluster({ ...editingCluster, environment: e.target.value })}
+                  >
+                    <option value="">None</option>
+                    <option value="prod">Production</option>
+                    <option value="staging">Staging</option>
+                    <option value="demo">Demo</option>
+                  </select>
                 </div>
                 <div className="form-group">
                   <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -5037,10 +5088,6 @@ Do you want to try connecting anyway?`)) {
           </div >
         )}
         <div className="status-bar">
-          <div className="status-item">
-            <Monitor size={14} />
-            <span>{config.apiToken || (config.clusters && config.clusters.some(c => c.name === config.activeCluster && c.apiToken)) ? "Ready" : "Setup Required"}</span>
-          </div>
           <div className="status-item center">
             <Tooltip text="Shows all tunnels currently open across all connected devices" position="top" simple={true}>
               <button
