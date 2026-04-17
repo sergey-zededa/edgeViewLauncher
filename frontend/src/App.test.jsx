@@ -283,6 +283,8 @@ describe('App configuration and tunnels', () => {
 
     await screen.findByRole('heading', { name: 'Configuration' });
 
+    // The stored token is masked by default; click Replace to reveal the paste input.
+    fireEvent.click(screen.getByLabelText('Replace token'));
     const tokenInput = screen.getByPlaceholderText(/paste token from zededa cloud/i);
 
     const newToken = 'new-token-value';
