@@ -643,4 +643,36 @@ mod tests {
 
         assert_eq!(count, 1);
     }
+
+    #[test]
+    fn environment_survives_multi_cluster_save_roundtrip() {
+        // Simulates the frontend saving a config where multiple clusters
+        // already had `environment` set — e.g. user edited A, saved, then
+        // edited B, saved. Each save re-sends the full cluster array.
+        // This must not drop env on clusters other than the one being edited.
+        let incoming = serde_json::json!({
+            "clusters": [
+                { "name": "A", "baseUrl": "https://a.com", "apiToken": "t-a", "environment": "prod" },
+                { "name": "B", "baseUrl": "https://b.com", "apiToken": "t-b", "environment": "demo" },
+                { "name": "C", "baseUrl": "https://c.com", "apiToken": "t-c" }
+            ],
+            "activeCluster": "A",
+            "recentDevices": []
+        });
+
+        // Round-trip through AppConfig (mirrors secure_storage_save_settings)
+        let config: AppConfig =
+            serde_json::from_value(incoming).expect("should deserialize");
+
+        assert_eq!(config.clusters[0].environment, "prod");
+        assert_eq!(config.clusters[1].environment, "demo");
+        assert_eq!(config.clusters[2].environment, "");
+
+        // Re-serialize (what gets written to disk) — env must still be there.
+        let json = serde_json::to_string(&config).expect("should serialize");
+        let back: AppConfig = serde_json::from_str(&json).expect("should reparse");
+        assert_eq!(back.clusters[0].environment, "prod");
+        assert_eq!(back.clusters[1].environment, "demo");
+        assert_eq!(back.clusters[2].environment, "");
+    }
 }
