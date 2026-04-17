@@ -19,8 +19,10 @@ import (
 type zededaAPI interface {
 	GetEnterprise() (*zededa.Enterprise, error)
 	GetProjects() ([]zededa.Project, error)
-	SearchNodes(query string, limit, skip int, projectID string) (*zededa.SearchResult, error)                                      // legacy compat
-	SearchNodesWithToken(query string, limit int, pageToken string, projectID string) (*zededa.SearchResult, error) // cursor-based
+	GetProjectsCtx(ctx context.Context) ([]zededa.Project, error)
+	SearchNodes(query string, limit, skip int, projectID string) (*zededa.SearchResult, error)                                                                       // legacy compat
+	SearchNodesWithToken(query string, limit int, pageToken string, projectID string) (*zededa.SearchResult, error)                                                  // cursor-based
+	SearchNodesWithTokenCtx(ctx context.Context, query string, limit int, pageToken string, projectID string) (*zededa.SearchResult, error)
 	UpdateConfig(baseURL, token string)
 	InitSession(targetID string) (string, error)
 	ParseEdgeViewScript(script string) (*zededa.SessionConfig, error)

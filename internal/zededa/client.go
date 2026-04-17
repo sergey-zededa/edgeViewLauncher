@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"edgeViewLauncher/internal/security"
@@ -77,9 +78,21 @@ type ProjectListResponse struct {
 }
 
 type Client struct {
+	// BaseURL and Token are retained as exported fields for backwards compatibility
+	// with callers that read them directly. Writes go through UpdateConfig and are
+	// guarded by mu; concurrent readers should prefer snapshot() for a consistent pair.
 	BaseURL    string
 	Token      string
 	HTTPClient *http.Client
+	mu         sync.RWMutex
+}
+
+// snapshot returns a consistent (baseURL, token) pair under the read lock,
+// so callers that need both values can't observe a mid-flight UpdateConfig.
+func (c *Client) snapshot() (string, string) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.BaseURL, c.Token
 }
 
 func NewClient(baseURL, token string) *Client {
@@ -113,6 +126,8 @@ func NewClient(baseURL, token string) *Client {
 
 // UpdateConfig updates the client's base URL and token
 func (c *Client) UpdateConfig(baseURL, token string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.BaseURL = strings.TrimSuffix(baseURL, "/")
 	c.Token = token
 }
@@ -122,14 +137,22 @@ func (c *Client) SearchNodes(query string, limit, skip int, projectID string) (*
 }
 
 func (c *Client) SearchNodesWithToken(query string, limit int, pageToken string, projectID string) (*SearchResult, error) {
-	if c.Token == "" {
+	return c.SearchNodesWithTokenCtx(context.Background(), query, limit, pageToken, projectID)
+}
+
+// SearchNodesWithTokenCtx is the context-aware variant used by the cache's
+// background refresh. When ctx is cancelled the in-flight HTTP request is
+// aborted via http.NewRequestWithContext.
+func (c *Client) SearchNodesWithTokenCtx(ctx context.Context, query string, limit int, pageToken string, projectID string) (*SearchResult, error) {
+	baseURL, token := c.snapshot()
+	if token == "" {
 		return nil, fmt.Errorf("API token not configured")
 	}
 
 	// Use status endpoint to get runtime state
-	url := fmt.Sprintf("%s/api/v1/devices/status", c.BaseURL)
+	url := fmt.Sprintf("%s/api/v1/devices/status", baseURL)
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +187,7 @@ func (c *Client) SearchNodesWithToken(query string, limit int, pageToken string,
 
 	req.URL.RawQuery = q.Encode()
 
-	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.HTTPClient.Do(req)
@@ -493,13 +516,19 @@ func (c *Client) GetEnterprise() (*Enterprise, error) {
 
 // GetProjects fetches all projects
 func (c *Client) GetProjects() ([]Project, error) {
-	url := fmt.Sprintf("%s/api/v1/projects", c.BaseURL)
+	return c.GetProjectsCtx(context.Background())
+}
 
-	req, err := http.NewRequest("GET", url, nil)
+// GetProjectsCtx is the context-aware variant used by the cache's background refresh.
+func (c *Client) GetProjectsCtx(ctx context.Context) ([]Project, error) {
+	baseURL, token := c.snapshot()
+	url := fmt.Sprintf("%s/api/v1/projects", baseURL)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.HTTPClient.Do(req)
