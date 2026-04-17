@@ -1392,9 +1392,6 @@ function App() {
 
       // Refresh session status to reflect potential encryption updates
       await loadSSHStatus(selectedNode.id, false);
-
-      const newConfig = await GetSettings();
-      // handleTunnelError(err); // Removed invalid call
     } catch (err) {
       if (pollInterval) clearInterval(pollInterval);
       console.error(err);
@@ -2007,8 +2004,24 @@ Do you want to try connecting anyway?`)) {
       // Refresh session status to reflect potential encryption updates
       await loadSSHStatus(nodeId, false);
 
-      const newConfig = await GetSettings();
-      setConfig(newConfig);
+      // Reload React config from the secure-storage source of truth
+      // (disk + keychain). Previously we called the Go `/api/settings`
+      // endpoint which returns stale in-memory state, clobbering any
+      // unsynced fields like per-cluster `environment`.
+      try {
+        const refreshed = await SecureStorageGetSettings();
+        if (refreshed) {
+          setConfig({
+            baseUrl: refreshed.baseUrl || '',
+            apiToken: refreshed.apiToken || '',
+            clusters: refreshed.clusters || [],
+            activeCluster: refreshed.activeCluster || '',
+            recentDevices: refreshed.recentDevices || []
+          });
+        }
+      } catch (err) {
+        console.error('Failed to refresh settings after connect:', err);
+      }
       try {
         const sessStatus = await GetSessionStatus(nodeId);
         setSessionStatus(sessStatus);
@@ -2784,6 +2797,11 @@ Do you want to try connecting anyway?`)) {
         activeCluster: activeToSave
       };
       await SecureStorageSaveSettings(configToSave);
+
+      // Keep the Go backend's in-memory config in sync with disk so any
+      // subsequent /api/settings GET returns up-to-date data instead of
+      // stale state frozen at last inject.
+      InjectSecureConfig().catch(err => console.error('Failed to inject config after save:', err));
 
       const settings = await SecureStorageGetSettings();
       if (settings) {
