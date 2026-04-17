@@ -451,6 +451,14 @@ function App() {
   const [projects, setProjects] = useState({});
   const projectsLoadedRef = useRef(false);
 
+  // Tracks the cluster the user is currently on. Updated synchronously at the
+  // start of a cluster switch so any in-flight async work from the old cluster
+  // (polling fetchCache, loadUserInfo, the delayed inline fetch in
+  // activateCluster) can short-circuit before writing stale data into React
+  // state. This is what prevents the "old cluster's list flashes for 20–30s
+  // after switching" symptom.
+  const activeClusterRef = useRef('');
+
   // Theme State
   // Default to 'auto' if no theme is set
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'auto');
@@ -1027,6 +1035,8 @@ function App() {
   // Uses fast polling (2s) while a refresh is in progress, then slows to 15s.
   useEffect(() => {
     if (!config.activeCluster) return;
+    const myCluster = config.activeCluster;
+    activeClusterRef.current = myCluster;
     let cancelled = false;
     let intervalId = null;
     let currentInterval = 2000; // Start fast to catch initial load / refresh completion
@@ -1040,7 +1050,10 @@ function App() {
     const fetchCache = async () => {
       try {
         const data = await GetDeviceCache();
-        if (cancelled || !data) return;
+        // Drop results if the effect has torn down OR the user switched
+        // clusters mid-request. Both guards are needed: activateCluster flips
+        // activeClusterRef before cancelled becomes true.
+        if (cancelled || activeClusterRef.current !== myCluster || !data) return;
         setDeviceCache(data);
         if (!cacheLoaded && (data.devices?.length > 0 || !data.isRefreshing)) {
           setCacheLoaded(true);
@@ -1060,7 +1073,7 @@ function App() {
       } catch (err) {
         if (err.message?.includes('401')) setAuthError(true);
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled && activeClusterRef.current === myCluster) setLoading(false);
       }
     };
 
@@ -1705,10 +1718,15 @@ function App() {
   };
 
   const loadUserInfo = async () => {
+    // Snapshot the cluster we started for so a mid-flight cluster switch
+    // doesn't cause us to write stale projects/enterprise into state.
+    const startCluster = activeClusterRef.current;
     try {
       const ent = await GetEnterprise();
+      if (activeClusterRef.current !== startCluster) return;
       setEnterprise(ent);
       const projList = await GetProjects();
+      if (activeClusterRef.current !== startCluster) return;
       const map = {};
       if (projList) {
         projList.forEach(p => { map[p.id] = p.name; });
@@ -1717,6 +1735,7 @@ function App() {
       projectsLoadedRef.current = true;
       // Fetch user info (token owner)
       const info = await GetUserInfo();
+      if (activeClusterRef.current !== startCluster) return;
       setUserInfo(info);
     } catch (err) {
       console.log('Error loading user info:', err);
@@ -2626,6 +2645,12 @@ Do you want to try connecting anyway?`)) {
     const target = clusterName || viewingClusterName;
 
     try {
+      // 0. Flip the ref FIRST. Any in-flight async work from the old cluster
+      //    (polling fetchCache, loadUserInfo, the earlier GetDeviceCache
+      //    triggered by the previous polling tick) will see a mismatch when
+      //    it resumes and drop its result instead of overwriting cleared state.
+      activeClusterRef.current = target;
+
       // 1. Clear selection/device state IMMEDIATELY to stop polling and stale UI
       setSelectedNode(null);
       setServices(null);
@@ -2665,7 +2690,8 @@ Do you want to try connecting anyway?`)) {
       // 6. Immediately fetch the new cluster's cache (may have disk-cached data)
       try {
         const data = await GetDeviceCache();
-        if (data) {
+        // Bail if the user switched again while we were awaiting.
+        if (data && activeClusterRef.current === target) {
           setDeviceCache(data);
           if (data.devices?.length > 0 || !data.isRefreshing) {
             setCacheLoaded(true);

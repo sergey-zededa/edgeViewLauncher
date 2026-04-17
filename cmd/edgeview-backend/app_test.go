@@ -53,10 +53,16 @@ func (f *fakeZededaClient) GetEnterprise() (*zededa.Enterprise, error) {
 func (f *fakeZededaClient) GetProjects() ([]zededa.Project, error) {
 	return nil, errors.New("not implemented")
 }
+func (f *fakeZededaClient) GetProjectsCtx(ctx context.Context) ([]zededa.Project, error) {
+	return nil, errors.New("not implemented")
+}
 func (f *fakeZededaClient) SearchNodes(query string, limit, skip int, projectID string) (*zededa.SearchResult, error) {
 	return nil, errors.New("not implemented")
 }
 func (f *fakeZededaClient) SearchNodesWithToken(query string, limit int, pageToken string, projectID string) (*zededa.SearchResult, error) {
+	return nil, errors.New("not implemented")
+}
+func (f *fakeZededaClient) SearchNodesWithTokenCtx(ctx context.Context, query string, limit int, pageToken string, projectID string) (*zededa.SearchResult, error) {
 	return nil, errors.New("not implemented")
 }
 func (f *fakeZededaClient) UpdateConfig(baseURL, token string) {}
