@@ -2899,6 +2899,9 @@ Do you want to try connecting anyway?`)) {
                     onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
                   >
                     {entName} • {url}
+                    {active.environment && (
+                      <span className={`env-pill env-${active.environment}`} style={{ marginLeft: '4px' }}>{active.environment}</span>
+                    )}
                     {config.clusters.filter(c => c.baseUrl && c.apiToken).length > 1 && (
                       <ChevronDown size={12} style={{ transition: 'transform 0.2s', transform: showClusterDropdown === 'header' ? 'rotate(180deg)' : 'none' }} />
                     )}
@@ -3037,7 +3040,10 @@ Do you want to try connecting anyway?`)) {
                         onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
                       >
                         <Check size={14} style={{ flexShrink: 0, visibility: isActive ? 'visible' : 'hidden' }} />
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{cluster.name}</span>
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, minWidth: 0 }}>{cluster.name}</span>
+                        {cluster.environment && (
+                          <span className={`env-pill env-${cluster.environment}`}>{cluster.environment}</span>
+                        )}
                       </div>
                     );
                   })}
@@ -3672,7 +3678,19 @@ Do you want to try connecting anyway?`)) {
                           </Copyable>
                         </div>
                         <div className="tunnel-meta">
-                          <span className="tunnel-device">{tunnel.nodeName || tunnel.nodeId}</span>
+                          <button
+                            className="tunnel-device tunnel-device-link"
+                            title="Open device details"
+                            onClick={() => {
+                              const node = nodes.find(n => n.id === tunnel.nodeId);
+                              if (node) {
+                                setShowGlobalTunnels(false);
+                                handleConnect(node);
+                              }
+                            }}
+                          >
+                            {tunnel.nodeName || tunnel.nodeId}
+                          </button>
                           {tunnel.projectId && (
                             <span className="tunnel-project">
                               • {projects[tunnel.projectId] || tunnel.projectId}
@@ -5119,7 +5137,6 @@ Do you want to try connecting anyway?`)) {
                       key={node.id}
                       className={`result-item ${index === selectedIndex ? 'selected' : ''}`}
                       onClick={() => handleConnect(node)}
-                      onMouseEnter={() => setSelectedIndex(index)}
                     >
                       <div className="node-icon">
                         <Server size={18} />
@@ -5154,7 +5171,6 @@ Do you want to try connecting anyway?`)) {
                         key={node.id}
                         className={`result-item ${globalIndex === selectedIndex ? 'selected' : ''}`}
                         onClick={() => handleConnect(node)}
-                        onMouseEnter={() => setSelectedIndex(globalIndex)}
                       >
                         <div className="node-icon">
                           <Server size={18} />
@@ -5186,16 +5202,18 @@ Do you want to try connecting anyway?`)) {
           </div >
         )}
         <div className="status-bar">
-          <div className="status-item center">
-            <Tooltip text="Shows all tunnels currently open across all connected devices" position="top" simple={true}>
-              <button
-                className="link-button"
-                onClick={() => setShowGlobalTunnels(prev => !prev)}
-              >
-                {showGlobalTunnels ? 'Hide All Tunnels' : 'All Tunnels'}
-              </button>
-            </Tooltip>
-          </div>
+          {activeTunnels.filter(t => t.status !== 'failed').length > 0 && (
+            <div className="status-item center">
+              <Tooltip text="Shows all tunnels currently open across all connected devices" position="top" simple={true}>
+                <button
+                  className="link-button"
+                  onClick={() => setShowGlobalTunnels(prev => !prev)}
+                >
+                  {showGlobalTunnels ? 'Hide All Tunnels' : 'All Tunnels'}
+                </button>
+              </Tooltip>
+            </div>
+          )}
           <div className="status-item right">
             <span>{showSettings ? "Configuration" : selectedNode ? "Device Details" : `${nodes.length} results`}</span>
           </div>

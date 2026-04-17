@@ -945,7 +945,7 @@ describe('Status bar and global tunnels', () => {
     });
   });
 
-  it('All Tunnels button is present in status bar', async () => {
+  it('All Tunnels button is hidden when there are no active tunnels', async () => {
     const emptyConfig = { baseUrl: '', apiToken: '', clusters: [], activeCluster: '', recentDevices: [] };
     electronAPI.GetSettings.mockResolvedValue(emptyConfig);
     electronAPI.SecureStorageGetSettings.mockResolvedValue(emptyConfig);
@@ -954,7 +954,8 @@ describe('Status bar and global tunnels', () => {
 
     await screen.findByRole('heading', { name: 'Configuration' });
 
-    expect(screen.getByText('All Tunnels')).toBeInTheDocument();
+    // The button only renders when at least one active tunnel exists.
+    expect(screen.queryByText('All Tunnels')).not.toBeInTheDocument();
   });
 
   it('clicking All Tunnels shows global tunnel panel with cross-device tunnels', async () => {
@@ -1049,7 +1050,7 @@ describe('Status bar and global tunnels', () => {
     expect(screen.queryByText('All Active Tunnels')).not.toBeInTheDocument();
   });
 
-  it('global tunnels panel hidden when no active tunnels', async () => {
+  it('All Tunnels button is not rendered when there are no active tunnels', async () => {
     electronAPI.GetSettings.mockResolvedValue(configWithToken);
     electronAPI.SecureStorageGetSettings.mockResolvedValue(configWithToken);
 
@@ -1061,10 +1062,8 @@ describe('Status bar and global tunnels', () => {
 
     await screen.findByText('Node 1');
 
-    // Click All Tunnels button
-    fireEvent.click(screen.getByText('All Tunnels'));
-
-    // Panel should NOT render because there are no active tunnels
+    // With no active tunnels, the button is hidden, and the panel cannot appear.
+    expect(screen.queryByText('All Tunnels')).not.toBeInTheDocument();
     expect(screen.queryByText('All Active Tunnels')).not.toBeInTheDocument();
   });
 
