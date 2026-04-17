@@ -260,7 +260,7 @@ fn save_tokens(tokens: &HashMap<String, String>) -> Result<(), String> {
 
 // ── Config file helpers ───────────────────────────────────────────────────────
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ClusterConfig {
     pub name: String,
     #[serde(rename = "baseUrl")]
@@ -269,6 +269,15 @@ pub struct ClusterConfig {
     pub api_token: String,
     #[serde(rename = "tokenEncrypted", default)]
     pub token_encrypted: bool,
+    /// Optional free-form tag: "prod" | "staging" | "demo". Kept as a plain
+    /// string so the set can grow without another Rust release.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub environment: String,
+    /// Any extra fields added on the frontend or Go side that Rust doesn't
+    /// explicitly model — preserve them across save/load so we don't silently
+    /// drop future additions.
+    #[serde(flatten)]
+    pub extra: std::collections::HashMap<String, Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -523,6 +532,7 @@ mod tests {
             base_url: "https://example.com".into(),
             api_token: "my-secret-token".into(),
             token_encrypted: false,
+            ..Default::default()
         }]);
 
         let json = serde_json::to_string(&config).expect("serialize");
@@ -540,6 +550,7 @@ mod tests {
             base_url: "https://example.com".into(),
             api_token: "secret".into(),
             token_encrypted: false,
+            ..Default::default()
         };
 
         let mut map = std::collections::HashMap::new();
@@ -562,12 +573,14 @@ mod tests {
                 base_url: "https://prod.example.com".into(),
                 api_token: String::new(),
                 token_encrypted: true,
+                ..Default::default()
             },
             ClusterConfig {
                 name: "Staging".into(),
                 base_url: "https://staging.example.com".into(),
                 api_token: String::new(),
                 token_encrypted: false,
+                ..Default::default()
             },
         ]);
 
@@ -605,18 +618,21 @@ mod tests {
                 base_url: "https://a.com".into(),
                 api_token: "token".into(),
                 token_encrypted: true, // already encrypted → should not count
+                ..Default::default()
             },
             ClusterConfig {
                 name: "Plaintext".into(),
                 base_url: "https://b.com".into(),
                 api_token: "token".into(),
                 token_encrypted: false, // plaintext → should count
+                ..Default::default()
             },
             ClusterConfig {
                 name: "Empty".into(),
                 base_url: "https://c.com".into(),
                 api_token: String::new(),
                 token_encrypted: false,
+                ..Default::default()
             },
         ];
 

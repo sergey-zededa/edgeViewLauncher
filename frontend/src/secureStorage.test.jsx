@@ -253,6 +253,9 @@ describe('Secure Storage Integration', () => {
       // Wait for settings panel
       await screen.findAllByText('Configuration');
 
+      // The stored token is masked by default; click Replace to reveal the paste input.
+      fireEvent.click(screen.getByLabelText('Replace token'));
+
       // Modify token
       const tokenInput = screen.getByPlaceholderText(/paste token from zededa cloud/i);
       fireEvent.change(tokenInput, { target: { value: 'ent:newtoken' } });

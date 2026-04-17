@@ -3408,6 +3408,7 @@ Do you want to try connecting anyway?`)) {
                     />
                   </label>
                   <TokenField
+                    key={viewingClusterName || 'new-cluster'}
                     value={editingCluster.apiToken}
                     onChange={handleTokenPaste}
                     placeholder="Paste token from ZEDEDA Cloud..."

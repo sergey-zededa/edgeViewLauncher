@@ -1408,6 +1408,13 @@ body {
     background: var(--bg-tertiary);
 }
 
+.tunnel-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
 .tunnel-device-link {
     background: transparent;
     border: none;
@@ -1420,6 +1427,7 @@ body {
     text-decoration: none;
     border-bottom: 1px dotted transparent;
     transition: border-color 0.1s, color 0.1s;
+    white-space: nowrap;
 }
 
 .tunnel-device-link:hover {

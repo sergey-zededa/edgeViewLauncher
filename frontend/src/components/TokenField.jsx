@@ -8,16 +8,18 @@ const REVEAL_TIMEOUT_MS = 15000;
 // copy-to-clipboard, and an explicit edit/replace affordance.
 export default function TokenField({ value, onChange, placeholder, autoFocus = false }) {
   const hasStored = typeof value === 'string' && value.length > 0;
-  const [editing, setEditing] = useState(!hasStored);
+  // `userEditing` is the user's explicit override: true after they click
+  // Replace, false after they click Done. Defaulting to false means the UI
+  // tracks the prop: empty → input (via `!hasStored`), populated → masked.
+  // This avoids the "stuck in edit mode after app restart" bug where the
+  // token loads asynchronously from secure storage after the component has
+  // already mounted with an empty value.
+  const [userEditing, setUserEditing] = useState(false);
+  const editing = userEditing || !hasStored;
   const [revealed, setRevealed] = useState(false);
   const [copied, setCopied] = useState(false);
   const revealTimerRef = useRef(null);
   const inputRef = useRef(null);
-
-  // If the stored value is cleared from outside, drop back into edit mode.
-  useEffect(() => {
-    if (!hasStored && !editing) setEditing(true);
-  }, [hasStored, editing]);
 
   // Auto-hide reveal after timeout or when the window loses focus.
   useEffect(() => {
@@ -54,7 +56,7 @@ export default function TokenField({ value, onChange, placeholder, autoFocus = f
 
   const handleEdit = () => {
     setRevealed(false);
-    setEditing(true);
+    setUserEditing(true);
   };
 
   if (editing) {
@@ -77,7 +79,7 @@ export default function TokenField({ value, onChange, placeholder, autoFocus = f
           <button
             type="button"
             className="token-field-btn"
-            onClick={() => setEditing(false)}
+            onClick={() => setUserEditing(false)}
             title="Cancel edit"
           >
             Done
