@@ -45,6 +45,11 @@ type fakeZededaClient struct {
 	networkInstanceErr error
 
 	updateExternalPolicyErr error
+
+	// Device status (network interfaces & IPs) used for SSH candidate IP
+	// discovery in ConnectToNode.
+	deviceStatus    *zededa.DeviceStatus
+	deviceStatusErr error
 }
 
 func (f *fakeZededaClient) GetEnterprise() (*zededa.Enterprise, error) {
@@ -123,6 +128,12 @@ func (f *fakeZededaClient) GetNetworkInstanceDetails(niID string) (*zededa.Netwo
 }
 
 func (f *fakeZededaClient) GetDeviceStatus(nodeID string) (*zededa.DeviceStatus, error) {
+	if f.deviceStatusErr != nil {
+		return nil, f.deviceStatusErr
+	}
+	if f.deviceStatus != nil {
+		return f.deviceStatus, nil
+	}
 	return nil, errors.New("not implemented")
 }
 
@@ -173,6 +184,10 @@ type fakeSessionManager struct {
 	startProxyID   string
 	startProxyErr  error
 
+	// Last arguments StartProxyMulti was invoked with (nil if never called).
+	lastMultiCandidateIPs []string
+	lastMultiTargetPort   int
+
 	launched bool
 }
 
@@ -192,6 +207,12 @@ func (m *fakeSessionManager) StoreCachedSession(nodeID string, cfg *zededa.Sessi
 }
 
 func (m *fakeSessionManager) StartProxy(ctx context.Context, cfg *zededa.SessionConfig, nodeID string, target string, protocol string, onProgress func(string)) (int, string, error) {
+	return m.startProxyPort, m.startProxyID, m.startProxyErr
+}
+
+func (m *fakeSessionManager) StartProxyMulti(ctx context.Context, cfg *zededa.SessionConfig, nodeID string, candidateIPs []string, targetPort int, protocol string, onProgress func(string)) (int, string, error) {
+	m.lastMultiCandidateIPs = append([]string(nil), candidateIPs...)
+	m.lastMultiTargetPort = targetPort
 	return m.startProxyPort, m.startProxyID, m.startProxyErr
 }
 
@@ -384,6 +405,60 @@ func TestConnectToNode_ReturnsTunnelID(t *testing.T) {
 	if tunnelID != "tunnel-123" {
 		t.Errorf("expected tunnel ID 'tunnel-123', got %q", tunnelID)
 	}
+}
+
+// TestConnectToNode_StartProxyMultiReceivesAllCandidateIPs ensures ConnectToNode
+// passes the full candidate-IP list (loopback + every "up" management IP from
+// GetDeviceStatus) to StartProxyMulti, so the session layer can probe them in
+// round-robin / parallel rather than waterfalling 5 retries through the first.
+func TestConnectToNode_StartProxyMultiReceivesAllCandidateIPs(t *testing.T) {
+	fakeClient := &fakeZededaClient{
+		initSessionScript: "edgeview -token tok",
+		parseCfg:          &zededa.SessionConfig{URL: "wss://example", Token: "tok", MaxInst: 2},
+		deviceStatus: &zededa.DeviceStatus{
+			NetStatusList: []zededa.NetStatus{
+				{Up: true, IfName: "eth0", IPs: []string{"192.168.1.10"}},
+				{Up: true, IfName: "eth1", IPs: []string{"10.0.0.5"}},
+				// "down" interface should be ignored.
+				{Up: false, IfName: "wlan0", IPs: []string{"172.16.0.1"}},
+			},
+		},
+	}
+	fakeSess := &fakeSessionManager{
+		startProxyPort: 9001,
+		startProxyID:   "tunnel-multi",
+	}
+
+	a := newTestApp(fakeClient, fakeSess)
+
+	port, tunnelID, err := a.ConnectToNode("node-multi", true)
+	if err != nil {
+		t.Fatalf("ConnectToNode returned error: %v", err)
+	}
+	if port != 9001 || tunnelID != "tunnel-multi" {
+		t.Fatalf("unexpected return values: port=%d tunnelID=%q", port, tunnelID)
+	}
+
+	if fakeSess.lastMultiTargetPort != 22 {
+		t.Errorf("expected target port 22 (SSH), got %d", fakeSess.lastMultiTargetPort)
+	}
+
+	want := []string{"127.0.0.1", "192.168.1.10", "10.0.0.5"}
+	if got := fakeSess.lastMultiCandidateIPs; !equalStringSlices(got, want) {
+		t.Errorf("candidate IPs mismatch:\n  got:  %v\n  want: %v", got, want)
+	}
+}
+
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // TestStartTunnel_CreatesSessionWhenMissing ensures StartTunnel calls InitSession
