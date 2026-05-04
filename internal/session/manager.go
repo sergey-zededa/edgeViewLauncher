@@ -29,10 +29,13 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// CachedSession stores an active session configuration
+// CachedSession stores an active session configuration.
+// TunnelID, when non-empty, links Port to the proxy tunnel that opened it
+// so the cache can be invalidated when that tunnel dies.
 type CachedSession struct {
 	Config    *zededa.SessionConfig
 	Port      int
+	TunnelID  string
 	ExpiresAt time.Time
 }
 
@@ -121,15 +124,38 @@ func (m *Manager) InvalidateSession(nodeID string) {
 	fmt.Printf("DEBUG: Invalidated cached session for %s\n", nodeID)
 }
 
-// StoreCachedSession stores a session configuration
-func (m *Manager) StoreCachedSession(nodeID string, config *zededa.SessionConfig, port int, expiresAt time.Time) {
+// StoreCachedSession stores a session configuration. tunnelID links the cached
+// Port to its proxy tunnel; pass "" when caching only the session config
+// (port=0) without an open proxy.
+func (m *Manager) StoreCachedSession(nodeID string, config *zededa.SessionConfig, port int, tunnelID string, expiresAt time.Time) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	m.sessions[nodeID] = &CachedSession{
 		Config:    config,
 		Port:      port,
+		TunnelID:  tunnelID,
 		ExpiresAt: expiresAt,
+	}
+}
+
+// clearCachedPortForTunnel zeroes Port/TunnelID of any cached session whose
+// proxy tunnel just died. Config + ExpiresAt are preserved so callers can
+// start a fresh proxy without re-handshaking with EdgeView.
+//
+// Caller must NOT hold m.tunnelMu when invoking this (it acquires m.mu);
+// CloseTunnel and FailTunnel release m.tunnelMu before calling.
+func (m *Manager) clearCachedPortForTunnel(tunnelID string) {
+	if tunnelID == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, s := range m.sessions {
+		if s.TunnelID == tunnelID {
+			s.Port = 0
+			s.TunnelID = ""
+		}
 	}
 }
 
@@ -174,10 +200,10 @@ func (m *Manager) RegisterTunnel(tunnel *Tunnel) {
 }
 
 // FailTunnel marks an existing tunnel as failed and records the error message.
+// The matching cached session (if any) has its Port/TunnelID cleared so a
+// future ConnectToNode for the same node creates a fresh proxy.
 func (m *Manager) FailTunnel(tunnelID string, err error) {
 	m.tunnelMu.Lock()
-	defer m.tunnelMu.Unlock()
-
 	if tunnel, exists := m.tunnels[tunnelID]; exists {
 		tunnel.Status = "failed"
 		if err != nil {
@@ -186,6 +212,9 @@ func (m *Manager) FailTunnel(tunnelID string, err error) {
 			tunnel.Error = ""
 		}
 	}
+	m.tunnelMu.Unlock()
+
+	m.clearCachedPortForTunnel(tunnelID)
 }
 
 // GetTunnel retrieves a tunnel by ID
@@ -196,13 +225,14 @@ func (m *Manager) GetTunnel(tunnelID string) (*Tunnel, bool) {
 	return tunnel, exists
 }
 
-// CloseTunnel cancels a tunnel's context and removes it from the registry
+// CloseTunnel cancels a tunnel's context and removes it from the registry.
+// The matching cached session (if any) has its Port/TunnelID cleared so a
+// future ConnectToNode for the same node creates a fresh proxy.
 func (m *Manager) CloseTunnel(tunnelID string) error {
 	m.tunnelMu.Lock()
-	defer m.tunnelMu.Unlock()
-
 	tunnel, exists := m.tunnels[tunnelID]
 	if !exists {
+		m.tunnelMu.Unlock()
 		return fmt.Errorf("tunnel %s not found", tunnelID)
 	}
 
@@ -211,8 +241,12 @@ func (m *Manager) CloseTunnel(tunnelID string) error {
 		tunnel.Cancel()
 	}
 
+	localPort := tunnel.LocalPort
 	delete(m.tunnels, tunnelID)
-	fmt.Printf("DEBUG: Closed tunnel %s (localhost:%d)\n", tunnelID, tunnel.LocalPort)
+	m.tunnelMu.Unlock()
+
+	m.clearCachedPortForTunnel(tunnelID)
+	fmt.Printf("DEBUG: Closed tunnel %s (localhost:%d)\n", tunnelID, localPort)
 	return nil
 }
 

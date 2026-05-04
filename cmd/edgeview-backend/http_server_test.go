@@ -34,7 +34,7 @@ func newTestServer(t *testing.T) *HTTPServer {
 
 	// Prime one cached session used by the session-status handler.
 	expiresAt := time.Now().Add(time.Hour)
-	a.sessionManager.StoreCachedSession("node-1", &zededa.SessionConfig{URL: "wss://example"}, 55780, expiresAt)
+	a.sessionManager.StoreCachedSession("node-1", &zededa.SessionConfig{URL: "wss://example"}, 55780, "tunnel-test", expiresAt)
 
 	return &HTTPServer{app: a, port: 0}
 }

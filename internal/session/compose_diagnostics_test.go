@@ -122,7 +122,7 @@ func TestStartComposeDiagnostics_ExpiredSession(t *testing.T) {
 	m := NewManager()
 
 	expired := time.Now().Add(-time.Minute)
-	m.StoreCachedSession("node-1", &zededa.SessionConfig{URL: "wss://example"}, 0, expired)
+	m.StoreCachedSession("node-1", &zededa.SessionConfig{URL: "wss://example"}, 0, "", expired)
 
 	_, err := m.StartComposeDiagnostics("node-1", "app1", "10.0.0.1", "root", "pass")
 	if err == nil {
@@ -134,7 +134,7 @@ func TestStartComposeDiagnostics_CreatesJob(t *testing.T) {
 	m := NewManager()
 
 	valid := time.Now().Add(time.Hour)
-	m.StoreCachedSession("node-1", &zededa.SessionConfig{URL: "wss://example", Token: "tok"}, 0, valid)
+	m.StoreCachedSession("node-1", &zededa.SessionConfig{URL: "wss://example", Token: "tok"}, 0, "", valid)
 
 	jobID, err := m.StartComposeDiagnostics("node-1", "myapp", "10.0.0.5", "wcsuser", "secret")
 	if err != nil {
@@ -178,7 +178,7 @@ func TestGetComposeDiagnosticsJob_ReturnsCopy(t *testing.T) {
 	m := NewManager()
 
 	valid := time.Now().Add(time.Hour)
-	m.StoreCachedSession("node-1", &zededa.SessionConfig{URL: "wss://example", Token: "tok"}, 0, valid)
+	m.StoreCachedSession("node-1", &zededa.SessionConfig{URL: "wss://example", Token: "tok"}, 0, "", valid)
 
 	jobID, _ := m.StartComposeDiagnostics("node-1", "app1", "10.0.0.1", "root", "")
 
@@ -200,7 +200,7 @@ func TestComposeDiagnosticsJob_InitialStatus(t *testing.T) {
 	m := NewManager()
 
 	valid := time.Now().Add(time.Hour)
-	m.StoreCachedSession("node-1", &zededa.SessionConfig{URL: "wss://example", Token: "tok"}, 0, valid)
+	m.StoreCachedSession("node-1", &zededa.SessionConfig{URL: "wss://example", Token: "tok"}, 0, "", valid)
 
 	jobID, err := m.StartComposeDiagnostics("node-1", "app1", "10.0.0.1", "root", "")
 	if err != nil {

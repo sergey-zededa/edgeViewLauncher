@@ -48,7 +48,8 @@ type zededaAPI interface {
 // sessionAPI defines the subset of session.Manager used by App.
 type sessionAPI interface {
 	GetCachedSession(nodeID string) (*session.CachedSession, bool)
-	StoreCachedSession(nodeID string, config *zededa.SessionConfig, port int, expiresAt time.Time)
+	GetTunnel(tunnelID string) (*session.Tunnel, bool)
+	StoreCachedSession(nodeID string, config *zededa.SessionConfig, port int, tunnelID string, expiresAt time.Time)
 	// StartProxy starts a persistent EdgeView proxy for the given device nodeID and target.
 	StartProxy(ctx context.Context, config *zededa.SessionConfig, nodeID string, target string, protocol string, onProgress func(string)) (int, string, error)
 	// StartProxyMulti probes multiple candidate IPs (round-robin per round,
@@ -376,12 +377,23 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (int, string, 
 	// Check if we have a cached session
 	a.SetConnectionProgress(nodeID, "Checking for cached session...")
 	if cached, ok := a.sessionManager.GetCachedSession(nodeID); ok {
-		// For native terminal, try to reuse the cached proxy port
-		if !useInAppTerminal && cached.Port > 0 {
-			fmt.Printf("Reusing cached proxy on port %d\n", cached.Port)
-			port = cached.Port
-			needNewProxy = false
-			// No need to update cache when reusing everything
+		// For native terminal, try to reuse the cached proxy port — but only
+		// after verifying the underlying tunnel is still alive. The teardown
+		// paths in session.Manager (CloseTunnel/FailTunnel) clear cached.Port
+		// when their tunnel dies, so cached.Port>0 normally implies liveness.
+		// This GetTunnel check is belt-and-braces against any future teardown
+		// path that forgets to invalidate the cache.
+		if !useInAppTerminal && cached.Port > 0 && cached.TunnelID != "" {
+			if t, exists := a.sessionManager.GetTunnel(cached.TunnelID); exists && t.Status == "active" {
+				fmt.Printf("Reusing cached proxy on port %d (tunnel %s)\n", cached.Port, cached.TunnelID)
+				port = cached.Port
+				tunnelID = cached.TunnelID
+				needNewProxy = false
+			} else {
+				fmt.Printf("Cached port %d is stale (tunnel %s gone) — starting fresh proxy\n", cached.Port, cached.TunnelID)
+				sessionConfig = cached.Config
+				needNewProxy = true
+			}
 		} else {
 			// For in-app terminal, always create new proxy (old one died with window)
 			fmt.Println("Using cached session config, creating new proxy")
@@ -501,11 +513,13 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (int, string, 
 
 		// Cache the session config (always cache token/URL, cache port only for native terminal)
 		portToCache := 0
+		tunnelIDToCache := ""
 		if !useInAppTerminal {
 			portToCache = port
+			tunnelIDToCache = tunnelID
 		}
 		expiresAt := time.Now().Add(4*time.Hour + 50*time.Minute)
-		a.sessionManager.StoreCachedSession(nodeID, sessionConfig, portToCache, expiresAt)
+		a.sessionManager.StoreCachedSession(nodeID, sessionConfig, portToCache, tunnelIDToCache, expiresAt)
 		if useInAppTerminal {
 			// fmt.Println("Session config cached (proxy will close with window)")
 		} else {
@@ -570,7 +584,7 @@ func (a *App) StartTunnel(nodeID, targetIP string, targetPort int, protocol stri
 				// Actually, StartTunnel doesn't care about cached port unless it's reusing the whole session for the SAME tunnel.
 				// Here we just want to update the config.
 
-				a.sessionManager.StoreCachedSession(nodeID, sessionConfig, 0, newExpires)
+				a.sessionManager.StoreCachedSession(nodeID, sessionConfig, 0, "", newExpires)
 				// Re-fetch to ensure 'cached' variable points to the updated data
 				cached, _ = a.sessionManager.GetCachedSession(nodeID)
 
@@ -595,7 +609,7 @@ func (a *App) StartTunnel(nodeID, targetIP string, targetPort int, protocol stri
 		}
 
 		expiresAt := time.Now().Add(4*time.Hour + 50*time.Minute)
-		a.sessionManager.StoreCachedSession(nodeID, sessionConfig, 0, expiresAt)
+		a.sessionManager.StoreCachedSession(nodeID, sessionConfig, 0, "", expiresAt)
 		cached, _ = a.sessionManager.GetCachedSession(nodeID)
 
 		// Give device MORE time to establish stable connection
@@ -667,7 +681,7 @@ func (a *App) StartTunnel(nodeID, targetIP string, targetPort int, protocol stri
 				}
 
 				expiresAt := time.Now().Add(4*time.Hour + 50*time.Minute)
-				a.sessionManager.StoreCachedSession(nodeID, newConfig, 0, expiresAt)
+				a.sessionManager.StoreCachedSession(nodeID, newConfig, 0, "", expiresAt)
 				cached = &session.CachedSession{Config: newConfig, ExpiresAt: expiresAt} // Update local var
 
 				// One more try with fresh session
@@ -1337,7 +1351,7 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 					if err == nil {
 						sc, err := a.zededaClient.ParseEdgeViewScript(script)
 						if err == nil {
-							a.sessionManager.StoreCachedSession(nodeID, sc, 0, time.Now().Add(5*time.Hour))
+							a.sessionManager.StoreCachedSession(nodeID, sc, 0, "", time.Now().Add(5*time.Hour))
 							time.Sleep(3 * time.Second)
 						}
 					}
@@ -1432,7 +1446,7 @@ func (a *App) StartCollectInfo(nodeID string) (string, error) {
 
 				// Revive session in cache
 				expiresAt := time.Now().Add(4*time.Hour + 50*time.Minute)
-				a.sessionManager.StoreCachedSession(nodeID, sc, 0, expiresAt)
+				a.sessionManager.StoreCachedSession(nodeID, sc, 0, "", expiresAt)
 				fmt.Printf("Revived active session for CollectInfo. URL: %s\n", sc.URL)
 			} else {
 				return "", fmt.Errorf("failed to parse active token: %w", parseErr)
@@ -1470,7 +1484,7 @@ func (a *App) StartComposeDiagnostics(nodeID, appName, appIP, username, password
 					}
 				}
 				expiresAt := time.Now().Add(4*time.Hour + 50*time.Minute)
-				a.sessionManager.StoreCachedSession(nodeID, sc, 0, expiresAt)
+				a.sessionManager.StoreCachedSession(nodeID, sc, 0, "", expiresAt)
 			} else {
 				return "", fmt.Errorf("failed to parse active token: %w", parseErr)
 			}
