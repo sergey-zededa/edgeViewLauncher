@@ -178,7 +178,8 @@ func newTestApp(client zededaAPI, sessMgr sessionAPI) *App {
 }
 
 type fakeSessionManager struct {
-	cached map[string]*session.CachedSession
+	cached  map[string]*session.CachedSession
+	tunnels map[string]*session.Tunnel
 
 	startProxyPort int
 	startProxyID   string
@@ -199,11 +200,19 @@ func (m *fakeSessionManager) GetCachedSession(nodeID string) (*session.CachedSes
 	return s, ok
 }
 
-func (m *fakeSessionManager) StoreCachedSession(nodeID string, cfg *zededa.SessionConfig, port int, expiresAt time.Time) {
+func (m *fakeSessionManager) GetTunnel(tunnelID string) (*session.Tunnel, bool) {
+	if m.tunnels == nil {
+		return nil, false
+	}
+	t, ok := m.tunnels[tunnelID]
+	return t, ok
+}
+
+func (m *fakeSessionManager) StoreCachedSession(nodeID string, cfg *zededa.SessionConfig, port int, tunnelID string, expiresAt time.Time) {
 	if m.cached == nil {
 		m.cached = make(map[string]*session.CachedSession)
 	}
-	m.cached[nodeID] = &session.CachedSession{Config: cfg, Port: port, ExpiresAt: expiresAt}
+	m.cached[nodeID] = &session.CachedSession{Config: cfg, Port: port, TunnelID: tunnelID, ExpiresAt: expiresAt}
 }
 
 func (m *fakeSessionManager) StartProxy(ctx context.Context, cfg *zededa.SessionConfig, nodeID string, target string, protocol string, onProgress func(string)) (int, string, error) {
@@ -333,7 +342,7 @@ func TestGetSessionStatus(t *testing.T) {
 
 	// Store a cached session and verify it is surfaced
 	expiresAt := time.Now().Add(time.Hour)
-	m.StoreCachedSession("node1", &zededa.SessionConfig{URL: "wss://example"}, 55780, expiresAt)
+	m.StoreCachedSession("node1", &zededa.SessionConfig{URL: "wss://example"}, 55780, "tunnel-test", expiresAt)
 
 	status = a.GetSessionStatus("node1")
 	if !status.Active {
@@ -347,35 +356,87 @@ func TestGetSessionStatus(t *testing.T) {
 	}
 }
 
-// TestConnectToNode_UsesCachedSessionAndLaunchesTerminal verifies that when a cached
-// session with a port exists, ConnectToNode reuses it and launches a native terminal
-// without calling InitSession.
-func TestConnectToNode_UsesCachedSessionAndLaunchesTerminal(t *testing.T) {
+// TestConnectToNode_LiveCachedTunnelIsReused verifies that when a cached
+// session points at a still-active proxy tunnel, ConnectToNode (native terminal)
+// returns the cached port and tunnel ID without invoking StartProxyMulti.
+func TestConnectToNode_LiveCachedTunnelIsReused(t *testing.T) {
 	fakeClient := &fakeZededaClient{}
 	fakeSess := &fakeSessionManager{
 		cached: map[string]*session.CachedSession{
 			"node1": {
 				Config:    &zededa.SessionConfig{URL: "wss://example"},
 				Port:      55780,
+				TunnelID:  "tunnel-cached",
 				ExpiresAt: time.Now().Add(time.Hour),
 			},
 		},
+		tunnels: map[string]*session.Tunnel{
+			"tunnel-cached": {ID: "tunnel-cached", NodeID: "node1", LocalPort: 55780, Status: "active"},
+		},
+		// If StartProxyMulti is invoked we'd return these — but it must NOT be invoked.
 		startProxyPort: 60000,
-		startProxyID:   "tunnel-1",
+		startProxyID:   "tunnel-fresh",
 	}
 
 	a := newTestApp(fakeClient, fakeSess)
 
-	port, _, err := a.ConnectToNode("node1", false)
+	port, tunnelID, err := a.ConnectToNode("node1", false)
 	if err != nil {
 		t.Fatalf("ConnectToNode returned error: %v", err)
 	}
-	// Note: We no longer launch terminals from backend, so fakeSess.launched remains false.
-	// if !fakeSess.launched {
-	// 	t.Fatalf("expected LaunchTerminal to be called for native terminal")
-	// }
-	if port <= 0 {
-		t.Fatalf("expected positive port, got %d", port)
+	if port != 55780 {
+		t.Errorf("expected cached port 55780 to be reused, got %d", port)
+	}
+	if tunnelID != "tunnel-cached" {
+		t.Errorf("expected cached tunnel ID 'tunnel-cached' to be returned, got %q", tunnelID)
+	}
+	if fakeSess.lastMultiCandidateIPs != nil {
+		t.Errorf("expected StartProxyMulti NOT to be called on cache reuse, but candidates were %v", fakeSess.lastMultiCandidateIPs)
+	}
+}
+
+// TestConnectToNode_DeadCachedTunnelTriggersFreshProxy verifies that when a
+// cached session's TunnelID no longer maps to an active tunnel (e.g. the
+// goroutine died and CloseTunnel/FailTunnel never fired), ConnectToNode
+// detects it via the GetTunnel check and starts a fresh proxy instead of
+// returning a stale port.
+func TestConnectToNode_DeadCachedTunnelTriggersFreshProxy(t *testing.T) {
+	fakeClient := &fakeZededaClient{
+		deviceStatus: &zededa.DeviceStatus{
+			NetStatusList: []zededa.NetStatus{
+				{Up: true, IfName: "eth0", IPs: []string{"192.168.1.10"}},
+			},
+		},
+	}
+	fakeSess := &fakeSessionManager{
+		cached: map[string]*session.CachedSession{
+			"node1": {
+				Config:    &zededa.SessionConfig{URL: "wss://example"},
+				Port:      55780,
+				TunnelID:  "tunnel-dead",
+				ExpiresAt: time.Now().Add(time.Hour),
+			},
+			// tunnels map is nil — tunnel-dead is not registered, simulating
+			// a teardown that left the cache pointing at a vanished tunnel.
+		},
+		startProxyPort: 60000,
+		startProxyID:   "tunnel-fresh",
+	}
+
+	a := newTestApp(fakeClient, fakeSess)
+
+	port, tunnelID, err := a.ConnectToNode("node1", false)
+	if err != nil {
+		t.Fatalf("ConnectToNode returned error: %v", err)
+	}
+	if fakeSess.lastMultiCandidateIPs == nil {
+		t.Fatalf("expected StartProxyMulti to be invoked when cached tunnel is dead, but it was not")
+	}
+	if port != 60000 {
+		t.Errorf("expected fresh port 60000, got %d (looks like stale cache was returned)", port)
+	}
+	if tunnelID != "tunnel-fresh" {
+		t.Errorf("expected fresh tunnel ID 'tunnel-fresh', got %q", tunnelID)
 	}
 }
 

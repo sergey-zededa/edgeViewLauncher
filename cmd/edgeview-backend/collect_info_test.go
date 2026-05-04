@@ -17,7 +17,7 @@ func TestHandleStartCollectInfo(t *testing.T) {
 
 	// Setup active session
 	expiresAt := time.Now().Add(time.Hour)
-	srv.app.sessionManager.StoreCachedSession("node-1", &zededa.SessionConfig{URL: "wss://example.com", Token: "test-token"}, 0, expiresAt)
+	srv.app.sessionManager.StoreCachedSession("node-1", &zededa.SessionConfig{URL: "wss://example.com", Token: "test-token"}, 0, "", expiresAt)
 
 	// Request body
 	reqBody := NodeIDRequest{NodeID: "node-1"}
@@ -53,7 +53,7 @@ func TestHandleGetCollectInfoStatus(t *testing.T) {
 	// Since we can't inject easily, we rely on StartCollectInfo which creates a job
 	// and returns the ID.
 	expiresAt := time.Now().Add(time.Hour)
-	srv.app.sessionManager.StoreCachedSession("node-1", &zededa.SessionConfig{URL: "wss://example.com", Token: "test-token"}, 0, expiresAt)
+	srv.app.sessionManager.StoreCachedSession("node-1", &zededa.SessionConfig{URL: "wss://example.com", Token: "test-token"}, 0, "", expiresAt)
 	
 	jobID, _ := srv.app.StartCollectInfo("node-1")
 	
@@ -110,7 +110,7 @@ func TestHandleDownloadCollectInfo(t *testing.T) {
 	// Case 2: Job found but not completed
 	// We can start a job, it will be "starting" or "failed" (likely failed quickly due to connection error in test)
 	expiresAt := time.Now().Add(time.Hour)
-	srv.app.sessionManager.StoreCachedSession("node-1", &zededa.SessionConfig{URL: "wss://example.com", Token: "test-token"}, 0, expiresAt)
+	srv.app.sessionManager.StoreCachedSession("node-1", &zededa.SessionConfig{URL: "wss://example.com", Token: "test-token"}, 0, "", expiresAt)
 	jobID, _ := srv.app.StartCollectInfo("node-1")
 	
 	rr = httptest.NewRecorder()

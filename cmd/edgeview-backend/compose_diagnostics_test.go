@@ -16,7 +16,7 @@ func TestHandleStartComposeDiagnostics(t *testing.T) {
 	srv := newTestServer(t)
 
 	expiresAt := time.Now().Add(time.Hour)
-	srv.app.sessionManager.StoreCachedSession("node-1", &zededa.SessionConfig{URL: "wss://example.com", Token: "test-token"}, 0, expiresAt)
+	srv.app.sessionManager.StoreCachedSession("node-1", &zededa.SessionConfig{URL: "wss://example.com", Token: "test-token"}, 0, "", expiresAt)
 
 	reqBody := map[string]string{
 		"nodeId":   "node-1",
@@ -82,7 +82,7 @@ func TestHandleStartComposeDiagnostics_DefaultUsername(t *testing.T) {
 	srv := newTestServer(t)
 
 	expiresAt := time.Now().Add(time.Hour)
-	srv.app.sessionManager.StoreCachedSession("node-1", &zededa.SessionConfig{URL: "wss://example.com", Token: "test-token"}, 0, expiresAt)
+	srv.app.sessionManager.StoreCachedSession("node-1", &zededa.SessionConfig{URL: "wss://example.com", Token: "test-token"}, 0, "", expiresAt)
 
 	// No username provided — should default to "root"
 	reqBody := map[string]string{
@@ -111,7 +111,7 @@ func TestHandleGetComposeDiagnosticsStatus(t *testing.T) {
 	srv := newTestServer(t)
 
 	expiresAt := time.Now().Add(time.Hour)
-	srv.app.sessionManager.StoreCachedSession("node-1", &zededa.SessionConfig{URL: "wss://example.com", Token: "test-token"}, 0, expiresAt)
+	srv.app.sessionManager.StoreCachedSession("node-1", &zededa.SessionConfig{URL: "wss://example.com", Token: "test-token"}, 0, "", expiresAt)
 
 	// Start a job first
 	jobID, err := srv.app.sessionManager.StartComposeDiagnostics("node-1", "app1", "10.0.0.5", "root", "")
@@ -203,7 +203,7 @@ func TestHandleDownloadComposeDiagnostics_NotCompleted(t *testing.T) {
 	srv := newTestServer(t)
 
 	expiresAt := time.Now().Add(time.Hour)
-	srv.app.sessionManager.StoreCachedSession("node-1", &zededa.SessionConfig{URL: "wss://example.com", Token: "test-token"}, 0, expiresAt)
+	srv.app.sessionManager.StoreCachedSession("node-1", &zededa.SessionConfig{URL: "wss://example.com", Token: "test-token"}, 0, "", expiresAt)
 
 	jobID, _ := srv.app.sessionManager.StartComposeDiagnostics("node-1", "app1", "10.0.0.1", "root", "")
 
@@ -233,7 +233,7 @@ func TestHandleDownloadComposeDiagnostics_CompletedJob(t *testing.T) {
 	tmpFile.Close()
 
 	expiresAt := time.Now().Add(time.Hour)
-	srv.app.sessionManager.StoreCachedSession("node-1", &zededa.SessionConfig{URL: "wss://example.com", Token: "test-token"}, 0, expiresAt)
+	srv.app.sessionManager.StoreCachedSession("node-1", &zededa.SessionConfig{URL: "wss://example.com", Token: "test-token"}, 0, "", expiresAt)
 
 	jobID, _ := srv.app.sessionManager.StartComposeDiagnostics("node-1", "app1", "10.0.0.1", "root", "")
 

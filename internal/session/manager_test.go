@@ -18,7 +18,7 @@ func TestCachedSessionExpiryAndRetrieval(t *testing.T) {
 
 	// Expired session should not be returned
 	expired := time.Now().Add(-time.Minute)
-	m.StoreCachedSession("node-expired", &zededa.SessionConfig{URL: "wss://example"}, 0, expired)
+	m.StoreCachedSession("node-expired", &zededa.SessionConfig{URL: "wss://example"}, 0, "", expired)
 
 	if _, ok := m.GetCachedSession("node-expired"); ok {
 		t.Fatalf("expected expired session to be treated as missing")
@@ -26,7 +26,7 @@ func TestCachedSessionExpiryAndRetrieval(t *testing.T) {
 
 	// Valid session should be returned
 	valid := time.Now().Add(time.Hour)
-	m.StoreCachedSession("node-valid", &zededa.SessionConfig{URL: "wss://example2"}, 55780, valid)
+	m.StoreCachedSession("node-valid", &zededa.SessionConfig{URL: "wss://example2"}, 55780, "", valid)
 
 	s, ok := m.GetCachedSession("node-valid")
 	if !ok {
@@ -334,4 +334,96 @@ func stripPort(target string) string {
 		}
 	}
 	return target
+}
+
+// TestStoreCachedSessionTunnelIDPreserved verifies that the new TunnelID field
+// round-trips through StoreCachedSession / GetCachedSession.
+func TestStoreCachedSessionTunnelIDPreserved(t *testing.T) {
+	m := NewManager()
+	expires := time.Now().Add(time.Hour)
+	m.StoreCachedSession("nodeA", &zededa.SessionConfig{URL: "wss://x"}, 12345, "tunnel-abc", expires)
+
+	s, ok := m.GetCachedSession("nodeA")
+	if !ok {
+		t.Fatalf("expected cached session to exist")
+	}
+	if s.Port != 12345 {
+		t.Errorf("expected port 12345, got %d", s.Port)
+	}
+	if s.TunnelID != "tunnel-abc" {
+		t.Errorf("expected TunnelID 'tunnel-abc', got %q", s.TunnelID)
+	}
+}
+
+// TestCloseTunnelClearsCachedPort verifies that closing a tunnel zeroes the
+// matching cached session's Port/TunnelID while preserving Config + ExpiresAt.
+func TestCloseTunnelClearsCachedPort(t *testing.T) {
+	m := NewManager()
+	expires := time.Now().Add(time.Hour)
+	cfg := &zededa.SessionConfig{URL: "wss://x"}
+	m.StoreCachedSession("nodeA", cfg, 12345, "t1", expires)
+	m.RegisterTunnel(&Tunnel{ID: "t1", NodeID: "nodeA", LocalPort: 12345, Status: "active"})
+
+	if err := m.CloseTunnel("t1"); err != nil {
+		t.Fatalf("CloseTunnel: %v", err)
+	}
+
+	s, ok := m.GetCachedSession("nodeA")
+	if !ok {
+		t.Fatalf("expected cached session to remain after CloseTunnel")
+	}
+	if s.Port != 0 {
+		t.Errorf("expected Port to be cleared, got %d", s.Port)
+	}
+	if s.TunnelID != "" {
+		t.Errorf("expected TunnelID to be cleared, got %q", s.TunnelID)
+	}
+	if s.Config != cfg {
+		t.Errorf("expected Config to be preserved")
+	}
+	if !s.ExpiresAt.Equal(expires) {
+		t.Errorf("expected ExpiresAt to be preserved")
+	}
+}
+
+// TestFailTunnelClearsCachedPort verifies that marking a tunnel failed also
+// invalidates the cached port (same teardown semantics as CloseTunnel).
+func TestFailTunnelClearsCachedPort(t *testing.T) {
+	m := NewManager()
+	expires := time.Now().Add(time.Hour)
+	m.StoreCachedSession("nodeA", &zededa.SessionConfig{URL: "wss://x"}, 12345, "t1", expires)
+	m.RegisterTunnel(&Tunnel{ID: "t1", NodeID: "nodeA", LocalPort: 12345, Status: "active"})
+
+	m.FailTunnel("t1", errors.New("boom"))
+
+	s, ok := m.GetCachedSession("nodeA")
+	if !ok {
+		t.Fatalf("expected cached session to remain after FailTunnel")
+	}
+	if s.Port != 0 || s.TunnelID != "" {
+		t.Errorf("expected Port/TunnelID cleared, got Port=%d TunnelID=%q", s.Port, s.TunnelID)
+	}
+}
+
+// TestCloseTunnelLeavesUnrelatedCachedSessionsAlone verifies the cache helper
+// only zeroes the entry whose TunnelID matches the closed tunnel.
+func TestCloseTunnelLeavesUnrelatedCachedSessionsAlone(t *testing.T) {
+	m := NewManager()
+	expires := time.Now().Add(time.Hour)
+	m.StoreCachedSession("nodeA", &zededa.SessionConfig{URL: "wss://a"}, 1001, "t1", expires)
+	m.StoreCachedSession("nodeB", &zededa.SessionConfig{URL: "wss://b"}, 2002, "t2", expires)
+	m.RegisterTunnel(&Tunnel{ID: "t1", NodeID: "nodeA", LocalPort: 1001, Status: "active"})
+	m.RegisterTunnel(&Tunnel{ID: "t2", NodeID: "nodeB", LocalPort: 2002, Status: "active"})
+
+	if err := m.CloseTunnel("t1"); err != nil {
+		t.Fatalf("CloseTunnel: %v", err)
+	}
+
+	if s, _ := m.GetCachedSession("nodeA"); s.Port != 0 {
+		t.Errorf("nodeA Port should be cleared, got %d", s.Port)
+	}
+	s, _ := m.GetCachedSession("nodeB")
+	if s.Port != 2002 || s.TunnelID != "t2" {
+		t.Errorf("nodeB cache should be untouched, got Port=%d TunnelID=%q", s.Port, s.TunnelID)
+	}
 }
