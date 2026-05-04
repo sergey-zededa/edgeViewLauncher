@@ -1,11 +1,16 @@
 package session
 
 import (
+	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"edgeViewLauncher/internal/zededa"
+
+	"github.com/gorilla/websocket"
 )
 
 func TestCachedSessionExpiryAndRetrieval(t *testing.T) {
@@ -121,4 +126,212 @@ func TestTunnelStats(t *testing.T) {
 	if !after.After(before) {
 		t.Errorf("expected last activity to update")
 	}
+}
+
+// --- StartProxyMulti orchestration tests ---
+//
+// These tests exercise the round-robin / parallel probe logic by injecting
+// a fake tryAttempt via tryAttemptOverride. They never establish a real
+// WebSocket; on failure paths the override returns a nil wsConn and an
+// error, on the (rare) success paths they don't reach finalizeTunnel because
+// every test forces all probes to fail.
+
+type probeCall struct {
+	target string
+	instID int
+	round  int // round index inferred from call order; not the arg
+}
+
+// newRecordingManager returns a Manager with a stubbed tryProxyAttempt that
+// records each call and returns the error produced by `respond`. Backoff
+// between rounds is collapsed to ~0 so tests run instantly.
+func newRecordingManager(maxRounds int, respond func(call probeCall) error) (*Manager, *[]probeCall, *sync.Mutex) {
+	m := NewManager()
+	m.maxRoundsOverride = maxRounds
+	m.roundBackoffOverride = func(round int) time.Duration { return time.Millisecond }
+
+	var (
+		mu    sync.Mutex
+		calls []probeCall
+	)
+	m.tryAttemptOverride = func(ctx context.Context, cfg *zededa.SessionConfig, target string, instID int) (*websocket.Conn, string, error) {
+		mu.Lock()
+		// We don't know the round from inside; the caller infers it from
+		// position in the recorded slice. Record raw target+instID here.
+		c := probeCall{target: target, instID: instID}
+		calls = append(calls, c)
+		mu.Unlock()
+		return nil, "", respond(c)
+	}
+	return m, &calls, &mu
+}
+
+func TestStartProxyMulti_RejectsEmptyCandidates(t *testing.T) {
+	m := NewManager()
+	_, _, err := m.StartProxyMulti(context.Background(), &zededa.SessionConfig{MaxInst: 2}, "node-x", nil, 22, "ssh", nil)
+	if err == nil {
+		t.Fatalf("expected error for empty candidate list")
+	}
+}
+
+// Each round must touch every candidate IP once before backoff/retry.
+func TestStartProxyMulti_RoundRobinAcrossIPs(t *testing.T) {
+	candidates := []string{"127.0.0.1", "10.0.0.1", "192.168.1.1"}
+	m, callsPtr, mu := newRecordingManager(2, func(c probeCall) error {
+		return errors.New("synthetic failure")
+	})
+
+	cfg := &zededa.SessionConfig{MaxInst: 2}
+	_, _, err := m.StartProxyMulti(context.Background(), cfg, "n1", candidates, 22, "ssh", nil)
+	if err == nil {
+		t.Fatalf("expected error when all probes fail")
+	}
+
+	mu.Lock()
+	calls := append([]probeCall(nil), *callsPtr...)
+	mu.Unlock()
+
+	// 2 rounds × 3 candidates = 6 total probes.
+	if len(calls) != 6 {
+		t.Fatalf("expected 6 total probes (2 rounds × 3 IPs), got %d:\n%+v", len(calls), calls)
+	}
+
+	// Within each 3-call round, every IP must appear exactly once. Order
+	// within a round can vary because parallel goroutines race; what we
+	// guarantee is "every IP probed in this round before any IP gets a
+	// second probe."
+	for _, round := range [][]probeCall{calls[0:3], calls[3:6]} {
+		seen := map[string]bool{}
+		for _, c := range round {
+			ip := stripPort(c.target)
+			if seen[ip] {
+				t.Fatalf("IP %s probed twice in the same round before round-robin completed:\n%+v", ip, calls)
+			}
+			seen[ip] = true
+		}
+		for _, want := range candidates {
+			if !seen[want] {
+				t.Fatalf("candidate %s missing from round, got round=%+v full=%+v", want, round, calls)
+			}
+		}
+	}
+}
+
+// MaxInst caps how many goroutines run concurrently inside a single batch.
+func TestStartProxyMulti_ParallelBatchCappedByMaxInst(t *testing.T) {
+	const maxInst = 2
+	candidates := []string{"a", "b", "c"} // 3 candidates, MaxInst=2 → batches [a,b] then [c]
+
+	var (
+		concurrent     int32
+		peakConcurrent int32
+	)
+	m := NewManager()
+	m.maxRoundsOverride = 1
+	m.roundBackoffOverride = func(round int) time.Duration { return time.Millisecond }
+	m.tryAttemptOverride = func(ctx context.Context, cfg *zededa.SessionConfig, target string, instID int) (*websocket.Conn, string, error) {
+		now := atomic.AddInt32(&concurrent, 1)
+		// Track high-water mark.
+		for {
+			peak := atomic.LoadInt32(&peakConcurrent)
+			if now <= peak || atomic.CompareAndSwapInt32(&peakConcurrent, peak, now) {
+				break
+			}
+		}
+		// Hold the slot briefly so siblings overlap.
+		time.Sleep(20 * time.Millisecond)
+		atomic.AddInt32(&concurrent, -1)
+		return nil, "", errors.New("synthetic failure")
+	}
+
+	cfg := &zededa.SessionConfig{MaxInst: maxInst}
+	_, _, err := m.StartProxyMulti(context.Background(), cfg, "n1", candidates, 22, "ssh", nil)
+	if err == nil {
+		t.Fatalf("expected error when all probes fail")
+	}
+
+	// Expect exactly MaxInst probes overlapping in batch 1; batch 2 has
+	// only one entry so concurrency drops to 1. So peak == MaxInst.
+	if got := atomic.LoadInt32(&peakConcurrent); got != int32(maxInst) {
+		t.Fatalf("expected peak concurrency %d (= MaxInst), got %d", maxInst, got)
+	}
+}
+
+// Parallel slots in one batch must use distinct InstIDs, otherwise EdgeView
+// rejects the second peer.
+func TestStartProxyMulti_BatchSlotsUseDistinctInstIDs(t *testing.T) {
+	const maxInst = 2
+	candidates := []string{"a", "b"}
+
+	type observation struct {
+		target string
+		instID int
+	}
+	var (
+		mu   sync.Mutex
+		obs  []observation
+		hold = make(chan struct{}) // released after both probes have entered
+		wg   sync.WaitGroup
+	)
+	wg.Add(2)
+
+	m := NewManager()
+	m.maxRoundsOverride = 1
+	m.roundBackoffOverride = func(round int) time.Duration { return time.Millisecond }
+	m.tryAttemptOverride = func(ctx context.Context, cfg *zededa.SessionConfig, target string, instID int) (*websocket.Conn, string, error) {
+		mu.Lock()
+		obs = append(obs, observation{target: target, instID: instID})
+		mu.Unlock()
+		wg.Done()
+		<-hold
+		return nil, "", errors.New("synthetic failure")
+	}
+
+	go func() {
+		wg.Wait()
+		close(hold)
+	}()
+
+	cfg := &zededa.SessionConfig{MaxInst: maxInst}
+	_, _, _ = m.StartProxyMulti(context.Background(), cfg, "n1", candidates, 22, "ssh", nil)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(obs) != 2 {
+		t.Fatalf("expected 2 observed probes, got %d", len(obs))
+	}
+	if obs[0].instID == obs[1].instID {
+		t.Fatalf("parallel batch slots reused InstID %d (both probes), expected distinct IDs", obs[0].instID)
+	}
+}
+
+// External-policy denial must short-circuit out of the round loop entirely.
+func TestStartProxyMulti_ExternalPolicyShortCircuits(t *testing.T) {
+	candidates := []string{"a", "b"}
+	m, callsPtr, mu := newRecordingManager(5, func(c probeCall) error {
+		return ErrExternalPolicyDenied
+	})
+
+	cfg := &zededa.SessionConfig{MaxInst: 2}
+	_, _, err := m.StartProxyMulti(context.Background(), cfg, "n1", candidates, 22, "ssh", nil)
+	if err != ErrExternalPolicyDenied {
+		t.Fatalf("expected ErrExternalPolicyDenied, got %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	// Both slots in batch 1 race; the *second* result is observed. So we'd
+	// see exactly len(candidates) probes from round 1 — never a round 2.
+	if got := len(*callsPtr); got > len(candidates) {
+		t.Fatalf("expected at most %d probes (one round) on policy denial, got %d", len(candidates), got)
+	}
+}
+
+func stripPort(target string) string {
+	for i := len(target) - 1; i >= 0; i-- {
+		if target[i] == ':' {
+			return target[:i]
+		}
+	}
+	return target
 }

@@ -51,6 +51,11 @@ type sessionAPI interface {
 	StoreCachedSession(nodeID string, config *zededa.SessionConfig, port int, expiresAt time.Time)
 	// StartProxy starts a persistent EdgeView proxy for the given device nodeID and target.
 	StartProxy(ctx context.Context, config *zededa.SessionConfig, nodeID string, target string, protocol string, onProgress func(string)) (int, string, error)
+	// StartProxyMulti probes multiple candidate IPs (round-robin per round,
+	// up to MaxInst probes in parallel per round) and returns the first
+	// successful tunnel. Used for SSH where the EVE-OS host is reachable via
+	// any of several management interfaces.
+	StartProxyMulti(ctx context.Context, config *zededa.SessionConfig, nodeID string, candidateIPs []string, targetPort int, protocol string, onProgress func(string)) (int, string, error)
 	LaunchTerminal(port int, keyPath string) error
 	ExecuteCommand(nodeID string, command string) (string, error)
 	CloseTunnel(tunnelID string) error
@@ -479,45 +484,20 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (int, string, 
 		candidateIPs = uniqueStrings(candidateIPs)
 		fmt.Printf("DEBUG: Candidate IPs for SSH: %v\n", candidateIPs)
 
-		var port int
-		var tunnelID string
-		var lastErr error
-
-		// 2. Try each IP
-		for i, targetIP := range candidateIPs {
-			target := fmt.Sprintf("%s:22", targetIP)
-			msg := fmt.Sprintf("Connecting to %s...", targetIP)
-			if i > 0 {
-				msg = fmt.Sprintf("Localhost failed. Trying fallback IP %s (%d/%d)...", targetIP, i+1, len(candidateIPs))
-			}
-			a.SetConnectionProgress(nodeID, msg)
-
-			// We pass a progress callback that updates the global progress
-			// Note: StartProxy internal retries (maxRetries=5) might be too long if we have many IPs.
-			// However, since we want robustness, we keep it. The user sees progress.
-			port, tunnelID, err = a.sessionManager.StartProxy(a.ctx, sessionConfig, nodeID, target, "ssh", func(status string) {
-				// Prefix status with IP to give context
-				a.SetConnectionProgress(nodeID, fmt.Sprintf("[%s] %s", targetIP, status))
-			})
-
-			if err == nil {
-				// Success!
-				fmt.Printf("Successfully connected to %s\n", target)
-				lastErr = nil
-				break
-			}
-
-			fmt.Printf("Failed to connect to %s: %v\n", target, err)
-			lastErr = err
-			
-			// If we have more candidates, continue. 
-			// If this was the last one, we'll fall through with lastErr.
-		}
-
-		if lastErr != nil {
+		// Probe every candidate IP in parallel batches (sized by MaxInst) per
+		// round, instead of waterfalling 5 retries through one IP at a time.
+		// First IP to answer wins.
+		port, tunnelID, err := a.sessionManager.StartProxyMulti(
+			a.ctx, sessionConfig, nodeID, candidateIPs, 22, "ssh",
+			func(status string) {
+				a.SetConnectionProgress(nodeID, status)
+			},
+		)
+		if err != nil {
 			a.SetConnectionProgress(nodeID, "Error: Connection failed on all interfaces")
-			return 0, "", fmt.Errorf("failed to start proxy on any candidate IP: %w", lastErr)
+			return 0, "", fmt.Errorf("failed to start proxy on any candidate IP: %w", err)
 		}
+		fmt.Printf("Successfully connected via candidate set %v\n", candidateIPs)
 
 		// Cache the session config (always cache token/URL, cache port only for native terminal)
 		portToCache := 0

@@ -67,14 +67,23 @@ type Tunnel struct {
 }
 
 type Manager struct {
-	sessions        map[string]*CachedSession           // key is nodeID
-	tunnels         map[string]*Tunnel                  // key is tunnel ID
-	collectJobs     map[string]*CollectInfoJob          // key is job ID
-	composeDiagJobs map[string]*ComposeDiagnosticsJob   // key is job ID
+	sessions        map[string]*CachedSession         // key is nodeID
+	tunnels         map[string]*Tunnel                // key is tunnel ID
+	collectJobs     map[string]*CollectInfoJob        // key is job ID
+	composeDiagJobs map[string]*ComposeDiagnosticsJob // key is job ID
 	mu              sync.RWMutex
 	tunnelMu        sync.RWMutex
 	collectMu       sync.RWMutex
 	composeDiagMu   sync.RWMutex
+
+	// tryAttemptOverride lets tests substitute tryProxyAttempt without
+	// opening a real WebSocket. Production code leaves this nil.
+	tryAttemptOverride func(ctx context.Context, config *zededa.SessionConfig, target string, instID int) (*websocket.Conn, string, error)
+	// maxRoundsOverride caps StartProxyMulti's retry rounds (0 = default 5).
+	maxRoundsOverride int
+	// roundBackoffOverride replaces the default exponential backoff between
+	// StartProxyMulti rounds (nil = default 1<<round seconds).
+	roundBackoffOverride func(round int) time.Duration
 }
 
 func NewManager() *Manager {
@@ -279,205 +288,93 @@ type cmdOpt struct {
 	Logtype      string `json:"logtype"`
 }
 
-// StartProxy starts a local TCP listener that proxies to the EdgeView WebSocket.
-// This implementation matches the reference EdgeView client architecture:
-// 1. Establish ONE WebSocket connection upfront
-// 2. Send the tcp command and wait for +++tcpSetupOK+++
-// 3. Start accepting TCP clients that multiplex over the shared WebSocket
-// Returns the local port number and tunnel ID.
-func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, nodeID string, target string, protocol string, onProgress func(string)) (int, string, error) {
-	// Helper to safely call progress callback
-	reportProgress := func(msg string) {
-		if onProgress != nil {
-			onProgress(msg)
-		}
-	}
-
-	// Determine the initial instance ID based on MaxInst
-	initialInstID := config.InstID
+// initialInstIDFor picks the InstID to start probing with based on MaxInst.
+// MaxInst==1 forces InstID 0; MaxInst>1 starts at 1 (matches reference client);
+// otherwise defaults to 0.
+func initialInstIDFor(config *zededa.SessionConfig) int {
 	if config.MaxInst == 1 {
-		// Single instance device - must use InstID 0
-		initialInstID = 0
-		fmt.Printf("DEBUG: Device supports single instance only (MaxInst=1), using InstID=0\n")
-	} else if config.MaxInst > 1 {
-		// Multi-instance device - start with InstID 1 (reference client typically uses 0 or 1)
-		initialInstID = 1
-		fmt.Printf("DEBUG: Device supports %d instances (MaxInst=%d), starting with InstID=1\n", config.MaxInst, config.MaxInst)
-	} else {
-		// Fallback: if MaxInst is not set properly, default to 0
-		initialInstID = 0
-		fmt.Printf("DEBUG: MaxInst not set, defaulting to InstID=0\n")
+		return 0
 	}
+	if config.MaxInst > 1 {
+		return 1
+	}
+	return 0
+}
 
-	// Start local listener first
-	var listener net.Listener
-	var err error
-
-	// fmt.Printf("DEBUG: StartProxy called for node %s -> %s (protocol: %s). Initial InstID: %d (MaxInst: %d)\n", nodeID, target, protocol, initialInstID, config.MaxInst)
-
+// createLocalListener opens a TCP listener on 127.0.0.1, preferring 9001-9010
+// for predictable ports during development, falling back to an ephemeral port.
+func createLocalListener() (net.Listener, error) {
 	for port := 9001; port <= 9010; port++ {
-		listener, err = net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 		if err == nil {
-			break
+			return l, nil
 		}
 	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, fmt.Errorf("failed to start local listener: %w", err)
+	}
+	return l, nil
+}
 
-	if listener == nil {
-		listener, err = net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			return 0, "", fmt.Errorf("failed to start local listener: %w", err)
-		}
+// callTryAttempt routes a probe to the test override (if installed) or to
+// the real tryProxyAttempt.
+func (m *Manager) callTryAttempt(ctx context.Context, config *zededa.SessionConfig, target string, instID int) (*websocket.Conn, string, error) {
+	if m.tryAttemptOverride != nil {
+		return m.tryAttemptOverride(ctx, config, target, instID)
+	}
+	return m.tryProxyAttempt(ctx, config, target, instID)
+}
+
+// tryProxyAttempt does ONE EdgeView probe: opens a WebSocket with the given
+// InstID, sends the tcp/<target> command, and waits for +++tcpSetupOK+++.
+// On success returns the live wsConn (caller owns it); on failure the wsConn
+// has been closed and the underlying setup error (including sentinels like
+// ErrNoDeviceOnline / ErrExternalPolicyDenied / ErrBusyInstance) is returned.
+// The caller's config is not mutated — InstID is applied to a local copy.
+func (m *Manager) tryProxyAttempt(ctx context.Context, config *zededa.SessionConfig, target string, instID int) (*websocket.Conn, string, error) {
+	cfg := *config
+	cfg.InstID = instID
+
+	wsConn, clientIP, err := m.connectToEdgeView(&cfg)
+	if err != nil {
+		return nil, "", err
 	}
 
-	localPort := listener.Addr().(*net.TCPAddr).Port
-	fmt.Printf("[%s] Tunnel listening on 127.0.0.1:%d for target %s (protocol: %s)\n", time.Now().Format("2006-01-02 15:04:05"), localPort, target, protocol)
-
-	// Try to establish WebSocket and get tcpSetupOK with retries
-	const maxRetries = 5
-	var wsConn *websocket.Conn
-	var clientIP string
-	var lastErr error
-
-	// Track which instances we've tried in the current attempt
-	triedInstances := make(map[int]bool)
-	currentInstID := initialInstID
-	seenNoDeviceOnline := false
-
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		if attempt > 1 {
-			fmt.Printf("DEBUG: Retry attempt %d/%d for tunnel setup...\n", attempt, maxRetries)
-			reportProgress(fmt.Sprintf("Retrying connection (attempt %d/%d)...", attempt, maxRetries))
-		} else {
-			reportProgress("Connecting to EdgeView...")
-		}
-
-		// Set the instance ID for this attempt
-		config.InstID = currentInstID
-		triedInstances[currentInstID] = true
-		// fmt.Printf("DEBUG: Connecting to EdgeView with Enc=%v\n", config.Enc)
-
-		// Connect to EdgeView
-		wsConn, clientIP, err = m.connectToEdgeView(config)
-		if err != nil {
-			lastErr = fmt.Errorf("failed to connect to EdgeView: %w", err)
-			if attempt < maxRetries {
-				waitTime := time.Duration(attempt*2) * time.Second
-				fmt.Printf("DEBUG: Connection failed, waiting %v before retry...\n", waitTime)
-				reportProgress(fmt.Sprintf("Connection failed, retrying in %ds...", int(waitTime.Seconds())))
-				time.Sleep(waitTime)
-				continue
-			}
-			listener.Close()
-			return 0, "", lastErr
-		}
-
-		// Send the TCP tunnel command
-		query := cmdOpt{
-			Version:      edgeViewVersion,
-			ClientEPAddr: clientIP,
-			Network:      "tcp/" + target,
-			IsJSON:       false,
-		}
-		queryBytes, _ := json.Marshal(query)
-
-		if err := sendWrappedMessage(wsConn, queryBytes, config.Key, websocket.TextMessage, config.Enc); err != nil {
-			wsConn.Close()
-			lastErr = fmt.Errorf("failed to send tcp command: %w", err)
-			if attempt < maxRetries {
-				waitTime := time.Duration(attempt) * time.Second
-				fmt.Printf("DEBUG: Failed to send command, waiting %v before retry...\n", waitTime)
-				time.Sleep(waitTime)
-				continue
-			}
-			listener.Close()
-			return 0, "", lastErr
-		}
-		// fmt.Printf("DEBUG: TCP command sent successfully (InstID: %d)\n", currentInstID)
-
-		// Wait for +++tcpSetupOK+++ (with timeout)
-		fmt.Printf("DEBUG: Waiting for tcpSetupOK from device (attempt %d/%d)...\n", attempt, maxRetries)
-		reportProgress(fmt.Sprintf("Waiting for device confirmation (attempt %d/%d)...", attempt, maxRetries))
-		setupErr := m.waitForTcpSetupOK(wsConn, config.Key, 30*time.Second, config.Enc)
-		if setupErr == nil {
-			// fmt.Println("DEBUG: tcpSetupOK received, tunnel established successfully!")
-			break // Success
-		}
-
-		// Setup failed - check if it's "no device online" error
-		if setupErr == ErrNoDeviceOnline {
-			seenNoDeviceOnline = true
-			fmt.Printf("DEBUG: Device is not online (attempt %d/%d). The device may not be connected to EdgeView yet.\n", attempt, maxRetries)
-			reportProgress(fmt.Sprintf("Device not online yet (attempt %d/%d)...", attempt, maxRetries))
-		} else if setupErr == ErrExternalPolicyDenied {
-			fmt.Printf("DEBUG: External connection policy denied — not retrying\n")
-			wsConn.Close()
-			listener.Close()
-			return 0, "", ErrExternalPolicyDenied
-		} else {
-			fmt.Printf("DEBUG: Tunnel setup failed: %v (attempt %d/%d)\n", setupErr, attempt, maxRetries)
-		}
-
-		// Try to find an untried instance before applying backoff
-		// We do this for ANY error, not just ErrBusyInstance, because sometimes the server
-		// just closes the connection without sending a specific error if the instance is busy
-		if config.MaxInst > 1 {
-			foundAlternative := false
-			// Try next instance in round-robin fashion starting from current+1
-			for i := 1; i < config.MaxInst; i++ {
-				nextInstID := (currentInstID + i) % config.MaxInst
-				if !triedInstances[nextInstID] {
-					currentInstID = nextInstID
-					foundAlternative = true
-					fmt.Printf("DEBUG: Switching to alternative instance %d (previous failed)...\n", currentInstID)
-					reportProgress(fmt.Sprintf("Instance busy, switching to instance %d...", currentInstID))
-					break
-				}
-			}
-
-			if foundAlternative {
-				// Close current connection and try the alternative instance immediately
-				wsConn.Close()
-				wsConn = nil
-				lastErr = setupErr
-				continue // Skip the backoff wait and try immediately
-			}
-
-			// All instances tried - reset for next full round
-			fmt.Printf("DEBUG: All %d instances have been tried. Will retry with backoff.\n", config.MaxInst)
-			reportProgress(fmt.Sprintf("All instances busy, retrying (attempt %d/%d)...", attempt, maxRetries))
-			triedInstances = make(map[int]bool)
-			// Don't reset currentInstID to initial, just keep going round-robin or stay on current
-			// But to be safe and consistent, let's reset triedInstances and let the loop continue
-			// The next iteration will use currentInstID (which is the last one tried)
-			// If we want to start over from initial, we can:
-			// currentInstID = initialInstID
-		}
-
-		// Setup failed - retry
+	// If the caller has cancelled (e.g. another parallel probe already won),
+	// drop the connection before sending the tcp command.
+	if ctx.Err() != nil {
 		wsConn.Close()
-		wsConn = nil
-		lastErr = setupErr
-
-		if attempt < maxRetries {
-			// Exponential backoff: 2s, 4s, 8s, 16s
-			// Start faster than before since we removed the initial 20s delay
-			waitTime := time.Duration(1<<uint(attempt)) * time.Second
-			fmt.Printf("DEBUG: Waiting %v before next attempt...\n", waitTime)
-			reportProgress(fmt.Sprintf("Waiting %ds before retry...", int(waitTime.Seconds())))
-			time.Sleep(waitTime)
-		}
+		return nil, "", ctx.Err()
 	}
 
-	if wsConn == nil {
-		listener.Close()
-		// If we saw "no device online" at any point, prioritize that error to trigger session refresh
-		if seenNoDeviceOnline || lastErr == ErrNoDeviceOnline {
-			return 0, "", fmt.Errorf("device is not connected to EdgeView (no device online) after %d attempts", maxRetries)
-		}
-		return 0, "", fmt.Errorf("failed to establish tunnel after %d attempts: %w", maxRetries, lastErr)
+	query := cmdOpt{
+		Version:      edgeViewVersion,
+		ClientEPAddr: clientIP,
+		Network:      "tcp/" + target,
+		IsJSON:       false,
+	}
+	queryBytes, _ := json.Marshal(query)
+
+	if err := sendWrappedMessage(wsConn, queryBytes, cfg.Key, websocket.TextMessage, cfg.Enc); err != nil {
+		wsConn.Close()
+		return nil, "", fmt.Errorf("failed to send tcp command: %w", err)
 	}
 
-	// Create Tunnel with shared WebSocket
+	if err := m.waitForTcpSetupOK(wsConn, cfg.Key, 30*time.Second, cfg.Enc); err != nil {
+		wsConn.Close()
+		return nil, "", err
+	}
+
+	return wsConn, clientIP, nil
+}
+
+// finalizeTunnel takes a successfully-established wsConn and wires up the
+// tunnel: registration, keepalive, accept loop, and (for in-app VNC) the
+// WebSocket-upgrade HTTP server. It owns `listener` from this point on.
+func (m *Manager) finalizeTunnel(listener net.Listener, wsConn *websocket.Conn, config *zededa.SessionConfig, nodeID, target, protocol, clientIP string) (int, string, error) {
+	localPort := listener.Addr().(*net.TCPAddr).Port
+
 	tunnelID := fmt.Sprintf("tunnel-%d", time.Now().UnixNano())
 	tunnelCtx, cancel := context.WithCancel(context.Background())
 
@@ -509,18 +406,10 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 		fmt.Printf("TUNNEL[%s] Initial keepalive failed: %v\n", tunnel.ID, err)
 	}
 
-	// Start the WebSocket reader that dispatches to TCP clients
 	go m.tunnelWSReader(tunnelCtx, tunnel)
-	// Start keep-alive loop (reduced to 15s to stay well within dispatcher timeouts)
 	go m.tunnelKeepAlive(tunnelCtx, tunnel)
 
-	// Handle protocol-specific logic
-	// "vnc" -> WebSocket listener (for in-app noVNC)
-	// "vnc-tcp" -> TCP listener (for external VNC) but set Type="VNC" to send init packet
-	// "ssh", "tcp" -> TCP listener
-
 	if protocol == "vnc" {
-		// Start HTTP server for WebSocket upgrades (In-App VNC)
 		server := &http.Server{
 			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				upgrader := websocket.Upgrader{
@@ -528,11 +417,8 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 				}
 				conn, err := upgrader.Upgrade(w, r, nil)
 				if err != nil {
-					// fmt.Printf("Failed to upgrade WS: %v\n", err)
 					return
 				}
-
-				// Handle this client
 				m.handleWSClient(tunnelCtx, conn, tunnel)
 			}),
 		}
@@ -544,25 +430,288 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 			}
 		}()
 
-		// Ensure server is closed when context is done
 		go func() {
 			<-tunnelCtx.Done()
 			server.Close()
 		}()
 	} else {
-		// Start accepting TCP client connections (SSH, TCP, VNC-TCP)
-		// For vnc-tcp, we already set Type="VNC" (via ToUpper of protocol? No, wait)
-
-		// Fix: If protocol was "vnc-tcp", we want the tunnel.Type to be "VNC" so that
-		// handleSharedTunnelConnection sends the init packet.
+		// vnc-tcp routes through the TCP accept loop but needs the VNC init packet.
 		if protocol == "vnc-tcp" {
 			tunnel.Type = "VNC"
 		}
-
 		go m.tunnelAcceptLoop(tunnelCtx, listener, tunnel)
 	}
 
 	return localPort, tunnelID, nil
+}
+
+// StartProxy starts a local TCP listener that proxies to the EdgeView WebSocket.
+// This implementation matches the reference EdgeView client architecture:
+// 1. Establish ONE WebSocket connection upfront
+// 2. Send the tcp command and wait for +++tcpSetupOK+++
+// 3. Start accepting TCP clients that multiplex over the shared WebSocket
+// Returns the local port number and tunnel ID.
+func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, nodeID string, target string, protocol string, onProgress func(string)) (int, string, error) {
+	reportProgress := func(msg string) {
+		if onProgress != nil {
+			onProgress(msg)
+		}
+	}
+
+	initialInstID := initialInstIDFor(config)
+	if config.MaxInst == 1 {
+		fmt.Printf("DEBUG: Device supports single instance only (MaxInst=1), using InstID=0\n")
+	} else if config.MaxInst > 1 {
+		fmt.Printf("DEBUG: Device supports %d instances (MaxInst=%d), starting with InstID=1\n", config.MaxInst, config.MaxInst)
+	} else {
+		fmt.Printf("DEBUG: MaxInst not set, defaulting to InstID=0\n")
+	}
+	// Preserve historical side-effect: caller's config sees the chosen InstID.
+	config.InstID = initialInstID
+
+	listener, err := createLocalListener()
+	if err != nil {
+		return 0, "", err
+	}
+
+	localPort := listener.Addr().(*net.TCPAddr).Port
+	fmt.Printf("[%s] Tunnel listening on 127.0.0.1:%d for target %s (protocol: %s)\n", time.Now().Format("2006-01-02 15:04:05"), localPort, target, protocol)
+
+	const maxRetries = 5
+	var wsConn *websocket.Conn
+	var clientIP string
+	var lastErr error
+
+	triedInstances := make(map[int]bool)
+	currentInstID := initialInstID
+	seenNoDeviceOnline := false
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		if attempt > 1 {
+			fmt.Printf("DEBUG: Retry attempt %d/%d for tunnel setup...\n", attempt, maxRetries)
+			reportProgress(fmt.Sprintf("Retrying connection (attempt %d/%d)...", attempt, maxRetries))
+		} else {
+			reportProgress("Connecting to EdgeView...")
+		}
+
+		triedInstances[currentInstID] = true
+		fmt.Printf("DEBUG: Waiting for tcpSetupOK from device (attempt %d/%d)...\n", attempt, maxRetries)
+		reportProgress(fmt.Sprintf("Waiting for device confirmation (attempt %d/%d)...", attempt, maxRetries))
+
+		var attemptErr error
+		wsConn, clientIP, attemptErr = m.tryProxyAttempt(ctx, config, target, currentInstID)
+		if attemptErr == nil {
+			break // Success
+		}
+
+		if attemptErr == ErrExternalPolicyDenied {
+			fmt.Printf("DEBUG: External connection policy denied — not retrying\n")
+			listener.Close()
+			return 0, "", ErrExternalPolicyDenied
+		}
+		if attemptErr == ErrNoDeviceOnline {
+			seenNoDeviceOnline = true
+			fmt.Printf("DEBUG: Device is not online (attempt %d/%d). The device may not be connected to EdgeView yet.\n", attempt, maxRetries)
+			reportProgress(fmt.Sprintf("Device not online yet (attempt %d/%d)...", attempt, maxRetries))
+		} else {
+			fmt.Printf("DEBUG: Tunnel setup failed: %v (attempt %d/%d)\n", attemptErr, attempt, maxRetries)
+		}
+
+		lastErr = attemptErr
+
+		// Try to find an untried instance before applying backoff
+		// We do this for ANY error, not just ErrBusyInstance, because sometimes the server
+		// just closes the connection without sending a specific error if the instance is busy
+		if config.MaxInst > 1 {
+			foundAlternative := false
+			for i := 1; i < config.MaxInst; i++ {
+				nextInstID := (currentInstID + i) % config.MaxInst
+				if !triedInstances[nextInstID] {
+					currentInstID = nextInstID
+					foundAlternative = true
+					fmt.Printf("DEBUG: Switching to alternative instance %d (previous failed)...\n", currentInstID)
+					reportProgress(fmt.Sprintf("Instance busy, switching to instance %d...", currentInstID))
+					break
+				}
+			}
+			if foundAlternative {
+				continue // Skip the backoff wait and try immediately
+			}
+			fmt.Printf("DEBUG: All %d instances have been tried. Will retry with backoff.\n", config.MaxInst)
+			reportProgress(fmt.Sprintf("All instances busy, retrying (attempt %d/%d)...", attempt, maxRetries))
+			triedInstances = make(map[int]bool)
+		}
+
+		if attempt < maxRetries {
+			// Exponential backoff: 2s, 4s, 8s, 16s
+			waitTime := time.Duration(1<<uint(attempt)) * time.Second
+			fmt.Printf("DEBUG: Waiting %v before next attempt...\n", waitTime)
+			reportProgress(fmt.Sprintf("Waiting %ds before retry...", int(waitTime.Seconds())))
+			time.Sleep(waitTime)
+		}
+	}
+
+	if wsConn == nil {
+		listener.Close()
+		if seenNoDeviceOnline || lastErr == ErrNoDeviceOnline {
+			return 0, "", fmt.Errorf("device is not connected to EdgeView (no device online) after %d attempts", maxRetries)
+		}
+		return 0, "", fmt.Errorf("failed to establish tunnel after %d attempts: %w", maxRetries, lastErr)
+	}
+
+	return m.finalizeTunnel(listener, wsConn, config, nodeID, target, protocol, clientIP)
+}
+
+// StartProxyMulti is the multi-IP variant of StartProxy. It probes every
+// candidate IP once per round (in parallel batches sized by config.MaxInst,
+// each parallel goroutine using a distinct InstID) before backing off and
+// retrying. The first probe to succeed wins; siblings' WebSocket connections
+// are closed in the background. Useful for SSH where the EVE-OS host is
+// reachable via multiple management interfaces and any one of them will do.
+//
+// targetPort is the port appended to each candidate IP. protocol drives the
+// listener type (same semantics as StartProxy).
+func (m *Manager) StartProxyMulti(ctx context.Context, config *zededa.SessionConfig, nodeID string, candidateIPs []string, targetPort int, protocol string, onProgress func(string)) (int, string, error) {
+	reportProgress := func(msg string) {
+		if onProgress != nil {
+			onProgress(msg)
+		}
+	}
+
+	if len(candidateIPs) == 0 {
+		return 0, "", fmt.Errorf("no candidate IPs provided")
+	}
+
+	initialInstID := initialInstIDFor(config)
+	config.InstID = initialInstID
+	parallelism := 1
+	if config.MaxInst > 1 {
+		parallelism = config.MaxInst
+	}
+
+	listener, err := createLocalListener()
+	if err != nil {
+		return 0, "", err
+	}
+	localPort := listener.Addr().(*net.TCPAddr).Port
+	fmt.Printf("[%s] Tunnel listening on 127.0.0.1:%d for candidates %v port %d (protocol: %s)\n",
+		time.Now().Format("2006-01-02 15:04:05"), localPort, candidateIPs, targetPort, protocol)
+
+	maxRounds := 5
+	if m.maxRoundsOverride > 0 {
+		maxRounds = m.maxRoundsOverride
+	}
+	var lastErr error
+	seenNoDeviceOnline := false
+
+	for round := 1; round <= maxRounds; round++ {
+		if round == 1 {
+			reportProgress(fmt.Sprintf("Probing %d IP(s)...", len(candidateIPs)))
+		} else {
+			reportProgress(fmt.Sprintf("Re-probing %d IP(s) (round %d/%d)...", len(candidateIPs), round, maxRounds))
+		}
+
+		// One round walks every candidate IP exactly once, in batches of
+		// `parallelism`. Each parallel slot uses a distinct InstID so the
+		// EdgeView dispatcher accepts all peers concurrently.
+		for batchStart := 0; batchStart < len(candidateIPs); batchStart += parallelism {
+			batchEnd := batchStart + parallelism
+			if batchEnd > len(candidateIPs) {
+				batchEnd = len(candidateIPs)
+			}
+			batch := candidateIPs[batchStart:batchEnd]
+
+			wsConn, clientIP, winningTarget, batchErr, policyDenied := m.raceBatch(ctx, config, batch, targetPort, initialInstID, round, reportProgress)
+			if policyDenied {
+				listener.Close()
+				return 0, "", ErrExternalPolicyDenied
+			}
+			if wsConn != nil {
+				return m.finalizeTunnel(listener, wsConn, config, nodeID, winningTarget, protocol, clientIP)
+			}
+			if batchErr == ErrNoDeviceOnline {
+				seenNoDeviceOnline = true
+			}
+			lastErr = batchErr
+		}
+
+		if round < maxRounds {
+			waitTime := time.Duration(1<<uint(round)) * time.Second
+			if m.roundBackoffOverride != nil {
+				waitTime = m.roundBackoffOverride(round)
+			}
+			fmt.Printf("DEBUG: Round %d/%d failed for all candidates, waiting %v before next round...\n", round, maxRounds, waitTime)
+			reportProgress(fmt.Sprintf("Waiting %ds before retry...", int(waitTime.Seconds())))
+			time.Sleep(waitTime)
+		}
+	}
+
+	listener.Close()
+	if seenNoDeviceOnline || lastErr == ErrNoDeviceOnline {
+		return 0, "", fmt.Errorf("device is not connected to EdgeView (no device online) after %d rounds across %d IP(s)", maxRounds, len(candidateIPs))
+	}
+	return 0, "", fmt.Errorf("failed to establish tunnel after %d rounds across %d IP(s): %w", maxRounds, len(candidateIPs), lastErr)
+}
+
+// raceBatch runs tryProxyAttempt concurrently for each IP in `batch`, each
+// using a distinct InstID. The first non-error result wins; losing
+// goroutines are drained and their wsConns closed in the background.
+// Returns (wsConn, clientIP, winningTarget, lastErr, policyDenied).
+// policyDenied==true means at least one probe returned ErrExternalPolicyDenied
+// — caller should abort all further retries.
+func (m *Manager) raceBatch(ctx context.Context, config *zededa.SessionConfig, batch []string, targetPort, initialInstID, round int, reportProgress func(string)) (*websocket.Conn, string, string, error, bool) {
+	type result struct {
+		wsConn   *websocket.Conn
+		clientIP string
+		target   string
+		err      error
+	}
+
+	batchCtx, cancel := context.WithCancel(ctx)
+	results := make(chan result, len(batch))
+
+	for slot, ip := range batch {
+		target := fmt.Sprintf("%s:%d", ip, targetPort)
+		instID := initialInstID
+		if config.MaxInst > 1 {
+			instID = (initialInstID + slot) % config.MaxInst
+		}
+		reportProgress(fmt.Sprintf("[%s] Probing (round %d, inst %d)...", ip, round, instID))
+		go func(target string, instID int) {
+			ws, ip, err := m.callTryAttempt(batchCtx, config, target, instID)
+			results <- result{wsConn: ws, clientIP: ip, target: target, err: err}
+		}(target, instID)
+	}
+
+	var winner *result
+	policyDenied := false
+	var lastErr error
+
+	for i := 0; i < len(batch); i++ {
+		r := <-results
+		if r.err == nil {
+			if winner == nil {
+				winner = &result{wsConn: r.wsConn, clientIP: r.clientIP, target: r.target}
+				cancel() // signal stragglers (best-effort: dialer may already be in flight)
+			} else {
+				// We already have a winner; close this late successful conn.
+				r.wsConn.Close()
+			}
+			continue
+		}
+		if r.err == ErrExternalPolicyDenied {
+			policyDenied = true
+			cancel()
+		}
+		lastErr = r.err
+	}
+	cancel()
+
+	if winner != nil {
+		fmt.Printf("DEBUG: Round %d batch winner: %s\n", round, winner.target)
+		return winner.wsConn, winner.clientIP, winner.target, nil, false
+	}
+	return nil, "", "", lastErr, policyDenied
 }
 
 // waitForTcpSetupOK waits for the +++tcpSetupOK+++ message from EdgeView
