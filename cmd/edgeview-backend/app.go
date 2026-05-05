@@ -10,6 +10,8 @@ import (
 	"edgeViewLauncher/internal/zededa"
 	"encoding/json"
 	"fmt"
+	"net"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -494,6 +496,11 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (int, string, 
 
 		// Remove duplicates
 		candidateIPs = uniqueStrings(candidateIPs)
+		// Prefer IPv4 (incl. 127.0.0.1) over IPv6: with MaxInst parallel probes
+		// per round, an IPv6 address early in the API response would push IPv4
+		// candidates into round 2 and behind exponential backoff. Stable sort
+		// preserves the existing within-family order.
+		candidateIPs = sortIPv4First(candidateIPs)
 		fmt.Printf("DEBUG: Candidate IPs for SSH: %v\n", candidateIPs)
 
 		// Probe every candidate IP in parallel batches (sized by MaxInst) per
@@ -1509,6 +1516,25 @@ func (a *App) VerifyToken(token, baseURL string) (*zededa.TokenInfo, error) {
 		return tempClient.VerifyToken(token)
 	}
 	return a.zededaClient.VerifyToken(token)
+}
+
+// sortIPv4First returns a stable reordering of ips with IPv4 addresses first
+// and IPv6 addresses last. Within each family the original order is preserved
+// (so loopback stays first and the device-status interface order is honored).
+// IPv4-mapped IPv6 ("::ffff:192.0.2.1") classifies as IPv4 because that form
+// is IPv4 traffic on the wire. Strings that don't parse as IPs bucket with
+// IPv6 (last-resort) so unexpected input never blocks IPv4 probes.
+func sortIPv4First(ips []string) []string {
+	out := append([]string(nil), ips...)
+	sort.SliceStable(out, func(i, j int) bool {
+		return isIPv4(out[i]) && !isIPv4(out[j])
+	})
+	return out
+}
+
+func isIPv4(s string) bool {
+	ip := net.ParseIP(s)
+	return ip != nil && ip.To4() != nil
 }
 
 // uniqueStrings returns a slice with duplicates removed

@@ -884,3 +884,94 @@ Applog disabled: true
 		t.Fatalf("failed to marshal enrichment to JSON: %v", err)
 	}
 }
+
+// --- sortIPv4First ---
+
+func TestSortIPv4First_MixedFamilies(t *testing.T) {
+	in := []string{"fd00::1", "127.0.0.1", "192.168.1.10", "fe80::1"}
+	got := sortIPv4First(in)
+	want := []string{"127.0.0.1", "192.168.1.10", "fd00::1", "fe80::1"}
+	if !equalStrings(got, want) {
+		t.Errorf("sortIPv4First(%v)\n  got:  %v\n  want: %v", in, got, want)
+	}
+}
+
+func TestSortIPv4First_AllIPv4_Unchanged(t *testing.T) {
+	in := []string{"127.0.0.1", "10.0.0.1", "192.168.1.10"}
+	got := sortIPv4First(in)
+	if !equalStrings(got, in) {
+		t.Errorf("expected unchanged, got %v", got)
+	}
+}
+
+func TestSortIPv4First_AllIPv6_Unchanged(t *testing.T) {
+	in := []string{"::1", "fd00::1", "fe80::1"}
+	got := sortIPv4First(in)
+	if !equalStrings(got, in) {
+		t.Errorf("expected unchanged, got %v", got)
+	}
+}
+
+func TestSortIPv4First_IPv4MappedTreatedAsIPv4(t *testing.T) {
+	in := []string{"fd00::1", "::ffff:192.0.2.1"}
+	got := sortIPv4First(in)
+	want := []string{"::ffff:192.0.2.1", "fd00::1"}
+	if !equalStrings(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestSortIPv4First_HandlesGarbageGracefully(t *testing.T) {
+	in := []string{"not-an-ip", "10.0.0.1"}
+	got := sortIPv4First(in)
+	want := []string{"10.0.0.1", "not-an-ip"}
+	if !equalStrings(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+// TestConnectToNode_PrefersIPv4ManagementIPs verifies that when the device
+// status returns IPv6 ahead of IPv4 in its NetStatusList, ConnectToNode
+// reorders the candidate list so IPv4 (loopback first, then mgmt IPv4)
+// reaches StartProxyMulti before IPv6.
+func TestConnectToNode_PrefersIPv4ManagementIPs(t *testing.T) {
+	fakeClient := &fakeZededaClient{
+		initSessionScript: "edgeview -token tok",
+		parseCfg:          &zededa.SessionConfig{URL: "wss://example", Token: "tok", MaxInst: 2},
+		deviceStatus: &zededa.DeviceStatus{
+			NetStatusList: []zededa.NetStatus{
+				// IPv6 first in the API response — this is exactly the
+				// pathological order the sort exists to fix.
+				{Up: true, IfName: "eth0", IPs: []string{"fd00::5", "192.168.1.10"}},
+				{Up: true, IfName: "eth1", IPs: []string{"fe80::1", "10.0.0.5"}},
+			},
+		},
+	}
+	fakeSess := &fakeSessionManager{
+		startProxyPort: 9001,
+		startProxyID:   "tunnel-v4",
+	}
+
+	a := newTestApp(fakeClient, fakeSess)
+	if _, _, err := a.ConnectToNode("node-v4-pref", true); err != nil {
+		t.Fatalf("ConnectToNode returned error: %v", err)
+	}
+
+	got := fakeSess.lastMultiCandidateIPs
+	want := []string{"127.0.0.1", "192.168.1.10", "10.0.0.5", "fd00::5", "fe80::1"}
+	if !equalStrings(got, want) {
+		t.Errorf("candidate IP order:\n  got:  %v\n  want: %v", got, want)
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
