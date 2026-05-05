@@ -823,9 +823,17 @@ func (m *Manager) waitForTcpSetupOK(wsConn *websocket.Conn, key string, timeout 
 				setupDone <- fmt.Errorf("device returned error: %s", payloadStr)
 				return
 			}
+			// +++Done+++ is the end-of-output marker for the EdgeView info
+			// banner that the device sends BEFORE +++tcpSetupOK+++. It is
+			// NOT a connection-closed signal — see the live-tunnel handler
+			// in tunnelWSReader where the same comment applies. Treating
+			// it as fatal here was making whole probe rounds fail when the
+			// info banner happened to land in its own WebSocket frame
+			// before the actual TCP setup result, forcing a 2s backoff and
+			// a full re-probe round (~30s extra to SSH establishment).
 			if strings.Contains(payloadStr, "+++Done+++") {
-				setupDone <- fmt.Errorf("device closed connection before tcpSetupOK (Payload: %s)", payloadStr)
-				return
+				fmt.Printf("DEBUG: waitForTcpSetupOK ignoring +++Done+++ (info banner end marker), continuing to wait for tcpSetupOK\n")
+				continue
 			}
 		}
 	}()
