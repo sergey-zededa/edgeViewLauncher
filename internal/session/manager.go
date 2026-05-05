@@ -722,21 +722,32 @@ func (m *Manager) raceBatch(ctx context.Context, config *zededa.SessionConfig, b
 		}(target, instID)
 	}
 
-	var winner *result
 	policyDenied := false
 	var lastErr error
 
 	for i := 0; i < len(batch); i++ {
 		r := <-results
 		if r.err == nil {
-			if winner == nil {
-				winner = &result{wsConn: r.wsConn, clientIP: r.clientIP, target: r.target}
-				cancel() // signal stragglers (best-effort: dialer may already be in flight)
-			} else {
-				// We already have a winner; close this late successful conn.
-				r.wsConn.Close()
+			// Winner. Cancel stragglers and drain the rest in the background
+			// so we return immediately — otherwise SSH establishment is gated
+			// on the slowest sibling, typically an unreachable IPv6 link-local
+			// whose dialer / EdgeView dispatcher takes 15–30s to give up even
+			// after batchCtx is cancelled. Late-arriving successful wsConns
+			// are closed here to avoid leaks.
+			cancel()
+			remaining := len(batch) - i - 1
+			if remaining > 0 {
+				go func() {
+					for j := 0; j < remaining; j++ {
+						sr := <-results
+						if sr.err == nil && sr.wsConn != nil {
+							sr.wsConn.Close()
+						}
+					}
+				}()
 			}
-			continue
+			fmt.Printf("DEBUG: Round %d batch winner: %s\n", round, r.target)
+			return r.wsConn, r.clientIP, r.target, nil, false
 		}
 		if r.err == ErrExternalPolicyDenied {
 			policyDenied = true
@@ -745,11 +756,6 @@ func (m *Manager) raceBatch(ctx context.Context, config *zededa.SessionConfig, b
 		lastErr = r.err
 	}
 	cancel()
-
-	if winner != nil {
-		fmt.Printf("DEBUG: Round %d batch winner: %s\n", round, winner.target)
-		return winner.wsConn, winner.clientIP, winner.target, nil, false
-	}
 	return nil, "", "", lastErr, policyDenied
 }
 

@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -402,6 +403,45 @@ func TestFailTunnelClearsCachedPort(t *testing.T) {
 	}
 	if s.Port != 0 || s.TunnelID != "" {
 		t.Errorf("expected Port/TunnelID cleared, got Port=%d TunnelID=%q", s.Port, s.TunnelID)
+	}
+}
+
+// TestStartProxyMulti_ReturnsOnFirstWinnerWithoutWaitingForStragglers verifies
+// that raceBatch does not block on slow sibling probes once a winner is found.
+// Before this fix, SSH establishment was gated on the slowest goroutine in
+// the batch — typically an unreachable IPv6 link-local that took 15–30s to
+// fail at the dialer level even after batchCtx was cancelled.
+func TestStartProxyMulti_ReturnsOnFirstWinnerWithoutWaitingForStragglers(t *testing.T) {
+	const slowProbeDuration = 750 * time.Millisecond
+	candidates := []string{"fast", "slow"}
+
+	m := NewManager()
+	m.maxRoundsOverride = 1
+	m.roundBackoffOverride = func(round int) time.Duration { return time.Millisecond }
+	m.tryAttemptOverride = func(ctx context.Context, cfg *zededa.SessionConfig, target string, instID int) (*websocket.Conn, string, error) {
+		// "fast" succeeds in ~5ms; "slow" sleeps slowProbeDuration even if
+		// ctx is cancelled (mimics an OS dial that doesn't respect cancel).
+		// We return (nil, "", nil) on success so StartProxyMulti's wsConn!=nil
+		// guard skips finalizeTunnel — we only care about timing here.
+		if strings.HasPrefix(target, "fast:") {
+			time.Sleep(5 * time.Millisecond)
+			return nil, "", nil
+		}
+		time.Sleep(slowProbeDuration)
+		return nil, "", nil
+	}
+
+	cfg := &zededa.SessionConfig{MaxInst: 2}
+	start := time.Now()
+	_, _, _ = m.StartProxyMulti(context.Background(), cfg, "n1", candidates, 22, "ssh", nil)
+	elapsed := time.Since(start)
+
+	// Without the fix, raceBatch waited for both goroutines, so elapsed would
+	// be ~slowProbeDuration. With the fix, it returns as soon as "fast" wins.
+	// 250ms threshold gives a generous margin while still proving we didn't
+	// wait the full 750ms.
+	if elapsed > 250*time.Millisecond {
+		t.Fatalf("StartProxyMulti took %v; expected to return promptly after fast probe (slow probe is %v)", elapsed, slowProbeDuration)
 	}
 }
 
