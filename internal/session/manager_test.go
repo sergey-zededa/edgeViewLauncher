@@ -408,6 +408,34 @@ func TestFailTunnelClearsCachedPort(t *testing.T) {
 	}
 }
 
+// TestFailTunnelCancelsTunnelContext verifies that FailTunnel invokes the
+// tunnel's stored cancel func, so keepalive/accept-loop goroutines exit
+// instead of running forever after permanent reconnect failure (the
+// "wsConn is nil (reconnecting?)" zombie observed in production logs).
+func TestFailTunnelCancelsTunnelContext(t *testing.T) {
+	m := NewManager()
+	tunnelCtx, cancel := context.WithCancel(context.Background())
+	m.RegisterTunnel(&Tunnel{
+		ID:     "zombie",
+		NodeID: "nodeA",
+		Cancel: cancel,
+		Status: "active",
+	})
+
+	if tunnelCtx.Err() != nil {
+		t.Fatalf("ctx unexpectedly cancelled before FailTunnel")
+	}
+
+	m.FailTunnel("zombie", errors.New("reconnect exhausted"))
+
+	select {
+	case <-tunnelCtx.Done():
+		// Expected — FailTunnel must propagate cancellation.
+	case <-time.After(time.Second):
+		t.Fatalf("expected tunnel context to be cancelled by FailTunnel, but it wasn't within 1s")
+	}
+}
+
 // fakeEdgeViewWS spins up an httptest WebSocket server that, on connect, runs
 // the supplied handler against the upgraded conn. Returns the wsURL the
 // client should dial (ws:// scheme) and a teardown func.

@@ -201,9 +201,13 @@ func (m *Manager) RegisterTunnel(tunnel *Tunnel) {
 
 // FailTunnel marks an existing tunnel as failed and records the error message.
 // The matching cached session (if any) has its Port/TunnelID cleared so a
-// future ConnectToNode for the same node creates a fresh proxy.
+// future ConnectToNode for the same node creates a fresh proxy. The tunnel's
+// context is also cancelled so its keepalive and accept-loop goroutines exit
+// promptly — without this, a tunnel whose reconnect attempts exhausted would
+// leave goroutines spamming "wsConn is nil (reconnecting?)" forever.
 func (m *Manager) FailTunnel(tunnelID string, err error) {
 	m.tunnelMu.Lock()
+	var cancel context.CancelFunc
 	if tunnel, exists := m.tunnels[tunnelID]; exists {
 		tunnel.Status = "failed"
 		if err != nil {
@@ -211,8 +215,13 @@ func (m *Manager) FailTunnel(tunnelID string, err error) {
 		} else {
 			tunnel.Error = ""
 		}
+		cancel = tunnel.Cancel
 	}
 	m.tunnelMu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
 
 	m.clearCachedPortForTunnel(tunnelID)
 }
@@ -1580,22 +1589,35 @@ func (m *Manager) connectToEdgeView(config *zededa.SessionConfig, label string) 
 	return wsConn, clientIP, nil
 }
 
-// attemptTunnelReconnect tries to re-establish the WebSocket connection for a tunnel
-// when the device goes offline. Returns true if successful.
+// attemptTunnelReconnect tries to re-establish the WebSocket connection for a
+// tunnel when the device goes offline. Returns true if successful.
+//
+// CAVEAT: this preserves the tunnel object (listener, channel registry) but
+// the underlying device-side TCP connection to the target was tied to the
+// old WebSocket — when we issue a fresh tcp/<target> command on the new WS,
+// the device opens a NEW TCP connection. Mid-session SSH bytes the local
+// client sends after reconnect will arrive at a fresh sshd that expects a
+// banner, so any active SSH session corrupts regardless. This function is
+// best-effort recovery; a proper fix would force-close all client TCP
+// connections on reconnect so they reconnect cleanly to the new tunnel.
+//
+// We hold wsMu for the entire reconnect cycle so TCP→WS senders block on
+// the mutex instead of seeing wsConn=nil and silently dropping packets.
 func (m *Manager) attemptTunnelReconnect(tunnel *Tunnel) bool {
 	const maxReconnectAttempts = 3
 	const reconnectDelay = 2 * time.Second
 
+	tunnel.wsMu.Lock()
+	defer tunnel.wsMu.Unlock()
+
 	for attempt := 1; attempt <= maxReconnectAttempts; attempt++ {
 		fmt.Printf("TUNNEL[%s] Reconnect attempt %d/%d\n", tunnel.ID, attempt, maxReconnectAttempts)
 
-		// Close old connection
-		tunnel.wsMu.Lock()
+		// Close old connection (mutex already held).
 		if tunnel.wsConn != nil {
 			tunnel.wsConn.Close()
 			tunnel.wsConn = nil
 		}
-		tunnel.wsMu.Unlock()
 
 		// Wait before reconnecting
 		time.Sleep(reconnectDelay * time.Duration(attempt))
@@ -1631,11 +1653,9 @@ func (m *Manager) attemptTunnelReconnect(tunnel *Tunnel) bool {
 			continue
 		}
 
-		// Success! Update tunnel with new connection
-		tunnel.wsMu.Lock()
+		// Success! Install new connection (mutex still held).
 		tunnel.wsConn = wsConn
 		tunnel.clientIP = clientIP
-		tunnel.wsMu.Unlock()
 
 		fmt.Printf("TUNNEL[%s] Reconnect successful!\n", tunnel.ID)
 		return true
@@ -1657,6 +1677,7 @@ func (m *Manager) tunnelKeepAlive(ctx context.Context, tunnel *Tunnel) {
 	fmt.Printf("TUNNEL[%s] Keep-alive started (15s BinaryMessage)\n", tunnel.ID)
 
 	keepaliveCount := 0
+	var lastKeepaliveChan uint16 // tracks ChanNum hops between ticks
 	for {
 		select {
 		case <-ctx.Done():
@@ -1670,15 +1691,28 @@ func (m *Manager) tunnelKeepAlive(ctx context.Context, tunnel *Tunnel) {
 				continue
 			}
 
-			// Find an active channel if one exists, otherwise use 1
+			// Find an active channel if one exists, otherwise use 1.
+			// NOTE: Go map iteration is randomized — when multiple channels
+			// are active, we pick a different ChanNum on each tick, which
+			// shows up in the lastKeepaliveChan diff log below.
 			tunnel.channelMu.RLock()
 			var activeChan uint16 = 1
 			hasChannels := len(tunnel.channels) > 0
+			channelCount := len(tunnel.channels)
 			for chanNum := range tunnel.channels {
 				activeChan = chanNum
 				break
 			}
 			tunnel.channelMu.RUnlock()
+
+			// Diagnostic: log when the keep-alive's chosen ChanNum hops
+			// between ticks. If the device tracks per-ChanNum state, hopping
+			// could cause it to lose context for the inactive channel.
+			if activeChan != lastKeepaliveChan {
+				fmt.Printf("[%s] TUNNEL[%s] Keep-alive ChanNum hop: %d -> %d (registered=%d)\n",
+					time.Now().Format("15:04:05.000"), tunnel.ID, lastKeepaliveChan, activeChan, channelCount)
+				lastKeepaliveChan = activeChan
+			}
 
 			// Only send keepalive if we have active channels (i.e. an active session using the tunnel)
 			// Sending keepalives to an idle tunnel might be confusing the device if it expects data.
@@ -1881,7 +1915,11 @@ func (m *Manager) tunnelAcceptLoop(ctx context.Context, listener net.Listener, t
 				tunnel.channels = make(map[uint16]chan []byte)
 			}
 			tunnel.channels[chanNum] = dataChan
+			channelTotal := len(tunnel.channels)
 			tunnel.channelMu.Unlock()
+
+			fmt.Printf("[%s] TUNNEL[%s] ChanNum=%d: registered (total active=%d, peer=%s)\n",
+				time.Now().Format("15:04:05.000"), tunnel.ID, chanNum, channelTotal, conn.RemoteAddr())
 
 			// Handle this TCP client
 			go m.handleSharedTunnelConnection(ctx, conn, tunnel, chanNum, dataChan)
@@ -1891,12 +1929,23 @@ func (m *Manager) tunnelAcceptLoop(ctx context.Context, listener net.Listener, t
 
 // handleSharedTunnelConnection handles a single TCP client using the shared WebSocket
 func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Conn, tunnel *Tunnel, chanNum uint16, dataChan chan []byte) {
+	startedAt := time.Now()
+	// tx = local TCP -> WS (toward device); rx = WS -> local TCP (toward client).
+	// Accessed from two goroutines (WS->TCP writes bytesRx; outer TCP->WS loop
+	// writes bytesTx; outer defer reads both), so use atomics.
+	var bytesTx, bytesRx int64
+
 	defer func() {
 		conn.Close()
-		// Remove our channel
 		tunnel.channelMu.Lock()
 		delete(tunnel.channels, chanNum)
+		channelTotal := len(tunnel.channels)
 		tunnel.channelMu.Unlock()
+
+		fmt.Printf("[%s] TUNNEL[%s] ChanNum=%d: closed (lifetime=%v, tx=%d bytes, rx=%d bytes, remaining channels=%d)\n",
+			time.Now().Format("15:04:05.000"), tunnel.ID, chanNum,
+			time.Since(startedAt).Round(time.Millisecond),
+			atomic.LoadInt64(&bytesTx), atomic.LoadInt64(&bytesRx), channelTotal)
 	}()
 
 	// For protocols like VNC that don't send data first, send an empty init packet
@@ -1967,6 +2016,7 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 					fmt.Printf("TUNNEL[%s] ChanNum=%d: WS->TCP write error: %v\n", tunnel.ID, chanNum, err)
 					return
 				}
+				atomic.AddInt64(&bytesRx, int64(len(data)))
 			case <-ctx.Done():
 				// fmt.Printf("TUNNEL[%s] ChanNum=%d: Context done, WS->TCP ending\n", tunnel.ID, chanNum)
 				return
@@ -2022,7 +2072,7 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 
 				// Update stats
 				tunnel.AddBytesSent(n)
-
+				atomic.AddInt64(&bytesTx, int64(n))
 			}
 			if err != nil {
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
