@@ -704,13 +704,18 @@ func (m *Manager) raceBatch(ctx context.Context, config *zededa.SessionConfig, b
 	batchCtx, cancel := context.WithCancel(ctx)
 	results := make(chan result, len(batch))
 
+	// Single batch-level progress message — N parallel goroutines all firing
+	// reportProgress would just race to overwrite the toast with a random
+	// candidate. List the IPs in priority order so the user sees what's
+	// being attempted (IPv4 first per sortIPv4First in the caller).
+	reportProgress(fmt.Sprintf("Probing (round %d): %s", round, strings.Join(batch, ", ")))
+
 	for slot, ip := range batch {
 		target := fmt.Sprintf("%s:%d", ip, targetPort)
 		instID := initialInstID
 		if config.MaxInst > 1 {
 			instID = (initialInstID + slot) % config.MaxInst
 		}
-		reportProgress(fmt.Sprintf("[%s] Probing (round %d, inst %d)...", ip, round, instID))
 		go func(target string, instID int) {
 			ws, ip, err := m.callTryAttempt(batchCtx, config, target, instID)
 			results <- result{wsConn: ws, clientIP: ip, target: target, err: err}
