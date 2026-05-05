@@ -496,6 +496,10 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (int, string, 
 
 		// Remove duplicates
 		candidateIPs = uniqueStrings(candidateIPs)
+		// Drop IPv6 link-local (fe80::/10) — they never work through the
+		// EdgeView relay (no scope ID) and the dispatcher silently times them
+		// out, eating a probe slot and dragging the round to its 10s ceiling.
+		candidateIPs = dropLinkLocalIPv6(candidateIPs)
 		// Prefer IPv4 (incl. 127.0.0.1) over IPv6: with MaxInst parallel probes
 		// per round, an IPv6 address early in the API response would push IPv4
 		// candidates into round 2 and behind exponential backoff. Stable sort
@@ -1535,6 +1539,39 @@ func sortIPv4First(ips []string) []string {
 func isIPv4(s string) bool {
 	ip := net.ParseIP(s)
 	return ip != nil && ip.To4() != nil
+}
+
+// isLinkLocalIPv6 reports whether s is an IPv6 link-local address (fe80::/10).
+// These addresses require a scope identifier (e.g. fe80::1%eth0) to be dialed
+// and never work as raw candidates when the EdgeView dispatcher tries to
+// reach them through the cloud relay — they just sit silent and burn the
+// per-probe timeout. False for IPv4 (including 169.254.0.0/16, which we
+// don't filter here) and for unparseable strings.
+func isLinkLocalIPv6(s string) bool {
+	ip := net.ParseIP(s)
+	if ip == nil || ip.To4() != nil {
+		return false
+	}
+	return ip.IsLinkLocalUnicast()
+}
+
+// dropLinkLocalIPv6 returns ips with every IPv6 link-local address removed.
+// Logs the dropped entries so the diagnostic trail makes the filter visible
+// when a user wonders why their fe80:: address wasn't probed.
+func dropLinkLocalIPv6(ips []string) []string {
+	var dropped []string
+	out := make([]string, 0, len(ips))
+	for _, ip := range ips {
+		if isLinkLocalIPv6(ip) {
+			dropped = append(dropped, ip)
+			continue
+		}
+		out = append(out, ip)
+	}
+	if len(dropped) > 0 {
+		fmt.Printf("DEBUG: Dropped IPv6 link-local candidates (unreachable through EdgeView relay): %v\n", dropped)
+	}
+	return out
 }
 
 // uniqueStrings returns a slice with duplicates removed
