@@ -450,7 +450,7 @@ func TestWaitForTcpSetupOK_PostDoneShortCircuitsWarmupState(t *testing.T) {
 
 	m := NewManager()
 	start := time.Now()
-	err = m.waitForTcpSetupOK(wsConn, key, 30*time.Second, false, "test/warmup")
+	err = m.waitForTcpSetupOK(context.Background(), wsConn, key, 30*time.Second, false, "test/warmup")
 	elapsed := time.Since(start)
 
 	if err == nil {
@@ -489,7 +489,7 @@ func TestWaitForTcpSetupOK_DoneFollowedByTcpSetupOKSucceeds(t *testing.T) {
 
 	m := NewManager()
 	start := time.Now()
-	err = m.waitForTcpSetupOK(wsConn, key, 30*time.Second, false, "test/happy")
+	err = m.waitForTcpSetupOK(context.Background(), wsConn, key, 30*time.Second, false, "test/happy")
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -497,6 +497,81 @@ func TestWaitForTcpSetupOK_DoneFollowedByTcpSetupOKSucceeds(t *testing.T) {
 	}
 	if elapsed > 2*time.Second {
 		t.Fatalf("waitForTcpSetupOK took %v; expected fast resolution once tcpSetupOK arrived", elapsed)
+	}
+}
+
+// TestWaitForTcpSetupOK_RespectsCtxCancellation verifies that ctx cancellation
+// aborts the wait promptly. This is what propagates "winner found" /
+// "round deadline expired" signals from raceBatch to siblings stuck waiting
+// for a payload that never arrives.
+func TestWaitForTcpSetupOK_RespectsCtxCancellation(t *testing.T) {
+	const key = "test-key"
+	wsURL, teardown := fakeEdgeViewWS(t, func(c *websocket.Conn) {
+		// Server connects but sends NOTHING. The only way out is ctx cancel.
+		time.Sleep(10 * time.Second)
+	})
+	defer teardown()
+
+	wsConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer wsConn.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		cancel()
+	}()
+
+	m := NewManager()
+	start := time.Now()
+	err = m.waitForTcpSetupOK(ctx, wsConn, key, 30*time.Second, false, "test/ctx-cancel")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatalf("expected ctx cancel error, got nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected wrapped context.Canceled, got %v", err)
+	}
+	if elapsed > 1*time.Second {
+		t.Fatalf("expected fast ctx cancel (~150ms), got %v", elapsed)
+	}
+}
+
+// TestStartProxyMulti_RoundDeadlineAbortsSilentProbes verifies that a probe
+// whose target is silent (no payload at all) does not gate the entire round
+// for 30s. raceBatch's WithTimeout(ctx, roundDeadline) should abort it so
+// the round can fail fast and (in production) move to the next round.
+func TestStartProxyMulti_RoundDeadlineAbortsSilentProbes(t *testing.T) {
+	candidates := []string{"silent-1", "silent-2"}
+
+	m := NewManager()
+	m.maxRoundsOverride = 1
+	m.roundBackoffOverride = func(round int) time.Duration { return time.Millisecond }
+	m.tryAttemptOverride = func(ctx context.Context, cfg *zededa.SessionConfig, target string, instID int) (*websocket.Conn, string, error) {
+		// Block until ctx is cancelled (round deadline) or 60s elapses.
+		select {
+		case <-ctx.Done():
+			return nil, "", ctx.Err()
+		case <-time.After(60 * time.Second):
+			return nil, "", errors.New("never-cancelled fallback")
+		}
+	}
+
+	cfg := &zededa.SessionConfig{MaxInst: 2}
+	start := time.Now()
+	_, _, err := m.StartProxyMulti(context.Background(), cfg, "n1", candidates, 22, "ssh", nil)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatalf("expected error when all probes silent, got nil")
+	}
+	// roundDeadline is 10s; allow 13s ceiling for CI variance. The point is
+	// it must be much less than 60s (the unrelenting probe duration above).
+	if elapsed > 13*time.Second {
+		t.Fatalf("StartProxyMulti took %v; expected ~%v (roundDeadline)", elapsed, roundDeadline)
 	}
 }
 

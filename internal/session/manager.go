@@ -400,7 +400,7 @@ func (m *Manager) tryProxyAttempt(ctx context.Context, config *zededa.SessionCon
 		return nil, "", fmt.Errorf("failed to send tcp command: %w", err)
 	}
 
-	if err := m.waitForTcpSetupOK(wsConn, cfg.Key, 30*time.Second, cfg.Enc, label); err != nil {
+	if err := m.waitForTcpSetupOK(ctx, wsConn, cfg.Key, 30*time.Second, cfg.Enc, label); err != nil {
 		debugf(label, "tcpSetupOK failed after %v: %v", time.Since(t0), err)
 		wsConn.Close()
 		return nil, "", err
@@ -714,7 +714,10 @@ func (m *Manager) raceBatch(ctx context.Context, config *zededa.SessionConfig, b
 		err      error
 	}
 
-	batchCtx, cancel := context.WithCancel(ctx)
+	// Round-level deadline propagates to every probe via ctx.Done() in
+	// waitForTcpSetupOK. Bounds the round even when individual probes are
+	// silently stuck (e.g. EdgeView dispatcher dropped them).
+	batchCtx, cancel := context.WithTimeout(ctx, roundDeadline)
 	results := make(chan result, len(batch))
 
 	// Single batch-level progress message — N parallel goroutines all firing
@@ -778,10 +781,22 @@ func (m *Manager) raceBatch(ctx context.Context, config *zededa.SessionConfig, b
 // block on the full waitForTcpSetupOK timeout (30s) per probe.
 const postDoneTimeout = 5 * time.Second
 
+// roundDeadline caps how long a single probe round (one batch of parallel
+// candidates) can run in StartProxyMulti. Without it, a probe whose
+// WebSocket connects but receives no payload at all (observed for IPv6
+// link-local management IPs that the EdgeView dispatcher silently drops)
+// would block the round for the full 30s waitForTcpSetupOK timeout — even
+// when the other 4 probes have already failed and round 2 would succeed
+// in ~1.5s. Empirically healthy probes complete in <2s, so 10s gives
+// plenty of margin while killing silent probes fast.
+const roundDeadline = 10 * time.Second
+
 // waitForTcpSetupOK waits for the +++tcpSetupOK+++ message from EdgeView.
 // `label` tags every debug log line so messages from parallel probes can be
-// correlated to a specific (target, instID) pair.
-func (m *Manager) waitForTcpSetupOK(wsConn *websocket.Conn, key string, timeout time.Duration, encrypt bool, label string) error {
+// correlated to a specific (target, instID) pair. ctx cancellation aborts
+// the wait — used by raceBatch to propagate winner-found and round-deadline
+// signals to siblings stuck waiting for a payload that never arrives.
+func (m *Manager) waitForTcpSetupOK(ctx context.Context, wsConn *websocket.Conn, key string, timeout time.Duration, encrypt bool, label string) error {
 	setupDone := make(chan error, 1)
 	// Signaled (non-blocking) every time the reader sees +++Done+++; the
 	// outer select shortens its deadline on the first such signal.
@@ -878,6 +893,8 @@ func (m *Manager) waitForTcpSetupOK(wsConn *websocket.Conn, key string, timeout 
 		select {
 		case err := <-setupDone:
 			return err
+		case <-ctx.Done():
+			return fmt.Errorf("waitForTcpSetupOK cancelled: %w", ctx.Err())
 		case <-overall.C:
 			return fmt.Errorf("timeout waiting for tcpSetupOK after %v", timeout)
 		case <-postDoneCh():
@@ -1606,8 +1623,9 @@ func (m *Manager) attemptTunnelReconnect(tunnel *Tunnel) bool {
 			continue
 		}
 
-		// Wait for tcpSetupOK
-		if err := m.waitForTcpSetupOK(wsConn, tunnel.config.Key, 30*time.Second, tunnel.config.Enc, reconnectLabel); err != nil {
+		// Wait for tcpSetupOK (reconnect path uses background ctx — there is
+		// no parallel race here, so per-probe 30s timeout is the only bound).
+		if err := m.waitForTcpSetupOK(context.Background(), wsConn, tunnel.config.Key, 30*time.Second, tunnel.config.Enc, reconnectLabel); err != nil {
 			fmt.Printf("TUNNEL[%s] Reconnect: tcpSetupOK failed: %v\n", tunnel.ID, err)
 			wsConn.Close()
 			continue
