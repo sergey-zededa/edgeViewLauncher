@@ -369,11 +369,16 @@ func (m *Manager) callTryAttempt(ctx context.Context, config *zededa.SessionConf
 func (m *Manager) tryProxyAttempt(ctx context.Context, config *zededa.SessionConfig, target string, instID int) (*websocket.Conn, string, error) {
 	cfg := *config
 	cfg.InstID = instID
+	label := fmt.Sprintf("%s/i%d", target, instID)
+	t0 := time.Now()
+	debugf(label, "probe start")
 
-	wsConn, clientIP, err := m.connectToEdgeView(&cfg)
+	wsConn, clientIP, err := m.connectToEdgeView(&cfg, label)
 	if err != nil {
+		debugf(label, "connect failed after %v: %v", time.Since(t0), err)
 		return nil, "", err
 	}
+	debugf(label, "ws connected (%v)", time.Since(t0))
 
 	// If the caller has cancelled (e.g. another parallel probe already won),
 	// drop the connection before sending the tcp command.
@@ -395,10 +400,12 @@ func (m *Manager) tryProxyAttempt(ctx context.Context, config *zededa.SessionCon
 		return nil, "", fmt.Errorf("failed to send tcp command: %w", err)
 	}
 
-	if err := m.waitForTcpSetupOK(wsConn, cfg.Key, 30*time.Second, cfg.Enc); err != nil {
+	if err := m.waitForTcpSetupOK(wsConn, cfg.Key, 30*time.Second, cfg.Enc, label); err != nil {
+		debugf(label, "tcpSetupOK failed after %v: %v", time.Since(t0), err)
 		wsConn.Close()
 		return nil, "", err
 	}
+	debugf(label, "tcpSetupOK received (%v total)", time.Since(t0))
 
 	return wsConn, clientIP, nil
 }
@@ -638,12 +645,15 @@ func (m *Manager) StartProxyMulti(ctx context.Context, config *zededa.SessionCon
 	var lastErr error
 	seenNoDeviceOnline := false
 
+	startedAt := time.Now()
 	for round := 1; round <= maxRounds; round++ {
+		roundStart := time.Now()
 		if round == 1 {
 			reportProgress(fmt.Sprintf("Probing %d IP(s)...", len(candidateIPs)))
 		} else {
 			reportProgress(fmt.Sprintf("Re-probing %d IP(s) (round %d/%d)...", len(candidateIPs), round, maxRounds))
 		}
+		debugf(fmt.Sprintf("round=%d", round), "starting (candidates=%v, elapsed since probe began=%v)", candidateIPs, time.Since(startedAt))
 
 		// One round walks every candidate IP exactly once, in batches of
 		// `parallelism`. Each parallel slot uses a distinct InstID so the
@@ -661,6 +671,7 @@ func (m *Manager) StartProxyMulti(ctx context.Context, config *zededa.SessionCon
 				return 0, "", ErrExternalPolicyDenied
 			}
 			if wsConn != nil {
+				debugf(fmt.Sprintf("round=%d", round), "WINNER %s after %v (total %v)", winningTarget, time.Since(roundStart), time.Since(startedAt))
 				return m.finalizeTunnel(listener, wsConn, config, nodeID, winningTarget, protocol, clientIP)
 			}
 			if batchErr == ErrNoDeviceOnline {
@@ -674,9 +685,11 @@ func (m *Manager) StartProxyMulti(ctx context.Context, config *zededa.SessionCon
 			if m.roundBackoffOverride != nil {
 				waitTime = m.roundBackoffOverride(round)
 			}
-			fmt.Printf("DEBUG: Round %d/%d failed for all candidates, waiting %v before next round...\n", round, maxRounds, waitTime)
+			debugf(fmt.Sprintf("round=%d", round), "FAILED for all %d candidates after %v; backing off %v before round %d", len(candidateIPs), time.Since(roundStart), waitTime, round+1)
 			reportProgress(fmt.Sprintf("Waiting %ds before retry...", int(waitTime.Seconds())))
 			time.Sleep(waitTime)
+		} else {
+			debugf(fmt.Sprintf("round=%d", round), "FAILED for all %d candidates after %v (final round)", len(candidateIPs), time.Since(roundStart))
 		}
 	}
 
@@ -746,7 +759,7 @@ func (m *Manager) raceBatch(ctx context.Context, config *zededa.SessionConfig, b
 					}
 				}()
 			}
-			fmt.Printf("DEBUG: Round %d batch winner: %s\n", round, r.target)
+			debugf(fmt.Sprintf("round=%d", round), "batch winner: %s", r.target)
 			return r.wsConn, r.clientIP, r.target, nil, false
 		}
 		if r.err == ErrExternalPolicyDenied {
@@ -759,9 +772,21 @@ func (m *Manager) raceBatch(ctx context.Context, config *zededa.SessionConfig, b
 	return nil, "", "", lastErr, policyDenied
 }
 
-// waitForTcpSetupOK waits for the +++tcpSetupOK+++ message from EdgeView
-func (m *Manager) waitForTcpSetupOK(wsConn *websocket.Conn, key string, timeout time.Duration, encrypt bool) error {
+// postDoneTimeout bounds how long we wait for +++tcpSetupOK+++ after seeing
+// a +++Done+++ payload. If the device is in a "warmup" state it sometimes
+// emits +++Done+++ alone with no follow-up; without this short deadline we'd
+// block on the full waitForTcpSetupOK timeout (30s) per probe.
+const postDoneTimeout = 5 * time.Second
+
+// waitForTcpSetupOK waits for the +++tcpSetupOK+++ message from EdgeView.
+// `label` tags every debug log line so messages from parallel probes can be
+// correlated to a specific (target, instID) pair.
+func (m *Manager) waitForTcpSetupOK(wsConn *websocket.Conn, key string, timeout time.Duration, encrypt bool, label string) error {
 	setupDone := make(chan error, 1)
+	// Signaled (non-blocking) every time the reader sees +++Done+++; the
+	// outer select shortens its deadline on the first such signal.
+	doneSeen := make(chan struct{}, 1)
+
 	go func() {
 		for {
 			_, msg, err := wsConn.ReadMessage()
@@ -770,22 +795,16 @@ func (m *Manager) waitForTcpSetupOK(wsConn *websocket.Conn, key string, timeout 
 				return
 			}
 
-			// Log raw message length
-			// fmt.Printf("DEBUG: waitForTcpSetupOK received raw message (len=%d)\n", len(msg))
-
 			payload, err := unwrapMessage(msg, key, encrypt)
 			if err != nil {
-				// Check for specific errors returned by unwrapMessage
 				if err == ErrBusyInstance {
 					setupDone <- ErrBusyInstance
 					return
 				}
 				if err == ErrNoDeviceOnline {
-					// fmt.Printf("DEBUG: waitForTcpSetupOK received 'no device online'. Device not yet connected, continuing wait...\n")
 					continue
 				}
 
-				// Check for plain-text errors in the raw message
 				msgStr := string(msg)
 				if strings.Contains(msgStr, "no device online") {
 					continue
@@ -794,18 +813,17 @@ func (m *Manager) waitForTcpSetupOK(wsConn *websocket.Conn, key string, timeout 
 				// FALLBACK: Check if the raw message contains tcpSetupOK
 				// Some versions might send this as a raw text frame instead of enveloped
 				if strings.Contains(msgStr, "+++tcpSetupOK+++") {
-					fmt.Printf("DEBUG: Found tcpSetupOK in raw message (unwrap failed)\n")
+					debugf(label, "Found tcpSetupOK in raw message (unwrap failed)")
 					setupDone <- nil
 					return
 				}
 
-				// Log unwrap failures but CONTINUE waiting unless it's a fatal error
-				fmt.Printf("DEBUG: waitForTcpSetupOK unwrap failed: %v. Raw start: %.50q\n", err, msgStr)
+				debugf(label, "waitForTcpSetupOK unwrap failed: %v. Raw start: %.50q", err, msgStr)
 				continue
 			}
 
 			payloadStr := string(payload)
-			fmt.Printf("DEBUG: waitForTcpSetupOK payload: %q\n", payloadStr)
+			debugf(label, "waitForTcpSetupOK payload: %q", payloadStr)
 
 			if strings.Contains(payloadStr, "+++tcpSetupOK+++") {
 				setupDone <- nil
@@ -824,25 +842,62 @@ func (m *Manager) waitForTcpSetupOK(wsConn *websocket.Conn, key string, timeout 
 				return
 			}
 			// +++Done+++ is the end-of-output marker for the EdgeView info
-			// banner that the device sends BEFORE +++tcpSetupOK+++. It is
-			// NOT a connection-closed signal — see the live-tunnel handler
-			// in tunnelWSReader where the same comment applies. Treating
-			// it as fatal here was making whole probe rounds fail when the
-			// info banner happened to land in its own WebSocket frame
-			// before the actual TCP setup result, forcing a 2s backoff and
-			// a full re-probe round (~30s extra to SSH establishment).
+			// banner that the device sends BEFORE +++tcpSetupOK+++ — see
+			// the live-tunnel handler in tunnelWSReader. It is NOT a
+			// connection-closed signal. But: if NO follow-up tcpSetupOK
+			// arrives quickly, the device is in a transient "warmup" state
+			// and this probe should yield to the next round rather than
+			// blocking the full 30s timeout. The outer select handles that.
 			if strings.Contains(payloadStr, "+++Done+++") {
-				fmt.Printf("DEBUG: waitForTcpSetupOK ignoring +++Done+++ (info banner end marker), continuing to wait for tcpSetupOK\n")
+				debugf(label, "ignoring +++Done+++ (info banner end), will wait up to %v for tcpSetupOK", postDoneTimeout)
+				select {
+				case doneSeen <- struct{}{}:
+				default:
+				}
 				continue
 			}
 		}
 	}()
-	select {
-	case err := <-setupDone:
-		return err
-	case <-time.After(timeout):
-		return fmt.Errorf("timeout waiting for tcpSetupOK")
+
+	overall := time.NewTimer(timeout)
+	defer overall.Stop()
+	var postDone *time.Timer
+	defer func() {
+		if postDone != nil {
+			postDone.Stop()
+		}
+	}()
+	postDoneCh := func() <-chan time.Time {
+		if postDone == nil {
+			return nil // nil channel: never fires in select
+		}
+		return postDone.C
 	}
+
+	for {
+		select {
+		case err := <-setupDone:
+			return err
+		case <-overall.C:
+			return fmt.Errorf("timeout waiting for tcpSetupOK after %v", timeout)
+		case <-postDoneCh():
+			return fmt.Errorf("device sent +++Done+++ but no +++tcpSetupOK+++ within %v (likely warmup state)", postDoneTimeout)
+		case <-doneSeen:
+			if postDone == nil {
+				postDone = time.NewTimer(postDoneTimeout)
+			}
+		}
+	}
+}
+
+// debugf writes a debug log line prefixed with a millisecond timestamp and a
+// per-probe label so the messages from N parallel goroutines can be reliably
+// correlated. Falls back to a "global" label if the caller doesn't have one.
+func debugf(label, format string, args ...interface{}) {
+	if label == "" {
+		label = "-"
+	}
+	fmt.Printf("[%s] DEBUG[%s]: %s\n", time.Now().Format("15:04:05.000"), label, fmt.Sprintf(format, args...))
 }
 
 // LaunchTerminal opens a new terminal window with the SSH command
@@ -1413,8 +1468,10 @@ func unwrapMessage(data []byte, key string, encrypt bool) ([]byte, error) {
 	}
 }
 
-// connectToEdgeView establishes a WebSocket connection to EdgeView
-func (m *Manager) connectToEdgeView(config *zededa.SessionConfig) (*websocket.Conn, string, error) {
+// connectToEdgeView establishes a WebSocket connection to EdgeView.
+// `label` tags debug log lines so messages from parallel probes can be
+// correlated to their target/instID.
+func (m *Manager) connectToEdgeView(config *zededa.SessionConfig, label string) (*websocket.Conn, string, error) {
 	// 1. Compute Token Hash
 	tokenToHash := config.Token
 	if config.InstID > 0 {
@@ -1474,7 +1531,7 @@ func (m *Manager) connectToEdgeView(config *zededa.SessionConfig) (*websocket.Co
 	}
 
 	initialMsg := string(msg)
-	fmt.Printf("DEBUG: Received initial message: %s\n", initialMsg)
+	debugf(label, "Received initial message: %s", initialMsg)
 
 	// Check for known error messages in the initial handshake
 	if strings.Contains(initialMsg, "can't have more than 2 peers") {
@@ -1491,7 +1548,7 @@ func (m *Manager) connectToEdgeView(config *zededa.SessionConfig) (*websocket.Co
 	if strings.HasPrefix(initialMsg, "YourEndPointIPAddr:") {
 		clientIP = strings.TrimPrefix(initialMsg, "YourEndPointIPAddr:")
 		clientIP = strings.TrimSpace(clientIP)
-		fmt.Printf("DEBUG: Extracted client IP: %s\n", clientIP)
+		debugf(label, "Extracted client IP: %s", clientIP)
 	}
 
 	// Store client IP in the connection for later use
@@ -1527,7 +1584,8 @@ func (m *Manager) attemptTunnelReconnect(tunnel *Tunnel) bool {
 		time.Sleep(reconnectDelay * time.Duration(attempt))
 
 		// Try to establish new connection
-		wsConn, clientIP, err := m.connectToEdgeView(tunnel.config)
+		reconnectLabel := fmt.Sprintf("%s/reconnect-attempt%d", tunnel.ID, attempt)
+		wsConn, clientIP, err := m.connectToEdgeView(tunnel.config, reconnectLabel)
 		if err != nil {
 			fmt.Printf("TUNNEL[%s] Reconnect failed: %v\n", tunnel.ID, err)
 			continue
@@ -1549,7 +1607,7 @@ func (m *Manager) attemptTunnelReconnect(tunnel *Tunnel) bool {
 		}
 
 		// Wait for tcpSetupOK
-		if err := m.waitForTcpSetupOK(wsConn, tunnel.config.Key, 30*time.Second, tunnel.config.Enc); err != nil {
+		if err := m.waitForTcpSetupOK(wsConn, tunnel.config.Key, 30*time.Second, tunnel.config.Enc, reconnectLabel); err != nil {
 			fmt.Printf("TUNNEL[%s] Reconnect: tcpSetupOK failed: %v\n", tunnel.ID, err)
 			wsConn.Close()
 			continue

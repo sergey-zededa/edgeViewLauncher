@@ -3,6 +3,8 @@ package session
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -403,6 +405,98 @@ func TestFailTunnelClearsCachedPort(t *testing.T) {
 	}
 	if s.Port != 0 || s.TunnelID != "" {
 		t.Errorf("expected Port/TunnelID cleared, got Port=%d TunnelID=%q", s.Port, s.TunnelID)
+	}
+}
+
+// fakeEdgeViewWS spins up an httptest WebSocket server that, on connect, runs
+// the supplied handler against the upgraded conn. Returns the wsURL the
+// client should dial (ws:// scheme) and a teardown func.
+func fakeEdgeViewWS(t *testing.T, handler func(c *websocket.Conn)) (string, func()) {
+	t.Helper()
+	upgrader := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		handler(c)
+	}))
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	return wsURL, srv.Close
+}
+
+// TestWaitForTcpSetupOK_PostDoneShortCircuitsWarmupState verifies that when
+// the device sends +++Done+++ alone (no follow-up tcpSetupOK), waitForTcpSetupOK
+// returns within ~postDoneTimeout instead of blocking the full 30s outer
+// timeout. This is the round-1 "device warmup" scenario observed in
+// production logs that was costing ~30s per failed round.
+func TestWaitForTcpSetupOK_PostDoneShortCircuitsWarmupState(t *testing.T) {
+	const key = "test-key"
+	wsURL, teardown := fakeEdgeViewWS(t, func(c *websocket.Conn) {
+		_ = sendWrappedMessage(c, []byte("+++Done+++\n"), key, websocket.BinaryMessage, false)
+		// Hold the connection open well past postDoneTimeout to prove the
+		// short-circuit fires on its own rather than because the server
+		// closed the conn.
+		time.Sleep(15 * time.Second)
+	})
+	defer teardown()
+
+	wsConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer wsConn.Close()
+
+	m := NewManager()
+	start := time.Now()
+	err = m.waitForTcpSetupOK(wsConn, key, 30*time.Second, false, "test/warmup")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatalf("expected warmup-state error, got nil")
+	}
+	if !strings.Contains(err.Error(), "warmup") {
+		t.Fatalf("expected error to mention 'warmup', got %v", err)
+	}
+	// postDoneTimeout is 5s; allow a generous 8s ceiling so a slow CI box
+	// doesn't flake. Critically, this must be well below the 30s outer
+	// timeout — that's the regression we're guarding against.
+	if elapsed > 8*time.Second {
+		t.Fatalf("waitForTcpSetupOK took %v; expected ~%v after +++Done+++ (must not wait full 30s)", elapsed, postDoneTimeout)
+	}
+}
+
+// TestWaitForTcpSetupOK_DoneFollowedByTcpSetupOKSucceeds verifies the happy
+// path: +++Done+++ from the info banner is correctly ignored, and a follow-up
+// +++tcpSetupOK+++ within the postDoneTimeout window resolves the wait
+// successfully.
+func TestWaitForTcpSetupOK_DoneFollowedByTcpSetupOKSucceeds(t *testing.T) {
+	const key = "test-key"
+	wsURL, teardown := fakeEdgeViewWS(t, func(c *websocket.Conn) {
+		_ = sendWrappedMessage(c, []byte("+++Done+++"), key, websocket.BinaryMessage, false)
+		time.Sleep(50 * time.Millisecond)
+		_ = sendWrappedMessage(c, []byte(" +++tcpSetupOK+++ "), key, websocket.BinaryMessage, false)
+		time.Sleep(2 * time.Second)
+	})
+	defer teardown()
+
+	wsConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer wsConn.Close()
+
+	m := NewManager()
+	start := time.Now()
+	err = m.waitForTcpSetupOK(wsConn, key, 30*time.Second, false, "test/happy")
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("expected nil error on tcpSetupOK after Done, got %v", err)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("waitForTcpSetupOK took %v; expected fast resolution once tcpSetupOK arrived", elapsed)
 	}
 }
 
