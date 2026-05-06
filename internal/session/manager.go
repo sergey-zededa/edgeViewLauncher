@@ -702,7 +702,7 @@ func (m *Manager) StartProxyMulti(ctx context.Context, config *zededa.SessionCon
 		} else {
 			reportProgress(fmt.Sprintf("Re-probing %d IP(s) (round %d/%d)...", len(candidateIPs), round, maxRounds))
 		}
-		debugf(fmt.Sprintf("round=%d", round), "starting (candidates=%v, elapsed since probe began=%v)", candidateIPs, time.Since(startedAt))
+		infof(fmt.Sprintf("round=%d", round), "starting (candidates=%v, elapsed since probe began=%v)", candidateIPs, time.Since(startedAt))
 
 		// One round walks every candidate IP exactly once, in batches of
 		// `parallelism`. Each parallel slot uses a distinct InstID so the
@@ -720,7 +720,7 @@ func (m *Manager) StartProxyMulti(ctx context.Context, config *zededa.SessionCon
 				return 0, "", ErrExternalPolicyDenied
 			}
 			if wsConn != nil {
-				debugf(fmt.Sprintf("round=%d", round), "WINNER %s after %v (total %v)", winningTarget, time.Since(roundStart), time.Since(startedAt))
+				infof(fmt.Sprintf("round=%d", round), "WINNER %s after %v (total %v)", winningTarget, time.Since(roundStart), time.Since(startedAt))
 				return m.finalizeTunnel(listener, wsConn, config, nodeID, winningTarget, protocol, clientIP)
 			}
 			if batchErr == ErrNoDeviceOnline {
@@ -734,11 +734,11 @@ func (m *Manager) StartProxyMulti(ctx context.Context, config *zededa.SessionCon
 			if m.roundBackoffOverride != nil {
 				waitTime = m.roundBackoffOverride(round)
 			}
-			debugf(fmt.Sprintf("round=%d", round), "FAILED for all %d candidates after %v; backing off %v before round %d", len(candidateIPs), time.Since(roundStart), waitTime, round+1)
+			infof(fmt.Sprintf("round=%d", round), "FAILED for all %d candidates after %v; backing off %v before round %d", len(candidateIPs), time.Since(roundStart), waitTime, round+1)
 			reportProgress(fmt.Sprintf("Waiting %ds before retry...", int(waitTime.Seconds())))
 			time.Sleep(waitTime)
 		} else {
-			debugf(fmt.Sprintf("round=%d", round), "FAILED for all %d candidates after %v (final round)", len(candidateIPs), time.Since(roundStart))
+			infof(fmt.Sprintf("round=%d", round), "FAILED for all %d candidates after %v (final round)", len(candidateIPs), time.Since(roundStart))
 		}
 	}
 
@@ -811,7 +811,7 @@ func (m *Manager) raceBatch(ctx context.Context, config *zededa.SessionConfig, b
 					}
 				}()
 			}
-			debugf(fmt.Sprintf("round=%d", round), "batch winner: %s", r.target)
+			infof(fmt.Sprintf("round=%d", round), "batch winner: %s", r.target)
 			return r.wsConn, r.clientIP, r.target, nil, false
 		}
 		if r.err == ErrExternalPolicyDenied {
@@ -956,14 +956,35 @@ func (m *Manager) waitForTcpSetupOK(ctx context.Context, wsConn *websocket.Conn,
 	}
 }
 
+// debugTunnel gates the chatty per-probe / per-chunk diagnostic logging that
+// was added during the SSH-corruption investigation. Off by default to keep
+// production logs readable; re-enable for diagnosis with EDGEVIEW_DEBUG=1.
+var debugTunnel = os.Getenv("EDGEVIEW_DEBUG") == "1"
+
 // debugf writes a debug log line prefixed with a millisecond timestamp and a
 // per-probe label so the messages from N parallel goroutines can be reliably
-// correlated. Falls back to a "global" label if the caller doesn't have one.
+// correlated. No-op unless EDGEVIEW_DEBUG=1 — these are the chatty traces
+// (per-probe lifecycle, payload dumps, etc) that should only fire when
+// actively diagnosing.
 func debugf(label, format string, args ...interface{}) {
+	if !debugTunnel {
+		return
+	}
 	if label == "" {
 		label = "-"
 	}
 	fmt.Printf("[%s] DEBUG[%s]: %s\n", time.Now().Format("15:04:05.000"), label, fmt.Sprintf(format, args...))
+}
+
+// infof is the always-on counterpart for round/tunnel-level summary lines:
+// one-shot lifecycle events, round transitions, reconnect outcomes. Use this
+// instead of debugf when the message is rare (≤ a handful per session) and
+// useful for production diagnosis even at default verbosity.
+func infof(label, format string, args ...interface{}) {
+	if label == "" {
+		label = "-"
+	}
+	fmt.Printf("[%s] INFO[%s]: %s\n", time.Now().Format("15:04:05.000"), label, fmt.Sprintf(format, args...))
 }
 
 // hexPrefixOf returns the lowercase hex encoding of the first up-to-`max` bytes
@@ -1758,11 +1779,13 @@ func (m *Manager) tunnelKeepAlive(ctx context.Context, tunnel *Tunnel) {
 			tunnel.channelMu.RUnlock()
 
 			// Diagnostic: log when the keep-alive's chosen ChanNum hops
-			// between ticks. If the device tracks per-ChanNum state, hopping
-			// could cause it to lose context for the inactive channel.
+			// between ticks. Gated — useful when investigating multi-
+			// channel keep-alive routing behavior.
 			if activeChan != lastKeepaliveChan {
-				fmt.Printf("[%s] TUNNEL[%s] Keep-alive ChanNum hop: %d -> %d (registered=%d)\n",
-					time.Now().Format("15:04:05.000"), tunnel.ID, lastKeepaliveChan, activeChan, channelCount)
+				if debugTunnel {
+					fmt.Printf("[%s] TUNNEL[%s] Keep-alive ChanNum hop: %d -> %d (registered=%d)\n",
+						time.Now().Format("15:04:05.000"), tunnel.ID, lastKeepaliveChan, activeChan, channelCount)
+				}
 				lastKeepaliveChan = activeChan
 			}
 
@@ -1915,7 +1938,11 @@ func (m *Manager) tunnelWSReader(ctx context.Context, tunnel *Tunnel) {
 				ch, ok := tunnel.channels[td.ChanNum]
 				tunnel.channelMu.RUnlock()
 
-				if !ok {
+				if !ok && debugTunnel {
+					// After a TCP EOF the device often keeps sending
+					// keep-alive responses on the now-dead ChanNum for a
+					// while. In default verbosity this becomes log spam;
+					// only surface it when actively diagnosing.
 					fmt.Printf("TUNNEL[%s] ChanNum=%d: WARNING no channel registered, dropping %d bytes\n",
 						tunnel.ID, td.ChanNum, len(dataCopy))
 				}
@@ -2016,6 +2043,9 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 		ringMu.Unlock()
 	}
 	dumpRing := func() {
+		if !debugTunnel {
+			return
+		}
 		ringMu.Lock()
 		total := ringIdx
 		// Walk the ring in chronological order: oldest entry is at
@@ -2132,20 +2162,19 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 				// Always log first 3 chunks (baseline). Always check for
 				// "SSH-" prefix; if seen AFTER the initial banner, log a
 				// loud WARN that nails down the device-reconnect theory.
-				// Record every chunk into the per-channel ring buffer so we
-				// can dump the last 16 chunks on channel close (TCP EOF) —
-				// that's the moment the user sees "Bad packet length" and
-				// it's where the bytes-of-interest live.
-				recordChunk(packetCount, len(data), data)
-
-				if packetCount <= 3 {
-					fmt.Printf("[%s] TUNNEL[%s] ChanNum=%d: WS->TCP chunk #%d (%d bytes, hex=%s)\n",
-						time.Now().Format("15:04:05.000"), tunnel.ID, chanNum, packetCount, len(data), hexPrefixOf(data, 16))
-				} else if packetCount%50 == 0 {
-					// Heartbeat log so we can see steady-state cadence
-					// without flooding the log on every chunk.
-					fmt.Printf("[%s] TUNNEL[%s] ChanNum=%d: WS->TCP chunk #%d (%d bytes, hex=%s) [running rx=%d]\n",
-						time.Now().Format("15:04:05.000"), tunnel.ID, chanNum, packetCount, len(data), hexPrefixOf(data, 16), atomic.LoadInt64(&bytesRx))
+				// Per-chunk diagnostic logging — gated. The ring buffer
+				// is only useful when actively diagnosing; recording on
+				// every chunk in steady-state production wastes mutex
+				// contention and log lines.
+				if debugTunnel {
+					recordChunk(packetCount, len(data), data)
+					if packetCount <= 3 {
+						fmt.Printf("[%s] TUNNEL[%s] ChanNum=%d: WS->TCP chunk #%d (%d bytes, hex=%s)\n",
+							time.Now().Format("15:04:05.000"), tunnel.ID, chanNum, packetCount, len(data), hexPrefixOf(data, 16))
+					} else if packetCount%50 == 0 {
+						fmt.Printf("[%s] TUNNEL[%s] ChanNum=%d: WS->TCP chunk #%d (%d bytes, hex=%s) [running rx=%d]\n",
+							time.Now().Format("15:04:05.000"), tunnel.ID, chanNum, packetCount, len(data), hexPrefixOf(data, 16), atomic.LoadInt64(&bytesRx))
+					}
 				}
 				if len(data) > 4 && string(data[:4]) == "SSH-" {
 					if bannerSeen {
