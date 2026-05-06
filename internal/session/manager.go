@@ -2109,13 +2109,30 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 				}
 				if len(data) > 4 && string(data[:4]) == "SSH-" {
 					if bannerSeen {
-						fmt.Printf("[%s] TUNNEL[%s] ChanNum=%d: !!! FRESH SSH BANNER MID-SESSION (chunk #%d, %d bytes, hex=%s) — device likely re-launched its TCP to local SSH server (likely after a device-side WS reconnect)\n",
+						// Confirmed via diagnostics: when our WS to the
+						// dispatcher dies and attemptTunnelReconnect
+						// re-establishes it (re-sending the tcp/<target>
+						// command), the device opens a FRESH local TCP to
+						// sshd. The sshd's first response is a banner —
+						// forwarding it into the user's already-encrypted
+						// SSH session would land random plaintext where the
+						// client expected encrypted continuation, yielding
+						// "Bad packet length 0xNNNN...".
+						//
+						// Close the local TCP so the user's outer SSH client
+						// sees a clean disconnect ("Connection closed by
+						// remote") instead of corrupted-stream death. The
+						// user can immediately reconnect through port 9001
+						// — the tunnel itself is healthy, only this channel
+						// is unrecoverable mid-session.
+						fmt.Printf("[%s] TUNNEL[%s] ChanNum=%d: !!! FRESH SSH BANNER MID-SESSION (chunk #%d, %d bytes, hex=%s) — closing local TCP to give user a clean disconnect (avoid forwarding banner into encrypted stream)\n",
 							time.Now().Format("15:04:05.000"), tunnel.ID, chanNum, packetCount, len(data), hexPrefixOf(data, 32))
-					} else {
-						fmt.Printf("[%s] TUNNEL[%s] ChanNum=%d: initial SSH banner forwarded (chunk #%d, %d bytes)\n",
-							time.Now().Format("15:04:05.000"), tunnel.ID, chanNum, packetCount, len(data))
-						bannerSeen = true
+						conn.Close() // unblocks the TCP->WS loop, triggers handleSharedTunnelConnection cleanup
+						return
 					}
+					fmt.Printf("[%s] TUNNEL[%s] ChanNum=%d: initial SSH banner forwarded (chunk #%d, %d bytes)\n",
+						time.Now().Format("15:04:05.000"), tunnel.ID, chanNum, packetCount, len(data))
+					bannerSeen = true
 				}
 
 				if _, err := conn.Write(data); err != nil {
