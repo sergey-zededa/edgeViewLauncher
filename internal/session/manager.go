@@ -1947,6 +1947,62 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 	// writes bytesTx; outer defer reads both), so use atomics.
 	var bytesTx, bytesRx int64
 
+	// Per-channel ring buffer of the last ringSize chunks forwarded WS->TCP
+	// (i.e. bytes from device to user's outer SSH client). Dumped on channel
+	// close so we can see exactly which bytes were flowing in the ~seconds
+	// preceding a "Bad packet length" SSH crash. Both goroutines touch ring
+	// state, so guard with ringMu.
+	type chunkRecord struct {
+		when time.Time
+		seq  int
+		n    int
+		hex  string // first 16 bytes hex-encoded
+	}
+	const ringSize = 16
+	var (
+		ring    [ringSize]chunkRecord
+		ringMu  sync.Mutex
+		ringIdx int // next slot to overwrite (== total chunks ever written)
+	)
+	recordChunk := func(seq, n int, data []byte) {
+		ringMu.Lock()
+		ring[ringIdx%ringSize] = chunkRecord{
+			when: time.Now(),
+			seq:  seq,
+			n:    n,
+			hex:  hexPrefixOf(data, 16),
+		}
+		ringIdx++
+		ringMu.Unlock()
+	}
+	dumpRing := func() {
+		ringMu.Lock()
+		total := ringIdx
+		// Walk the ring in chronological order: oldest entry is at
+		// ring[ringIdx % ringSize] when ringIdx >= ringSize, else at 0.
+		start := 0
+		count := total
+		if total > ringSize {
+			start = total - ringSize
+			count = ringSize
+		}
+		records := make([]chunkRecord, 0, count)
+		for i := 0; i < count; i++ {
+			records = append(records, ring[(start+i)%ringSize])
+		}
+		ringMu.Unlock()
+
+		if len(records) == 0 {
+			return
+		}
+		fmt.Printf("[%s] TUNNEL[%s] ChanNum=%d: WS->TCP last %d chunks before close (total chunks seen=%d):\n",
+			time.Now().Format("15:04:05.000"), tunnel.ID, chanNum, len(records), total)
+		for _, r := range records {
+			fmt.Printf("    [%s] #%d (%d bytes) hex=%s\n",
+				r.when.Format("15:04:05.000"), r.seq, r.n, r.hex)
+		}
+	}
+
 	defer func() {
 		conn.Close()
 		tunnel.channelMu.Lock()
@@ -1958,6 +2014,7 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 			time.Now().Format("15:04:05.000"), tunnel.ID, chanNum,
 			time.Since(startedAt).Round(time.Millisecond),
 			atomic.LoadInt64(&bytesTx), atomic.LoadInt64(&bytesRx), channelTotal)
+		dumpRing()
 	}()
 
 	// For protocols like VNC that don't send data first, send an empty init packet
@@ -2035,9 +2092,20 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 				// Always log first 3 chunks (baseline). Always check for
 				// "SSH-" prefix; if seen AFTER the initial banner, log a
 				// loud WARN that nails down the device-reconnect theory.
+				// Record every chunk into the per-channel ring buffer so we
+				// can dump the last 16 chunks on channel close (TCP EOF) —
+				// that's the moment the user sees "Bad packet length" and
+				// it's where the bytes-of-interest live.
+				recordChunk(packetCount, len(data), data)
+
 				if packetCount <= 3 {
 					fmt.Printf("[%s] TUNNEL[%s] ChanNum=%d: WS->TCP chunk #%d (%d bytes, hex=%s)\n",
 						time.Now().Format("15:04:05.000"), tunnel.ID, chanNum, packetCount, len(data), hexPrefixOf(data, 16))
+				} else if packetCount%50 == 0 {
+					// Heartbeat log so we can see steady-state cadence
+					// without flooding the log on every chunk.
+					fmt.Printf("[%s] TUNNEL[%s] ChanNum=%d: WS->TCP chunk #%d (%d bytes, hex=%s) [running rx=%d]\n",
+						time.Now().Format("15:04:05.000"), tunnel.ID, chanNum, packetCount, len(data), hexPrefixOf(data, 16), atomic.LoadInt64(&bytesRx))
 				}
 				if len(data) > 4 && string(data[:4]) == "SSH-" {
 					if bannerSeen {
