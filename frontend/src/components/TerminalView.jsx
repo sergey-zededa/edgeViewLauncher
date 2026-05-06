@@ -11,6 +11,13 @@ const TerminalView = ({ port }) => {
     const wsRef = useRef(null);
     const xtermRef = useRef(null);
     const fitAddonRef = useRef(null);
+    // Tracks whether we've already attempted an auto-reconnect for the
+    // current dropped session. Reset to false after a successful recovery
+    // so a subsequent (later) tunnel reconnect can also be recovered.
+    const recoveryAttemptedRef = useRef(false);
+    // True after the component unmounts (window closed or React cleanup).
+    // Prevents auto-recovery from racing the teardown.
+    const unmountedRef = useRef(false);
     const [isConnected, setIsConnected] = useState(false);
     const [status, setStatus] = useState('Connecting...');
     const [connectionInfo, setConnectionInfo] = useState({
@@ -184,7 +191,16 @@ const TerminalView = ({ port }) => {
                 ws.onopen = () => {
                     setStatus('Connected');
                     setIsConnected(true);
-                    term.writeln(`\x1b[1;32mConnected to EdgeView SSH Proxy (User: ${username || 'root'})...\x1b[0m`);
+                    if (recoveryAttemptedRef.current) {
+                        // We're recovering from a tunnel-WS-reconnect-induced
+                        // session kill. The previous shell state is gone; the
+                        // device opened a fresh local TCP and we got a new
+                        // sshd handshake. Surface this clearly to the user.
+                        term.writeln(`\r\n\x1b[1;32m[Auto-Recovery] Reconnected — note: previous shell state was lost (the cloud relay reconnected mid-session).\x1b[0m`);
+                        recoveryAttemptedRef.current = false; // allow a future recovery if it happens again
+                    } else {
+                        term.writeln(`\x1b[1;32mConnected to EdgeView SSH Proxy (User: ${username || 'root'})...\x1b[0m`);
+                    }
                     term.focus();
 
                     // Check for initial command (used for container shell access)
@@ -211,7 +227,37 @@ const TerminalView = ({ port }) => {
                 ws.onclose = () => {
                     setStatus('Disconnected');
                     setIsConnected(false);
-                    term.writeln('\r\n\x1b[1;31mConnection closed.\x1b[0m');
+
+                    // Auto-recovery: if the close was unexpected (component
+                    // still mounted, no prior recovery attempt in flight),
+                    // try once. The most common cause of an unexpected close
+                    // is the backend's banner-mid-session detection severing
+                    // our local TCP after a tunnel WS reconnect — see
+                    // internal/session/manager.go handleSharedTunnelConnection.
+                    // The tunnel listener itself is still healthy, so a fresh
+                    // connect-WebSocket call gets a new ChanNum and works.
+                    if (unmountedRef.current) {
+                        term.writeln('\r\n\x1b[1;31mConnection closed.\x1b[0m');
+                        return;
+                    }
+                    if (recoveryAttemptedRef.current) {
+                        term.writeln('\r\n\x1b[1;31mConnection closed (auto-recovery already attempted).\x1b[0m');
+                        return;
+                    }
+                    recoveryAttemptedRef.current = true;
+                    term.writeln('\r\n\x1b[1;33m[Auto-Recovery] Connection lost — attempting to re-establish SSH session in 1s...\x1b[0m');
+                    setTimeout(() => {
+                        if (unmountedRef.current) return;
+                        let dims;
+                        try {
+                            dims = fitAddonRef.current?.proposeDimensions();
+                        } catch (e) {
+                            dims = null;
+                        }
+                        const cols = (dims && dims.cols) || initialCols || 80;
+                        const rows = (dims && dims.rows) || initialRows || 24;
+                        connectWebSocket(cols, rows);
+                    }, 1000);
                 };
 
                 ws.onerror = (error) => {
@@ -219,13 +265,6 @@ const TerminalView = ({ port }) => {
                     setIsConnected(false);
                     term.writeln(`\r\n\x1b[1;31mWebSocket Error: ${error}\x1b[0m`);
                 };
-
-                // Terminal -> WebSocket
-                term.onData((data) => {
-                    if (ws.readyState === WebSocket.OPEN) {
-                        ws.send(JSON.stringify({ type: 'input', data }));
-                    }
-                });
             } catch (err) {
                 console.error('Failed to connect to backend:', err);
                 term.writeln(`\r\n\x1b[1;31mFailed to connect to backend: ${err}\x1b[0m`);
@@ -284,6 +323,17 @@ const TerminalView = ({ port }) => {
             }, 300);
         };
 
+        // Wire keyboard input → current WebSocket once. This binding lives
+        // for the life of the component; auto-recovery swaps wsRef.current
+        // under it, so we always send to the latest WS without
+        // accumulating duplicate term.onData listeners across recoveries.
+        term.onData((data) => {
+            const w = wsRef.current;
+            if (w && w.readyState === WebSocket.OPEN) {
+                w.send(JSON.stringify({ type: 'input', data }));
+            }
+        });
+
         initConnection();
 
         // Handle Resize events
@@ -301,6 +351,7 @@ const TerminalView = ({ port }) => {
         window.addEventListener('resize', handleResize);
 
         return () => {
+            unmountedRef.current = true;
             window.removeEventListener('resize', handleResize);
             if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
                 wsRef.current.close();

@@ -67,6 +67,25 @@ type Tunnel struct {
 	bytesSent     int64
 	bytesReceived int64
 	lastActivity  int64 // Unix nano
+
+	// Recovery events surface tunnel-level interruptions to the UI so the
+	// frontend can show a clear activity-log message (and drive in-app
+	// terminal auto-recovery). Set when an in-flight client SSH session
+	// gets unrecoverably severed by a tunnel WS reconnect. Read by the
+	// /api/tunnels JSON handler.
+	recoveryMu     sync.Mutex
+	lastRecovery   *RecoveryEvent
+}
+
+// RecoveryEvent records a tunnel-level event that interrupted an in-flight
+// client session (e.g. our WS to the dispatcher dropped, we reconnected,
+// and the device opened a fresh local TCP that broke the encrypted SSH
+// stream). The frontend uses this to decide what to log and whether to
+// attempt auto-recovery.
+type RecoveryEvent struct {
+	At     time.Time `json:"At"`
+	Reason string    `json:"Reason"`            // machine-readable: "ws_reconnect_session_killed"
+	Detail string    `json:"Detail,omitempty"`  // human-readable hint
 }
 
 type Manager struct {
@@ -182,6 +201,27 @@ func (t *Tunnel) GetStats() (sent, received int64, lastActivity time.Time) {
 		lastActivity = time.Unix(0, nano)
 	}
 	return
+}
+
+// RecordRecovery stamps a tunnel-level recovery event so the frontend
+// (which polls /api/tunnels) can surface a clear activity-log message
+// and trigger in-app terminal auto-recovery.
+func (t *Tunnel) RecordRecovery(reason, detail string) {
+	t.recoveryMu.Lock()
+	t.lastRecovery = &RecoveryEvent{At: time.Now(), Reason: reason, Detail: detail}
+	t.recoveryMu.Unlock()
+}
+
+// GetLastRecovery returns a copy of the most recent recovery event, or nil
+// if none has occurred.
+func (t *Tunnel) GetLastRecovery() *RecoveryEvent {
+	t.recoveryMu.Lock()
+	defer t.recoveryMu.Unlock()
+	if t.lastRecovery == nil {
+		return nil
+	}
+	cp := *t.lastRecovery
+	return &cp
 }
 
 // IsEncrypted returns whether the tunnel is using encryption
@@ -2127,6 +2167,10 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 						// is unrecoverable mid-session.
 						fmt.Printf("[%s] TUNNEL[%s] ChanNum=%d: !!! FRESH SSH BANNER MID-SESSION (chunk #%d, %d bytes, hex=%s) — closing local TCP to give user a clean disconnect (avoid forwarding banner into encrypted stream)\n",
 							time.Now().Format("15:04:05.000"), tunnel.ID, chanNum, packetCount, len(data), hexPrefixOf(data, 32))
+						tunnel.RecordRecovery(
+							"ws_reconnect_session_killed",
+							fmt.Sprintf("Tunnel WebSocket reconnected; SSH session on localhost:%d was severed and cannot be resumed transparently.", tunnel.LocalPort),
+						)
 						conn.Close() // unblocks the TCP->WS loop, triggers handleSharedTunnelConnection cleanup
 						return
 					}
