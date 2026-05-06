@@ -926,6 +926,18 @@ func debugf(label, format string, args ...interface{}) {
 	fmt.Printf("[%s] DEBUG[%s]: %s\n", time.Now().Format("15:04:05.000"), label, fmt.Sprintf(format, args...))
 }
 
+// hexPrefixOf returns the lowercase hex encoding of the first up-to-`max` bytes
+// of `data`. Used by the WS->TCP diagnostic logger to surface a small,
+// readable byte-prefix of each forwarded chunk so we can spot mid-session SSH
+// banners ("53 53 48 2d ..." = "SSH-") amid normal encrypted traffic.
+func hexPrefixOf(data []byte, max int) string {
+	n := len(data)
+	if n > max {
+		n = max
+	}
+	return fmt.Sprintf("%x", data[:n])
+}
+
 // LaunchTerminal opens a new terminal window with the SSH command
 func (m *Manager) LaunchTerminal(port int, keyPath string) error {
 	sshCmd := fmt.Sprintf("ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i \"%s\" -p %d root@127.0.0.1", keyPath, port)
@@ -1991,11 +2003,11 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 
 		var lastPacket []byte
 		packetCount := 0
+		bannerSeen := false // tracks whether we've already forwarded an "SSH-..." banner
 		for {
 			select {
 			case data, ok := <-dataChan:
 				if !ok {
-					// fmt.Printf("TUNNEL[%s] ChanNum=%d: dataChan closed, WS->TCP ending\n", tunnel.ID, chanNum)
 					return // Channel closed
 				}
 
@@ -2003,7 +2015,6 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 				if bytes.Equal(data, lastPacket) {
 					// Check if it's an SSH version string
 					if len(data) > 4 && string(data[:4]) == "SSH-" {
-						// fmt.Printf("TUNNEL[%s] ChanNum=%d: Dropping duplicate SSH version string packet\n", tunnel.ID, chanNum)
 						continue
 					}
 				}
@@ -2011,6 +2022,33 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 				copy(lastPacket, data)
 
 				packetCount++
+
+				// Diagnostic instrumentation for the "Bad packet length"
+				// SSH-corruption-mid-session investigation. We expect to see
+				// the SSH banner once at session start. If the device
+				// re-launches its local TCP to sshd (e.g. because the device-
+				// side WS reconnected and CloseChan'd our channel), a fresh
+				// banner would be forwarded on the SAME ChanNum mid-session,
+				// landing in the user's already-encrypted SSH stream and
+				// triggering the outer SSH client's "Bad packet length".
+				//
+				// Always log first 3 chunks (baseline). Always check for
+				// "SSH-" prefix; if seen AFTER the initial banner, log a
+				// loud WARN that nails down the device-reconnect theory.
+				if packetCount <= 3 {
+					fmt.Printf("[%s] TUNNEL[%s] ChanNum=%d: WS->TCP chunk #%d (%d bytes, hex=%s)\n",
+						time.Now().Format("15:04:05.000"), tunnel.ID, chanNum, packetCount, len(data), hexPrefixOf(data, 16))
+				}
+				if len(data) > 4 && string(data[:4]) == "SSH-" {
+					if bannerSeen {
+						fmt.Printf("[%s] TUNNEL[%s] ChanNum=%d: !!! FRESH SSH BANNER MID-SESSION (chunk #%d, %d bytes, hex=%s) — device likely re-launched its TCP to local SSH server (likely after a device-side WS reconnect)\n",
+							time.Now().Format("15:04:05.000"), tunnel.ID, chanNum, packetCount, len(data), hexPrefixOf(data, 32))
+					} else {
+						fmt.Printf("[%s] TUNNEL[%s] ChanNum=%d: initial SSH banner forwarded (chunk #%d, %d bytes)\n",
+							time.Now().Format("15:04:05.000"), tunnel.ID, chanNum, packetCount, len(data))
+						bannerSeen = true
+					}
+				}
 
 				if _, err := conn.Write(data); err != nil {
 					fmt.Printf("TUNNEL[%s] ChanNum=%d: WS->TCP write error: %v\n", tunnel.ID, chanNum, err)
