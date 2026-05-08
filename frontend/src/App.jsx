@@ -4982,8 +4982,9 @@ Do you want to try connecting anyway?`)) {
                                         return;
                                       }
                                       if (tunnelLoading) return;
-                                      const ip = app.ips && app.ips.length > 0 ? app.ips[0] : '127.0.0.1';
-                                      setTcpTunnelConfig({ ip, appName: app.name, containers: app.containers });
+                                      const allIps = app.ips && app.ips.length > 0 ? app.ips : ['127.0.0.1'];
+                                      const ip = allIps[0];
+                                      setTcpTunnelConfig({ ip, allIps, appName: app.name, containers: app.containers });
                                       setTcpIpInput(ip);
                                       setTcpPortInput('80');
                                       setTcpError('');
@@ -5044,11 +5045,36 @@ Do you want to try connecting anyway?`)) {
                 >
                   <div className="form-group">
                     <label>Target IP</label>
-                    <input
-                      type="text"
-                      value={tcpIpInput}
-                      onChange={(e) => setTcpIpInput(e.target.value)}
-                    />
+                    {tcpTunnelConfig.allIps && tcpTunnelConfig.allIps.length > 1 ? (
+                      <select
+                        value={tcpIpInput}
+                        onChange={(e) => setTcpIpInput(e.target.value)}
+                        style={{
+                          background: 'var(--bg-surface)',
+                          color: 'var(--text-primary)',
+                          border: '1px solid var(--border-subtle)',
+                          borderRadius: '4px',
+                          padding: '2px 6px',
+                          fontSize: '13px',
+                          fontFamily: 'monospace',
+                          cursor: 'pointer',
+                          width: '100%'
+                        }}
+                      >
+                        {tcpTunnelConfig.allIps.map(ip => (
+                          <option key={ip} value={ip}>{ip}</option>
+                        ))}
+                      </select>
+                    ) : tcpTunnelConfig.allIps && tcpTunnelConfig.allIps.length === 1 ? (
+                      <span className="data-value-code">{tcpIpInput}</span>
+                    ) : (
+                      <input
+                        type="text"
+                        value={tcpIpInput}
+                        onChange={(e) => setTcpIpInput(e.target.value)}
+                        placeholder="192.168.1.10"
+                      />
+                    )}
                   </div>
 
                   <div className="form-group">
