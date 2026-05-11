@@ -236,8 +236,9 @@
     </div>
 
     <script type="module">
-        import rfbModule from '@novnc/novnc/lib/rfb.js';
-        const RFB = rfbModule.default || rfbModule;
+        // noVNC 1.7.x removed the "./lib/rfb" subpath export — only the
+        // package root is exposed, with RFB as the default export.
+        import RFB from '@novnc/novnc';
         import { resizeWindow, closeCurrentWindow, CloseTunnel } from './src/tauriAPI.js';
 
         const urlParams = new URLSearchParams(window.location.search);

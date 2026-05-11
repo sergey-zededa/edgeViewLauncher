@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import rfbModule from '@novnc/novnc/lib/rfb';
-// noVNC uses CJS with exports["default"] — Vite 8 requires explicit destructure
-const RFB = rfbModule.default || rfbModule;
+// noVNC 1.7.x dropped the "./lib/rfb" subpath export; only the package root
+// is exposed (package.json exports: "./core/rfb.js"), with RFB as the
+// default export.
+import RFB from '@novnc/novnc';
 import { Maximize, Minimize, Unplug, X } from 'lucide-react';
 import { CloseTunnel } from '../tauriAPI';
 

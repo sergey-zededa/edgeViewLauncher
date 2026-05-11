@@ -12,7 +12,7 @@ const mockDisconnect = vi.fn();
 const mockFocus = vi.fn();
 const mockAddEventListener = vi.fn();
 
-vi.mock('@novnc/novnc/lib/rfb', () => {
+vi.mock('@novnc/novnc', () => {
     class MockRFB {
         constructor() {
             this.disconnect = mockDisconnect;
@@ -21,7 +21,7 @@ vi.mock('@novnc/novnc/lib/rfb', () => {
             this.clipboardPaste = vi.fn();
         }
     }
-    // Simulate the CJS exports["default"] pattern used by noVNC
+    // noVNC 1.7.x exposes RFB as the default export of the package root.
     return { default: MockRFB };
 });
 
@@ -41,7 +41,7 @@ describe('VncViewer', () => {
     });
 
     it('RFB import resolves to a usable constructor', async () => {
-        const rfbModule = await import('@novnc/novnc/lib/rfb');
+        const rfbModule = await import('@novnc/novnc');
         const RFB = rfbModule.default || rfbModule;
         expect(typeof RFB).toBe('function');
         const instance = new RFB(document.createElement('div'), 'ws://localhost:5900', {});
