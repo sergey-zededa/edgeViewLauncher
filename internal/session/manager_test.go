@@ -3,6 +3,9 @@ package session
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -402,6 +405,240 @@ func TestFailTunnelClearsCachedPort(t *testing.T) {
 	}
 	if s.Port != 0 || s.TunnelID != "" {
 		t.Errorf("expected Port/TunnelID cleared, got Port=%d TunnelID=%q", s.Port, s.TunnelID)
+	}
+}
+
+// TestFailTunnelCancelsTunnelContext verifies that FailTunnel invokes the
+// tunnel's stored cancel func, so keepalive/accept-loop goroutines exit
+// instead of running forever after permanent reconnect failure (the
+// "wsConn is nil (reconnecting?)" zombie observed in production logs).
+func TestFailTunnelCancelsTunnelContext(t *testing.T) {
+	m := NewManager()
+	tunnelCtx, cancel := context.WithCancel(context.Background())
+	m.RegisterTunnel(&Tunnel{
+		ID:     "zombie",
+		NodeID: "nodeA",
+		Cancel: cancel,
+		Status: "active",
+	})
+
+	if tunnelCtx.Err() != nil {
+		t.Fatalf("ctx unexpectedly cancelled before FailTunnel")
+	}
+
+	m.FailTunnel("zombie", errors.New("reconnect exhausted"))
+
+	select {
+	case <-tunnelCtx.Done():
+		// Expected — FailTunnel must propagate cancellation.
+	case <-time.After(time.Second):
+		t.Fatalf("expected tunnel context to be cancelled by FailTunnel, but it wasn't within 1s")
+	}
+}
+
+// fakeEdgeViewWS spins up an httptest WebSocket server that, on connect, runs
+// the supplied handler against the upgraded conn. Returns the wsURL the
+// client should dial (ws:// scheme) and a teardown func.
+func fakeEdgeViewWS(t *testing.T, handler func(c *websocket.Conn)) (string, func()) {
+	t.Helper()
+	upgrader := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		handler(c)
+	}))
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	return wsURL, srv.Close
+}
+
+// TestWaitForTcpSetupOK_PostDoneShortCircuitsWarmupState verifies that when
+// the device sends +++Done+++ alone (no follow-up tcpSetupOK), waitForTcpSetupOK
+// returns within ~postDoneTimeout instead of blocking the full 30s outer
+// timeout. This is the round-1 "device warmup" scenario observed in
+// production logs that was costing ~30s per failed round.
+func TestWaitForTcpSetupOK_PostDoneShortCircuitsWarmupState(t *testing.T) {
+	const key = "test-key"
+	wsURL, teardown := fakeEdgeViewWS(t, func(c *websocket.Conn) {
+		_ = sendWrappedMessage(c, []byte("+++Done+++\n"), key, websocket.BinaryMessage, false)
+		// Hold the connection open well past postDoneTimeout to prove the
+		// short-circuit fires on its own rather than because the server
+		// closed the conn.
+		time.Sleep(15 * time.Second)
+	})
+	defer teardown()
+
+	wsConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer wsConn.Close()
+
+	m := NewManager()
+	start := time.Now()
+	err = m.waitForTcpSetupOK(context.Background(), wsConn, key, 30*time.Second, false, "test/warmup")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatalf("expected warmup-state error, got nil")
+	}
+	if !strings.Contains(err.Error(), "warmup") {
+		t.Fatalf("expected error to mention 'warmup', got %v", err)
+	}
+	// postDoneTimeout is 5s; allow a generous 8s ceiling so a slow CI box
+	// doesn't flake. Critically, this must be well below the 30s outer
+	// timeout — that's the regression we're guarding against.
+	if elapsed > 8*time.Second {
+		t.Fatalf("waitForTcpSetupOK took %v; expected ~%v after +++Done+++ (must not wait full 30s)", elapsed, postDoneTimeout)
+	}
+}
+
+// TestWaitForTcpSetupOK_DoneFollowedByTcpSetupOKSucceeds verifies the happy
+// path: +++Done+++ from the info banner is correctly ignored, and a follow-up
+// +++tcpSetupOK+++ within the postDoneTimeout window resolves the wait
+// successfully.
+func TestWaitForTcpSetupOK_DoneFollowedByTcpSetupOKSucceeds(t *testing.T) {
+	const key = "test-key"
+	wsURL, teardown := fakeEdgeViewWS(t, func(c *websocket.Conn) {
+		_ = sendWrappedMessage(c, []byte("+++Done+++"), key, websocket.BinaryMessage, false)
+		time.Sleep(50 * time.Millisecond)
+		_ = sendWrappedMessage(c, []byte(" +++tcpSetupOK+++ "), key, websocket.BinaryMessage, false)
+		time.Sleep(2 * time.Second)
+	})
+	defer teardown()
+
+	wsConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer wsConn.Close()
+
+	m := NewManager()
+	start := time.Now()
+	err = m.waitForTcpSetupOK(context.Background(), wsConn, key, 30*time.Second, false, "test/happy")
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("expected nil error on tcpSetupOK after Done, got %v", err)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("waitForTcpSetupOK took %v; expected fast resolution once tcpSetupOK arrived", elapsed)
+	}
+}
+
+// TestWaitForTcpSetupOK_RespectsCtxCancellation verifies that ctx cancellation
+// aborts the wait promptly. This is what propagates "winner found" /
+// "round deadline expired" signals from raceBatch to siblings stuck waiting
+// for a payload that never arrives.
+func TestWaitForTcpSetupOK_RespectsCtxCancellation(t *testing.T) {
+	const key = "test-key"
+	wsURL, teardown := fakeEdgeViewWS(t, func(c *websocket.Conn) {
+		// Server connects but sends NOTHING. The only way out is ctx cancel.
+		time.Sleep(10 * time.Second)
+	})
+	defer teardown()
+
+	wsConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer wsConn.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		cancel()
+	}()
+
+	m := NewManager()
+	start := time.Now()
+	err = m.waitForTcpSetupOK(ctx, wsConn, key, 30*time.Second, false, "test/ctx-cancel")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatalf("expected ctx cancel error, got nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected wrapped context.Canceled, got %v", err)
+	}
+	if elapsed > 1*time.Second {
+		t.Fatalf("expected fast ctx cancel (~150ms), got %v", elapsed)
+	}
+}
+
+// TestStartProxyMulti_RoundDeadlineAbortsSilentProbes verifies that a probe
+// whose target is silent (no payload at all) does not gate the entire round
+// for 30s. raceBatch's WithTimeout(ctx, roundDeadline) should abort it so
+// the round can fail fast and (in production) move to the next round.
+func TestStartProxyMulti_RoundDeadlineAbortsSilentProbes(t *testing.T) {
+	candidates := []string{"silent-1", "silent-2"}
+
+	m := NewManager()
+	m.maxRoundsOverride = 1
+	m.roundBackoffOverride = func(round int) time.Duration { return time.Millisecond }
+	m.tryAttemptOverride = func(ctx context.Context, cfg *zededa.SessionConfig, target string, instID int) (*websocket.Conn, string, error) {
+		// Block until ctx is cancelled (round deadline) or 60s elapses.
+		select {
+		case <-ctx.Done():
+			return nil, "", ctx.Err()
+		case <-time.After(60 * time.Second):
+			return nil, "", errors.New("never-cancelled fallback")
+		}
+	}
+
+	cfg := &zededa.SessionConfig{MaxInst: 2}
+	start := time.Now()
+	_, _, err := m.StartProxyMulti(context.Background(), cfg, "n1", candidates, 22, "ssh", nil)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatalf("expected error when all probes silent, got nil")
+	}
+	// roundDeadline is 10s; allow 13s ceiling for CI variance. The point is
+	// it must be much less than 60s (the unrelenting probe duration above).
+	if elapsed > 13*time.Second {
+		t.Fatalf("StartProxyMulti took %v; expected ~%v (roundDeadline)", elapsed, roundDeadline)
+	}
+}
+
+// TestStartProxyMulti_ReturnsOnFirstWinnerWithoutWaitingForStragglers verifies
+// that raceBatch does not block on slow sibling probes once a winner is found.
+// Before this fix, SSH establishment was gated on the slowest goroutine in
+// the batch — typically an unreachable IPv6 link-local that took 15–30s to
+// fail at the dialer level even after batchCtx was cancelled.
+func TestStartProxyMulti_ReturnsOnFirstWinnerWithoutWaitingForStragglers(t *testing.T) {
+	const slowProbeDuration = 750 * time.Millisecond
+	candidates := []string{"fast", "slow"}
+
+	m := NewManager()
+	m.maxRoundsOverride = 1
+	m.roundBackoffOverride = func(round int) time.Duration { return time.Millisecond }
+	m.tryAttemptOverride = func(ctx context.Context, cfg *zededa.SessionConfig, target string, instID int) (*websocket.Conn, string, error) {
+		// "fast" succeeds in ~5ms; "slow" sleeps slowProbeDuration even if
+		// ctx is cancelled (mimics an OS dial that doesn't respect cancel).
+		// We return (nil, "", nil) on success so StartProxyMulti's wsConn!=nil
+		// guard skips finalizeTunnel — we only care about timing here.
+		if strings.HasPrefix(target, "fast:") {
+			time.Sleep(5 * time.Millisecond)
+			return nil, "", nil
+		}
+		time.Sleep(slowProbeDuration)
+		return nil, "", nil
+	}
+
+	cfg := &zededa.SessionConfig{MaxInst: 2}
+	start := time.Now()
+	_, _, _ = m.StartProxyMulti(context.Background(), cfg, "n1", candidates, 22, "ssh", nil)
+	elapsed := time.Since(start)
+
+	// Without the fix, raceBatch waited for both goroutines, so elapsed would
+	// be ~slowProbeDuration. With the fix, it returns as soon as "fast" wins.
+	// 250ms threshold gives a generous margin while still proving we didn't
+	// wait the full 750ms.
+	if elapsed > 250*time.Millisecond {
+		t.Fatalf("StartProxyMulti took %v; expected to return promptly after fast probe (slow probe is %v)", elapsed, slowProbeDuration)
 	}
 }
 

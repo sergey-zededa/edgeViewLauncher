@@ -67,6 +67,25 @@ type Tunnel struct {
 	bytesSent     int64
 	bytesReceived int64
 	lastActivity  int64 // Unix nano
+
+	// Recovery events surface tunnel-level interruptions to the UI so the
+	// frontend can show a clear activity-log message (and drive in-app
+	// terminal auto-recovery). Set when an in-flight client SSH session
+	// gets unrecoverably severed by a tunnel WS reconnect. Read by the
+	// /api/tunnels JSON handler.
+	recoveryMu     sync.Mutex
+	lastRecovery   *RecoveryEvent
+}
+
+// RecoveryEvent records a tunnel-level event that interrupted an in-flight
+// client session (e.g. our WS to the dispatcher dropped, we reconnected,
+// and the device opened a fresh local TCP that broke the encrypted SSH
+// stream). The frontend uses this to decide what to log and whether to
+// attempt auto-recovery.
+type RecoveryEvent struct {
+	At     time.Time `json:"At"`
+	Reason string    `json:"Reason"`            // machine-readable: "ws_reconnect_session_killed"
+	Detail string    `json:"Detail,omitempty"`  // human-readable hint
 }
 
 type Manager struct {
@@ -184,6 +203,27 @@ func (t *Tunnel) GetStats() (sent, received int64, lastActivity time.Time) {
 	return
 }
 
+// RecordRecovery stamps a tunnel-level recovery event so the frontend
+// (which polls /api/tunnels) can surface a clear activity-log message
+// and trigger in-app terminal auto-recovery.
+func (t *Tunnel) RecordRecovery(reason, detail string) {
+	t.recoveryMu.Lock()
+	t.lastRecovery = &RecoveryEvent{At: time.Now(), Reason: reason, Detail: detail}
+	t.recoveryMu.Unlock()
+}
+
+// GetLastRecovery returns a copy of the most recent recovery event, or nil
+// if none has occurred.
+func (t *Tunnel) GetLastRecovery() *RecoveryEvent {
+	t.recoveryMu.Lock()
+	defer t.recoveryMu.Unlock()
+	if t.lastRecovery == nil {
+		return nil
+	}
+	cp := *t.lastRecovery
+	return &cp
+}
+
 // IsEncrypted returns whether the tunnel is using encryption
 func (t *Tunnel) IsEncrypted() bool {
 	if t.config == nil {
@@ -201,9 +241,13 @@ func (m *Manager) RegisterTunnel(tunnel *Tunnel) {
 
 // FailTunnel marks an existing tunnel as failed and records the error message.
 // The matching cached session (if any) has its Port/TunnelID cleared so a
-// future ConnectToNode for the same node creates a fresh proxy.
+// future ConnectToNode for the same node creates a fresh proxy. The tunnel's
+// context is also cancelled so its keepalive and accept-loop goroutines exit
+// promptly — without this, a tunnel whose reconnect attempts exhausted would
+// leave goroutines spamming "wsConn is nil (reconnecting?)" forever.
 func (m *Manager) FailTunnel(tunnelID string, err error) {
 	m.tunnelMu.Lock()
+	var cancel context.CancelFunc
 	if tunnel, exists := m.tunnels[tunnelID]; exists {
 		tunnel.Status = "failed"
 		if err != nil {
@@ -211,8 +255,13 @@ func (m *Manager) FailTunnel(tunnelID string, err error) {
 		} else {
 			tunnel.Error = ""
 		}
+		cancel = tunnel.Cancel
 	}
 	m.tunnelMu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
 
 	m.clearCachedPortForTunnel(tunnelID)
 }
@@ -369,11 +418,16 @@ func (m *Manager) callTryAttempt(ctx context.Context, config *zededa.SessionConf
 func (m *Manager) tryProxyAttempt(ctx context.Context, config *zededa.SessionConfig, target string, instID int) (*websocket.Conn, string, error) {
 	cfg := *config
 	cfg.InstID = instID
+	label := fmt.Sprintf("%s/i%d", target, instID)
+	t0 := time.Now()
+	debugf(label, "probe start")
 
-	wsConn, clientIP, err := m.connectToEdgeView(&cfg)
+	wsConn, clientIP, err := m.connectToEdgeView(&cfg, label)
 	if err != nil {
+		debugf(label, "connect failed after %v: %v", time.Since(t0), err)
 		return nil, "", err
 	}
+	debugf(label, "ws connected (%v)", time.Since(t0))
 
 	// If the caller has cancelled (e.g. another parallel probe already won),
 	// drop the connection before sending the tcp command.
@@ -395,10 +449,12 @@ func (m *Manager) tryProxyAttempt(ctx context.Context, config *zededa.SessionCon
 		return nil, "", fmt.Errorf("failed to send tcp command: %w", err)
 	}
 
-	if err := m.waitForTcpSetupOK(wsConn, cfg.Key, 30*time.Second, cfg.Enc); err != nil {
+	if err := m.waitForTcpSetupOK(ctx, wsConn, cfg.Key, 30*time.Second, cfg.Enc, label); err != nil {
+		debugf(label, "tcpSetupOK failed after %v: %v", time.Since(t0), err)
 		wsConn.Close()
 		return nil, "", err
 	}
+	debugf(label, "tcpSetupOK received (%v total)", time.Since(t0))
 
 	return wsConn, clientIP, nil
 }
@@ -638,12 +694,15 @@ func (m *Manager) StartProxyMulti(ctx context.Context, config *zededa.SessionCon
 	var lastErr error
 	seenNoDeviceOnline := false
 
+	startedAt := time.Now()
 	for round := 1; round <= maxRounds; round++ {
+		roundStart := time.Now()
 		if round == 1 {
 			reportProgress(fmt.Sprintf("Probing %d IP(s)...", len(candidateIPs)))
 		} else {
 			reportProgress(fmt.Sprintf("Re-probing %d IP(s) (round %d/%d)...", len(candidateIPs), round, maxRounds))
 		}
+		infof(fmt.Sprintf("round=%d", round), "starting (candidates=%v, elapsed since probe began=%v)", candidateIPs, time.Since(startedAt))
 
 		// One round walks every candidate IP exactly once, in batches of
 		// `parallelism`. Each parallel slot uses a distinct InstID so the
@@ -661,6 +720,7 @@ func (m *Manager) StartProxyMulti(ctx context.Context, config *zededa.SessionCon
 				return 0, "", ErrExternalPolicyDenied
 			}
 			if wsConn != nil {
+				infof(fmt.Sprintf("round=%d", round), "WINNER %s after %v (total %v)", winningTarget, time.Since(roundStart), time.Since(startedAt))
 				return m.finalizeTunnel(listener, wsConn, config, nodeID, winningTarget, protocol, clientIP)
 			}
 			if batchErr == ErrNoDeviceOnline {
@@ -674,9 +734,11 @@ func (m *Manager) StartProxyMulti(ctx context.Context, config *zededa.SessionCon
 			if m.roundBackoffOverride != nil {
 				waitTime = m.roundBackoffOverride(round)
 			}
-			fmt.Printf("DEBUG: Round %d/%d failed for all candidates, waiting %v before next round...\n", round, maxRounds, waitTime)
+			infof(fmt.Sprintf("round=%d", round), "FAILED for all %d candidates after %v; backing off %v before round %d", len(candidateIPs), time.Since(roundStart), waitTime, round+1)
 			reportProgress(fmt.Sprintf("Waiting %ds before retry...", int(waitTime.Seconds())))
 			time.Sleep(waitTime)
+		} else {
+			infof(fmt.Sprintf("round=%d", round), "FAILED for all %d candidates after %v (final round)", len(candidateIPs), time.Since(roundStart))
 		}
 	}
 
@@ -701,8 +763,17 @@ func (m *Manager) raceBatch(ctx context.Context, config *zededa.SessionConfig, b
 		err      error
 	}
 
-	batchCtx, cancel := context.WithCancel(ctx)
+	// Round-level deadline propagates to every probe via ctx.Done() in
+	// waitForTcpSetupOK. Bounds the round even when individual probes are
+	// silently stuck (e.g. EdgeView dispatcher dropped them).
+	batchCtx, cancel := context.WithTimeout(ctx, roundDeadline)
 	results := make(chan result, len(batch))
+
+	// Single batch-level progress message — N parallel goroutines all firing
+	// reportProgress would just race to overwrite the toast with a random
+	// candidate. List the IPs in priority order so the user sees what's
+	// being attempted (IPv4 first per sortIPv4First in the caller).
+	reportProgress(fmt.Sprintf("Probing (round %d): %s", round, strings.Join(batch, ", ")))
 
 	for slot, ip := range batch {
 		target := fmt.Sprintf("%s:%d", ip, targetPort)
@@ -710,28 +781,38 @@ func (m *Manager) raceBatch(ctx context.Context, config *zededa.SessionConfig, b
 		if config.MaxInst > 1 {
 			instID = (initialInstID + slot) % config.MaxInst
 		}
-		reportProgress(fmt.Sprintf("[%s] Probing (round %d, inst %d)...", ip, round, instID))
 		go func(target string, instID int) {
 			ws, ip, err := m.callTryAttempt(batchCtx, config, target, instID)
 			results <- result{wsConn: ws, clientIP: ip, target: target, err: err}
 		}(target, instID)
 	}
 
-	var winner *result
 	policyDenied := false
 	var lastErr error
 
 	for i := 0; i < len(batch); i++ {
 		r := <-results
 		if r.err == nil {
-			if winner == nil {
-				winner = &result{wsConn: r.wsConn, clientIP: r.clientIP, target: r.target}
-				cancel() // signal stragglers (best-effort: dialer may already be in flight)
-			} else {
-				// We already have a winner; close this late successful conn.
-				r.wsConn.Close()
+			// Winner. Cancel stragglers and drain the rest in the background
+			// so we return immediately — otherwise SSH establishment is gated
+			// on the slowest sibling, typically an unreachable IPv6 link-local
+			// whose dialer / EdgeView dispatcher takes 15–30s to give up even
+			// after batchCtx is cancelled. Late-arriving successful wsConns
+			// are closed here to avoid leaks.
+			cancel()
+			remaining := len(batch) - i - 1
+			if remaining > 0 {
+				go func() {
+					for j := 0; j < remaining; j++ {
+						sr := <-results
+						if sr.err == nil && sr.wsConn != nil {
+							sr.wsConn.Close()
+						}
+					}
+				}()
 			}
-			continue
+			infof(fmt.Sprintf("round=%d", round), "batch winner: %s", r.target)
+			return r.wsConn, r.clientIP, r.target, nil, false
 		}
 		if r.err == ErrExternalPolicyDenied {
 			policyDenied = true
@@ -740,17 +821,36 @@ func (m *Manager) raceBatch(ctx context.Context, config *zededa.SessionConfig, b
 		lastErr = r.err
 	}
 	cancel()
-
-	if winner != nil {
-		fmt.Printf("DEBUG: Round %d batch winner: %s\n", round, winner.target)
-		return winner.wsConn, winner.clientIP, winner.target, nil, false
-	}
 	return nil, "", "", lastErr, policyDenied
 }
 
-// waitForTcpSetupOK waits for the +++tcpSetupOK+++ message from EdgeView
-func (m *Manager) waitForTcpSetupOK(wsConn *websocket.Conn, key string, timeout time.Duration, encrypt bool) error {
+// postDoneTimeout bounds how long we wait for +++tcpSetupOK+++ after seeing
+// a +++Done+++ payload. If the device is in a "warmup" state it sometimes
+// emits +++Done+++ alone with no follow-up; without this short deadline we'd
+// block on the full waitForTcpSetupOK timeout (30s) per probe.
+const postDoneTimeout = 5 * time.Second
+
+// roundDeadline caps how long a single probe round (one batch of parallel
+// candidates) can run in StartProxyMulti. Without it, a probe whose
+// WebSocket connects but receives no payload at all (observed for IPv6
+// link-local management IPs that the EdgeView dispatcher silently drops)
+// would block the round for the full 30s waitForTcpSetupOK timeout — even
+// when the other 4 probes have already failed and round 2 would succeed
+// in ~1.5s. Empirically healthy probes complete in <2s, so 10s gives
+// plenty of margin while killing silent probes fast.
+const roundDeadline = 10 * time.Second
+
+// waitForTcpSetupOK waits for the +++tcpSetupOK+++ message from EdgeView.
+// `label` tags every debug log line so messages from parallel probes can be
+// correlated to a specific (target, instID) pair. ctx cancellation aborts
+// the wait — used by raceBatch to propagate winner-found and round-deadline
+// signals to siblings stuck waiting for a payload that never arrives.
+func (m *Manager) waitForTcpSetupOK(ctx context.Context, wsConn *websocket.Conn, key string, timeout time.Duration, encrypt bool, label string) error {
 	setupDone := make(chan error, 1)
+	// Signaled (non-blocking) every time the reader sees +++Done+++; the
+	// outer select shortens its deadline on the first such signal.
+	doneSeen := make(chan struct{}, 1)
+
 	go func() {
 		for {
 			_, msg, err := wsConn.ReadMessage()
@@ -759,22 +859,16 @@ func (m *Manager) waitForTcpSetupOK(wsConn *websocket.Conn, key string, timeout 
 				return
 			}
 
-			// Log raw message length
-			// fmt.Printf("DEBUG: waitForTcpSetupOK received raw message (len=%d)\n", len(msg))
-
 			payload, err := unwrapMessage(msg, key, encrypt)
 			if err != nil {
-				// Check for specific errors returned by unwrapMessage
 				if err == ErrBusyInstance {
 					setupDone <- ErrBusyInstance
 					return
 				}
 				if err == ErrNoDeviceOnline {
-					// fmt.Printf("DEBUG: waitForTcpSetupOK received 'no device online'. Device not yet connected, continuing wait...\n")
 					continue
 				}
 
-				// Check for plain-text errors in the raw message
 				msgStr := string(msg)
 				if strings.Contains(msgStr, "no device online") {
 					continue
@@ -783,18 +877,17 @@ func (m *Manager) waitForTcpSetupOK(wsConn *websocket.Conn, key string, timeout 
 				// FALLBACK: Check if the raw message contains tcpSetupOK
 				// Some versions might send this as a raw text frame instead of enveloped
 				if strings.Contains(msgStr, "+++tcpSetupOK+++") {
-					fmt.Printf("DEBUG: Found tcpSetupOK in raw message (unwrap failed)\n")
+					debugf(label, "Found tcpSetupOK in raw message (unwrap failed)")
 					setupDone <- nil
 					return
 				}
 
-				// Log unwrap failures but CONTINUE waiting unless it's a fatal error
-				fmt.Printf("DEBUG: waitForTcpSetupOK unwrap failed: %v. Raw start: %.50q\n", err, msgStr)
+				debugf(label, "waitForTcpSetupOK unwrap failed: %v. Raw start: %.50q", err, msgStr)
 				continue
 			}
 
 			payloadStr := string(payload)
-			fmt.Printf("DEBUG: waitForTcpSetupOK payload: %q\n", payloadStr)
+			debugf(label, "waitForTcpSetupOK payload: %q", payloadStr)
 
 			if strings.Contains(payloadStr, "+++tcpSetupOK+++") {
 				setupDone <- nil
@@ -812,18 +905,98 @@ func (m *Manager) waitForTcpSetupOK(wsConn *websocket.Conn, key string, timeout 
 				setupDone <- fmt.Errorf("device returned error: %s", payloadStr)
 				return
 			}
+			// +++Done+++ is the end-of-output marker for the EdgeView info
+			// banner that the device sends BEFORE +++tcpSetupOK+++ — see
+			// the live-tunnel handler in tunnelWSReader. It is NOT a
+			// connection-closed signal. But: if NO follow-up tcpSetupOK
+			// arrives quickly, the device is in a transient "warmup" state
+			// and this probe should yield to the next round rather than
+			// blocking the full 30s timeout. The outer select handles that.
 			if strings.Contains(payloadStr, "+++Done+++") {
-				setupDone <- fmt.Errorf("device closed connection before tcpSetupOK (Payload: %s)", payloadStr)
-				return
+				debugf(label, "ignoring +++Done+++ (info banner end), will wait up to %v for tcpSetupOK", postDoneTimeout)
+				select {
+				case doneSeen <- struct{}{}:
+				default:
+				}
+				continue
 			}
 		}
 	}()
-	select {
-	case err := <-setupDone:
-		return err
-	case <-time.After(timeout):
-		return fmt.Errorf("timeout waiting for tcpSetupOK")
+
+	overall := time.NewTimer(timeout)
+	defer overall.Stop()
+	var postDone *time.Timer
+	defer func() {
+		if postDone != nil {
+			postDone.Stop()
+		}
+	}()
+	postDoneCh := func() <-chan time.Time {
+		if postDone == nil {
+			return nil // nil channel: never fires in select
+		}
+		return postDone.C
 	}
+
+	for {
+		select {
+		case err := <-setupDone:
+			return err
+		case <-ctx.Done():
+			return fmt.Errorf("waitForTcpSetupOK cancelled: %w", ctx.Err())
+		case <-overall.C:
+			return fmt.Errorf("timeout waiting for tcpSetupOK after %v", timeout)
+		case <-postDoneCh():
+			return fmt.Errorf("device sent +++Done+++ but no +++tcpSetupOK+++ within %v (likely warmup state)", postDoneTimeout)
+		case <-doneSeen:
+			if postDone == nil {
+				postDone = time.NewTimer(postDoneTimeout)
+			}
+		}
+	}
+}
+
+// debugTunnel gates the chatty per-probe / per-chunk diagnostic logging that
+// was added during the SSH-corruption investigation. Off by default to keep
+// production logs readable; re-enable for diagnosis with EDGEVIEW_DEBUG=1.
+var debugTunnel = os.Getenv("EDGEVIEW_DEBUG") == "1"
+
+// debugf writes a debug log line prefixed with a millisecond timestamp and a
+// per-probe label so the messages from N parallel goroutines can be reliably
+// correlated. No-op unless EDGEVIEW_DEBUG=1 — these are the chatty traces
+// (per-probe lifecycle, payload dumps, etc) that should only fire when
+// actively diagnosing.
+func debugf(label, format string, args ...interface{}) {
+	if !debugTunnel {
+		return
+	}
+	if label == "" {
+		label = "-"
+	}
+	fmt.Printf("[%s] DEBUG[%s]: %s\n", time.Now().Format("15:04:05.000"), label, fmt.Sprintf(format, args...))
+}
+
+// infof is the always-on counterpart for round/tunnel-level summary lines:
+// one-shot lifecycle events, round transitions, reconnect outcomes. Use this
+// instead of debugf when the message is rare (≤ a handful per session) and
+// useful for production diagnosis even at default verbosity.
+func infof(label, format string, args ...interface{}) {
+	if label == "" {
+		label = "-"
+	}
+	fmt.Printf("[%s] INFO[%s]: %s\n", time.Now().Format("15:04:05.000"), label, fmt.Sprintf(format, args...))
+}
+
+// hexPrefixOf returns the lowercase hex encoding of the first up-to-`max` bytes
+// of `data`. Used by the WS->TCP diagnostic logger to surface a small,
+// readable byte-prefix of each forwarded chunk so we can spot mid-session SSH
+// banners ("53 53 48 2d ..." = "SSH-") amid normal encrypted traffic.
+func hexPrefixOf(data []byte, max int) string {
+	n := len(data)
+	if n > max {
+		n = max
+	}
+	return fmt.Sprintf("%x", data[:n])
 }
 
 // LaunchTerminal opens a new terminal window with the SSH command
@@ -1394,8 +1567,10 @@ func unwrapMessage(data []byte, key string, encrypt bool) ([]byte, error) {
 	}
 }
 
-// connectToEdgeView establishes a WebSocket connection to EdgeView
-func (m *Manager) connectToEdgeView(config *zededa.SessionConfig) (*websocket.Conn, string, error) {
+// connectToEdgeView establishes a WebSocket connection to EdgeView.
+// `label` tags debug log lines so messages from parallel probes can be
+// correlated to their target/instID.
+func (m *Manager) connectToEdgeView(config *zededa.SessionConfig, label string) (*websocket.Conn, string, error) {
 	// 1. Compute Token Hash
 	tokenToHash := config.Token
 	if config.InstID > 0 {
@@ -1455,7 +1630,7 @@ func (m *Manager) connectToEdgeView(config *zededa.SessionConfig) (*websocket.Co
 	}
 
 	initialMsg := string(msg)
-	fmt.Printf("DEBUG: Received initial message: %s\n", initialMsg)
+	debugf(label, "Received initial message: %s", initialMsg)
 
 	// Check for known error messages in the initial handshake
 	if strings.Contains(initialMsg, "can't have more than 2 peers") {
@@ -1472,7 +1647,7 @@ func (m *Manager) connectToEdgeView(config *zededa.SessionConfig) (*websocket.Co
 	if strings.HasPrefix(initialMsg, "YourEndPointIPAddr:") {
 		clientIP = strings.TrimPrefix(initialMsg, "YourEndPointIPAddr:")
 		clientIP = strings.TrimSpace(clientIP)
-		fmt.Printf("DEBUG: Extracted client IP: %s\n", clientIP)
+		debugf(label, "Extracted client IP: %s", clientIP)
 	}
 
 	// Store client IP in the connection for later use
@@ -1487,28 +1662,42 @@ func (m *Manager) connectToEdgeView(config *zededa.SessionConfig) (*websocket.Co
 	return wsConn, clientIP, nil
 }
 
-// attemptTunnelReconnect tries to re-establish the WebSocket connection for a tunnel
-// when the device goes offline. Returns true if successful.
+// attemptTunnelReconnect tries to re-establish the WebSocket connection for a
+// tunnel when the device goes offline. Returns true if successful.
+//
+// CAVEAT: this preserves the tunnel object (listener, channel registry) but
+// the underlying device-side TCP connection to the target was tied to the
+// old WebSocket — when we issue a fresh tcp/<target> command on the new WS,
+// the device opens a NEW TCP connection. Mid-session SSH bytes the local
+// client sends after reconnect will arrive at a fresh sshd that expects a
+// banner, so any active SSH session corrupts regardless. This function is
+// best-effort recovery; a proper fix would force-close all client TCP
+// connections on reconnect so they reconnect cleanly to the new tunnel.
+//
+// We hold wsMu for the entire reconnect cycle so TCP→WS senders block on
+// the mutex instead of seeing wsConn=nil and silently dropping packets.
 func (m *Manager) attemptTunnelReconnect(tunnel *Tunnel) bool {
 	const maxReconnectAttempts = 3
 	const reconnectDelay = 2 * time.Second
 
+	tunnel.wsMu.Lock()
+	defer tunnel.wsMu.Unlock()
+
 	for attempt := 1; attempt <= maxReconnectAttempts; attempt++ {
 		fmt.Printf("TUNNEL[%s] Reconnect attempt %d/%d\n", tunnel.ID, attempt, maxReconnectAttempts)
 
-		// Close old connection
-		tunnel.wsMu.Lock()
+		// Close old connection (mutex already held).
 		if tunnel.wsConn != nil {
 			tunnel.wsConn.Close()
 			tunnel.wsConn = nil
 		}
-		tunnel.wsMu.Unlock()
 
 		// Wait before reconnecting
 		time.Sleep(reconnectDelay * time.Duration(attempt))
 
 		// Try to establish new connection
-		wsConn, clientIP, err := m.connectToEdgeView(tunnel.config)
+		reconnectLabel := fmt.Sprintf("%s/reconnect-attempt%d", tunnel.ID, attempt)
+		wsConn, clientIP, err := m.connectToEdgeView(tunnel.config, reconnectLabel)
 		if err != nil {
 			fmt.Printf("TUNNEL[%s] Reconnect failed: %v\n", tunnel.ID, err)
 			continue
@@ -1529,18 +1718,17 @@ func (m *Manager) attemptTunnelReconnect(tunnel *Tunnel) bool {
 			continue
 		}
 
-		// Wait for tcpSetupOK
-		if err := m.waitForTcpSetupOK(wsConn, tunnel.config.Key, 30*time.Second, tunnel.config.Enc); err != nil {
+		// Wait for tcpSetupOK (reconnect path uses background ctx — there is
+		// no parallel race here, so per-probe 30s timeout is the only bound).
+		if err := m.waitForTcpSetupOK(context.Background(), wsConn, tunnel.config.Key, 30*time.Second, tunnel.config.Enc, reconnectLabel); err != nil {
 			fmt.Printf("TUNNEL[%s] Reconnect: tcpSetupOK failed: %v\n", tunnel.ID, err)
 			wsConn.Close()
 			continue
 		}
 
-		// Success! Update tunnel with new connection
-		tunnel.wsMu.Lock()
+		// Success! Install new connection (mutex still held).
 		tunnel.wsConn = wsConn
 		tunnel.clientIP = clientIP
-		tunnel.wsMu.Unlock()
 
 		fmt.Printf("TUNNEL[%s] Reconnect successful!\n", tunnel.ID)
 		return true
@@ -1562,6 +1750,7 @@ func (m *Manager) tunnelKeepAlive(ctx context.Context, tunnel *Tunnel) {
 	fmt.Printf("TUNNEL[%s] Keep-alive started (15s BinaryMessage)\n", tunnel.ID)
 
 	keepaliveCount := 0
+	var lastKeepaliveChan uint16 // tracks ChanNum hops between ticks
 	for {
 		select {
 		case <-ctx.Done():
@@ -1575,15 +1764,30 @@ func (m *Manager) tunnelKeepAlive(ctx context.Context, tunnel *Tunnel) {
 				continue
 			}
 
-			// Find an active channel if one exists, otherwise use 1
+			// Find an active channel if one exists, otherwise use 1.
+			// NOTE: Go map iteration is randomized — when multiple channels
+			// are active, we pick a different ChanNum on each tick, which
+			// shows up in the lastKeepaliveChan diff log below.
 			tunnel.channelMu.RLock()
 			var activeChan uint16 = 1
 			hasChannels := len(tunnel.channels) > 0
+			channelCount := len(tunnel.channels)
 			for chanNum := range tunnel.channels {
 				activeChan = chanNum
 				break
 			}
 			tunnel.channelMu.RUnlock()
+
+			// Diagnostic: log when the keep-alive's chosen ChanNum hops
+			// between ticks. Gated — useful when investigating multi-
+			// channel keep-alive routing behavior.
+			if activeChan != lastKeepaliveChan {
+				if debugTunnel {
+					fmt.Printf("[%s] TUNNEL[%s] Keep-alive ChanNum hop: %d -> %d (registered=%d)\n",
+						time.Now().Format("15:04:05.000"), tunnel.ID, lastKeepaliveChan, activeChan, channelCount)
+				}
+				lastKeepaliveChan = activeChan
+			}
 
 			// Only send keepalive if we have active channels (i.e. an active session using the tunnel)
 			// Sending keepalives to an idle tunnel might be confusing the device if it expects data.
@@ -1734,7 +1938,11 @@ func (m *Manager) tunnelWSReader(ctx context.Context, tunnel *Tunnel) {
 				ch, ok := tunnel.channels[td.ChanNum]
 				tunnel.channelMu.RUnlock()
 
-				if !ok {
+				if !ok && debugTunnel {
+					// After a TCP EOF the device often keeps sending
+					// keep-alive responses on the now-dead ChanNum for a
+					// while. In default verbosity this becomes log spam;
+					// only surface it when actively diagnosing.
 					fmt.Printf("TUNNEL[%s] ChanNum=%d: WARNING no channel registered, dropping %d bytes\n",
 						tunnel.ID, td.ChanNum, len(dataCopy))
 				}
@@ -1786,7 +1994,11 @@ func (m *Manager) tunnelAcceptLoop(ctx context.Context, listener net.Listener, t
 				tunnel.channels = make(map[uint16]chan []byte)
 			}
 			tunnel.channels[chanNum] = dataChan
+			channelTotal := len(tunnel.channels)
 			tunnel.channelMu.Unlock()
+
+			fmt.Printf("[%s] TUNNEL[%s] ChanNum=%d: registered (total active=%d, peer=%s)\n",
+				time.Now().Format("15:04:05.000"), tunnel.ID, chanNum, channelTotal, conn.RemoteAddr())
 
 			// Handle this TCP client
 			go m.handleSharedTunnelConnection(ctx, conn, tunnel, chanNum, dataChan)
@@ -1796,12 +2008,83 @@ func (m *Manager) tunnelAcceptLoop(ctx context.Context, listener net.Listener, t
 
 // handleSharedTunnelConnection handles a single TCP client using the shared WebSocket
 func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Conn, tunnel *Tunnel, chanNum uint16, dataChan chan []byte) {
+	startedAt := time.Now()
+	// tx = local TCP -> WS (toward device); rx = WS -> local TCP (toward client).
+	// Accessed from two goroutines (WS->TCP writes bytesRx; outer TCP->WS loop
+	// writes bytesTx; outer defer reads both), so use atomics.
+	var bytesTx, bytesRx int64
+
+	// Per-channel ring buffer of the last ringSize chunks forwarded WS->TCP
+	// (i.e. bytes from device to user's outer SSH client). Dumped on channel
+	// close so we can see exactly which bytes were flowing in the ~seconds
+	// preceding a "Bad packet length" SSH crash. Both goroutines touch ring
+	// state, so guard with ringMu.
+	type chunkRecord struct {
+		when time.Time
+		seq  int
+		n    int
+		hex  string // first 16 bytes hex-encoded
+	}
+	const ringSize = 16
+	var (
+		ring    [ringSize]chunkRecord
+		ringMu  sync.Mutex
+		ringIdx int // next slot to overwrite (== total chunks ever written)
+	)
+	recordChunk := func(seq, n int, data []byte) {
+		ringMu.Lock()
+		ring[ringIdx%ringSize] = chunkRecord{
+			when: time.Now(),
+			seq:  seq,
+			n:    n,
+			hex:  hexPrefixOf(data, 16),
+		}
+		ringIdx++
+		ringMu.Unlock()
+	}
+	dumpRing := func() {
+		if !debugTunnel {
+			return
+		}
+		ringMu.Lock()
+		total := ringIdx
+		// Walk the ring in chronological order: oldest entry is at
+		// ring[ringIdx % ringSize] when ringIdx >= ringSize, else at 0.
+		start := 0
+		count := total
+		if total > ringSize {
+			start = total - ringSize
+			count = ringSize
+		}
+		records := make([]chunkRecord, 0, count)
+		for i := 0; i < count; i++ {
+			records = append(records, ring[(start+i)%ringSize])
+		}
+		ringMu.Unlock()
+
+		if len(records) == 0 {
+			return
+		}
+		fmt.Printf("[%s] TUNNEL[%s] ChanNum=%d: WS->TCP last %d chunks before close (total chunks seen=%d):\n",
+			time.Now().Format("15:04:05.000"), tunnel.ID, chanNum, len(records), total)
+		for _, r := range records {
+			fmt.Printf("    [%s] #%d (%d bytes) hex=%s\n",
+				r.when.Format("15:04:05.000"), r.seq, r.n, r.hex)
+		}
+	}
+
 	defer func() {
 		conn.Close()
-		// Remove our channel
 		tunnel.channelMu.Lock()
 		delete(tunnel.channels, chanNum)
+		channelTotal := len(tunnel.channels)
 		tunnel.channelMu.Unlock()
+
+		fmt.Printf("[%s] TUNNEL[%s] ChanNum=%d: closed (lifetime=%v, tx=%d bytes, rx=%d bytes, remaining channels=%d)\n",
+			time.Now().Format("15:04:05.000"), tunnel.ID, chanNum,
+			time.Since(startedAt).Round(time.Millisecond),
+			atomic.LoadInt64(&bytesTx), atomic.LoadInt64(&bytesRx), channelTotal)
+		dumpRing()
 	}()
 
 	// For protocols like VNC that don't send data first, send an empty init packet
@@ -1847,11 +2130,11 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 
 		var lastPacket []byte
 		packetCount := 0
+		bannerSeen := false // tracks whether we've already forwarded an "SSH-..." banner
 		for {
 			select {
 			case data, ok := <-dataChan:
 				if !ok {
-					// fmt.Printf("TUNNEL[%s] ChanNum=%d: dataChan closed, WS->TCP ending\n", tunnel.ID, chanNum)
 					return // Channel closed
 				}
 
@@ -1859,7 +2142,6 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 				if bytes.Equal(data, lastPacket) {
 					// Check if it's an SSH version string
 					if len(data) > 4 && string(data[:4]) == "SSH-" {
-						// fmt.Printf("TUNNEL[%s] ChanNum=%d: Dropping duplicate SSH version string packet\n", tunnel.ID, chanNum)
 						continue
 					}
 				}
@@ -1868,10 +2150,69 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 
 				packetCount++
 
+				// Diagnostic instrumentation for the "Bad packet length"
+				// SSH-corruption-mid-session investigation. We expect to see
+				// the SSH banner once at session start. If the device
+				// re-launches its local TCP to sshd (e.g. because the device-
+				// side WS reconnected and CloseChan'd our channel), a fresh
+				// banner would be forwarded on the SAME ChanNum mid-session,
+				// landing in the user's already-encrypted SSH stream and
+				// triggering the outer SSH client's "Bad packet length".
+				//
+				// Always log first 3 chunks (baseline). Always check for
+				// "SSH-" prefix; if seen AFTER the initial banner, log a
+				// loud WARN that nails down the device-reconnect theory.
+				// Per-chunk diagnostic logging — gated. The ring buffer
+				// is only useful when actively diagnosing; recording on
+				// every chunk in steady-state production wastes mutex
+				// contention and log lines.
+				if debugTunnel {
+					recordChunk(packetCount, len(data), data)
+					if packetCount <= 3 {
+						fmt.Printf("[%s] TUNNEL[%s] ChanNum=%d: WS->TCP chunk #%d (%d bytes, hex=%s)\n",
+							time.Now().Format("15:04:05.000"), tunnel.ID, chanNum, packetCount, len(data), hexPrefixOf(data, 16))
+					} else if packetCount%50 == 0 {
+						fmt.Printf("[%s] TUNNEL[%s] ChanNum=%d: WS->TCP chunk #%d (%d bytes, hex=%s) [running rx=%d]\n",
+							time.Now().Format("15:04:05.000"), tunnel.ID, chanNum, packetCount, len(data), hexPrefixOf(data, 16), atomic.LoadInt64(&bytesRx))
+					}
+				}
+				if len(data) > 4 && string(data[:4]) == "SSH-" {
+					if bannerSeen {
+						// Confirmed via diagnostics: when our WS to the
+						// dispatcher dies and attemptTunnelReconnect
+						// re-establishes it (re-sending the tcp/<target>
+						// command), the device opens a FRESH local TCP to
+						// sshd. The sshd's first response is a banner —
+						// forwarding it into the user's already-encrypted
+						// SSH session would land random plaintext where the
+						// client expected encrypted continuation, yielding
+						// "Bad packet length 0xNNNN...".
+						//
+						// Close the local TCP so the user's outer SSH client
+						// sees a clean disconnect ("Connection closed by
+						// remote") instead of corrupted-stream death. The
+						// user can immediately reconnect through port 9001
+						// — the tunnel itself is healthy, only this channel
+						// is unrecoverable mid-session.
+						fmt.Printf("[%s] TUNNEL[%s] ChanNum=%d: !!! FRESH SSH BANNER MID-SESSION (chunk #%d, %d bytes, hex=%s) — closing local TCP to give user a clean disconnect (avoid forwarding banner into encrypted stream)\n",
+							time.Now().Format("15:04:05.000"), tunnel.ID, chanNum, packetCount, len(data), hexPrefixOf(data, 32))
+						tunnel.RecordRecovery(
+							"ws_reconnect_session_killed",
+							fmt.Sprintf("Tunnel WebSocket reconnected; SSH session on localhost:%d was severed and cannot be resumed transparently.", tunnel.LocalPort),
+						)
+						conn.Close() // unblocks the TCP->WS loop, triggers handleSharedTunnelConnection cleanup
+						return
+					}
+					fmt.Printf("[%s] TUNNEL[%s] ChanNum=%d: initial SSH banner forwarded (chunk #%d, %d bytes)\n",
+						time.Now().Format("15:04:05.000"), tunnel.ID, chanNum, packetCount, len(data))
+					bannerSeen = true
+				}
+
 				if _, err := conn.Write(data); err != nil {
 					fmt.Printf("TUNNEL[%s] ChanNum=%d: WS->TCP write error: %v\n", tunnel.ID, chanNum, err)
 					return
 				}
+				atomic.AddInt64(&bytesRx, int64(len(data)))
 			case <-ctx.Done():
 				// fmt.Printf("TUNNEL[%s] ChanNum=%d: Context done, WS->TCP ending\n", tunnel.ID, chanNum)
 				return
@@ -1927,7 +2268,7 @@ func (m *Manager) handleSharedTunnelConnection(ctx context.Context, conn net.Con
 
 				// Update stats
 				tunnel.AddBytesSent(n)
-
+				atomic.AddInt64(&bytesTx, int64(n))
 			}
 			if err != nil {
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {

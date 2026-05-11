@@ -676,20 +676,25 @@ func (s *HTTPServer) handleCloseTunnel(w http.ResponseWriter, r *http.Request) {
 // NOTE: Field names are capitalized to match the existing
 // frontend expectations (t.ID, t.NodeID, t.TargetIP, etc.).
 type TunnelInfo struct {
-	ID            string    `json:"ID"`
-	NodeID        string    `json:"NodeID"`
-	NodeName      string    `json:"NodeName,omitempty"`
-	ProjectID     string    `json:"ProjectID,omitempty"`
-	Type          string    `json:"Type"`
-	TargetIP      string    `json:"TargetIP"`
-	LocalPort     int       `json:"LocalPort"`
-	CreatedAt     time.Time `json:"CreatedAt"`
-	Status        string    `json:"Status,omitempty"`
-	Error         string    `json:"Error,omitempty"`
-	IsEncrypted   bool      `json:"IsEncrypted"`
-	BytesSent     int64     `json:"BytesSent"`
-	BytesReceived int64     `json:"BytesReceived"`
-	LastActivity  time.Time `json:"LastActivity"`
+	ID            string                 `json:"ID"`
+	NodeID        string                 `json:"NodeID"`
+	NodeName      string                 `json:"NodeName,omitempty"`
+	ProjectID     string                 `json:"ProjectID,omitempty"`
+	Type          string                 `json:"Type"`
+	TargetIP      string                 `json:"TargetIP"`
+	LocalPort     int                    `json:"LocalPort"`
+	CreatedAt     time.Time              `json:"CreatedAt"`
+	Status        string                 `json:"Status,omitempty"`
+	Error         string                 `json:"Error,omitempty"`
+	IsEncrypted   bool                   `json:"IsEncrypted"`
+	BytesSent     int64                  `json:"BytesSent"`
+	BytesReceived int64                  `json:"BytesReceived"`
+	LastActivity  time.Time              `json:"LastActivity"`
+	// LastRecovery is set when an in-flight client session on this tunnel
+	// was unrecoverably severed by a tunnel WS reconnect. Frontend uses it
+	// to surface an activity-log message and (for built-in terminals) drive
+	// auto-recovery.
+	LastRecovery  *session.RecoveryEvent `json:"LastRecovery,omitempty"`
 }
 
 func (s *HTTPServer) handleListTunnels(w http.ResponseWriter, r *http.Request) {
@@ -719,6 +724,7 @@ func (s *HTTPServer) handleListTunnels(w http.ResponseWriter, r *http.Request) {
 			BytesSent:     sent,
 			BytesReceived: received,
 			LastActivity:  lastActivity,
+			LastRecovery:  t.GetLastRecovery(),
 		})
 	}
 

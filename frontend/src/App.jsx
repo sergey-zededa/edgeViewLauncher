@@ -826,6 +826,9 @@ function App() {
             bytesSent: t.BytesSent || 0,
             bytesReceived: t.BytesReceived || 0,
             lastActivity: t.LastActivity ? new Date(t.LastActivity).getTime() : 0,
+            lastRecoveryAt: t.LastRecovery?.At ? new Date(t.LastRecovery.At).getTime() : 0,
+            lastRecoveryReason: t.LastRecovery?.Reason || '',
+            lastRecoveryDetail: t.LastRecovery?.Detail || '',
           };
         });
 
@@ -834,6 +837,7 @@ function App() {
           const prevForNode = prev.filter(t => t.nodeId === selectedNode.id);
           const prevIds = new Set(prevForNode.map(t => t.id));
           const newIds = new Set(mapped.map(t => t.id));
+          const prevById = new Map(prevForNode.map(t => [t.id, t]));
 
           // New tunnels detected by polling
           mapped.forEach(t => {
@@ -842,8 +846,25 @@ function App() {
             }
           });
 
+          // Recovery events: an in-flight SSH session was severed by a tunnel
+          // WS reconnect. Surface a clear activity-log message; built-in
+          // TerminalView windows handle their own auto-recovery.
+          mapped.forEach(t => {
+            if (!t.lastRecoveryAt) return;
+            const prevT = prevById.get(t.id);
+            const prevAt = prevT?.lastRecoveryAt || 0;
+            if (t.lastRecoveryAt > prevAt) {
+              const detail = t.lastRecoveryDetail || `SSH session on localhost:${t.localPort} was severed.`;
+              addLog(
+                `${detail} ` +
+                `External terminal: reconnect with \`ssh -p ${t.localPort} root@localhost\`. ` +
+                `Built-in terminal: will auto-reconnect.`,
+                'error'
+              );
+            }
+          });
+
           // Tunnels that transitioned to failed state
-          const prevById = new Map(prevForNode.map(t => [t.id, t]));
           mapped
             .filter(t => t.status === 'failed')
             .forEach(t => {
@@ -931,12 +952,33 @@ function App() {
             bytesSent: t.BytesSent || 0,
             bytesReceived: t.BytesReceived || 0,
             lastActivity: t.LastActivity ? new Date(t.LastActivity).getTime() : 0,
+            lastRecoveryAt: t.LastRecovery?.At ? new Date(t.LastRecovery.At).getTime() : 0,
+            lastRecoveryReason: t.LastRecovery?.Reason || '',
+            lastRecoveryDetail: t.LastRecovery?.Detail || '',
           };
         });
 
         setActiveTunnels(prev => {
-          // Preserve username from previous state (not returned by backend)
           const prevById = new Map(prev.map(t => [t.id, t]));
+
+          // Recovery events from the global poll path too (covers tunnels
+          // for nodes the user isn't currently focused on).
+          mapped.forEach(t => {
+            if (!t.lastRecoveryAt) return;
+            const prevT = prevById.get(t.id);
+            const prevAt = prevT?.lastRecoveryAt || 0;
+            if (t.lastRecoveryAt > prevAt) {
+              const detail = t.lastRecoveryDetail || `SSH session on localhost:${t.localPort} was severed.`;
+              addLog(
+                `${detail} ` +
+                `External terminal: reconnect with \`ssh -p ${t.localPort} root@localhost\`. ` +
+                `Built-in terminal: will auto-reconnect.`,
+                'error'
+              );
+            }
+          });
+
+          // Preserve username from previous state (not returned by backend)
           return mapped.map(t => ({
             ...t,
             username: prevById.get(t.id)?.username || '',
@@ -4940,8 +4982,9 @@ Do you want to try connecting anyway?`)) {
                                         return;
                                       }
                                       if (tunnelLoading) return;
-                                      const ip = app.ips && app.ips.length > 0 ? app.ips[0] : '127.0.0.1';
-                                      setTcpTunnelConfig({ ip, appName: app.name, containers: app.containers });
+                                      const allIps = app.ips && app.ips.length > 0 ? app.ips : ['127.0.0.1'];
+                                      const ip = allIps[0];
+                                      setTcpTunnelConfig({ ip, allIps, appName: app.name, containers: app.containers });
                                       setTcpIpInput(ip);
                                       setTcpPortInput('80');
                                       setTcpError('');
@@ -5002,11 +5045,36 @@ Do you want to try connecting anyway?`)) {
                 >
                   <div className="form-group">
                     <label>Target IP</label>
-                    <input
-                      type="text"
-                      value={tcpIpInput}
-                      onChange={(e) => setTcpIpInput(e.target.value)}
-                    />
+                    {tcpTunnelConfig.allIps && tcpTunnelConfig.allIps.length > 1 ? (
+                      <select
+                        value={tcpIpInput}
+                        onChange={(e) => setTcpIpInput(e.target.value)}
+                        style={{
+                          background: 'var(--bg-surface)',
+                          color: 'var(--text-primary)',
+                          border: '1px solid var(--border-subtle)',
+                          borderRadius: '4px',
+                          padding: '2px 6px',
+                          fontSize: '13px',
+                          fontFamily: 'monospace',
+                          cursor: 'pointer',
+                          width: '100%'
+                        }}
+                      >
+                        {tcpTunnelConfig.allIps.map(ip => (
+                          <option key={ip} value={ip}>{ip}</option>
+                        ))}
+                      </select>
+                    ) : tcpTunnelConfig.allIps && tcpTunnelConfig.allIps.length === 1 ? (
+                      <span className="data-value-code">{tcpIpInput}</span>
+                    ) : (
+                      <input
+                        type="text"
+                        value={tcpIpInput}
+                        onChange={(e) => setTcpIpInput(e.target.value)}
+                        placeholder="192.168.1.10"
+                      />
+                    )}
                   </div>
 
                   <div className="form-group">

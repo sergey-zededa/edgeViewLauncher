@@ -1,6 +1,6 @@
 [package]
 name = "edgeview-launcher"
-version = "0.2.4"
+version = "0.2.5"
 description = "EdgeView Launcher – desktop client for ZEDEDA edge devices"
 authors = ["ZEDEDA <support@zededa.com>"]
 edition = "2021"

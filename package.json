@@ -1,6 +1,6 @@
 {
   "name": "edgeview-launcher",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "EdgeView Launcher - Desktop client for ZEDEDA edge devices",
   "scripts": {
     "start": "tauri dev",

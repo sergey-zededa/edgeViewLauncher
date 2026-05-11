@@ -884,3 +884,136 @@ Applog disabled: true
 		t.Fatalf("failed to marshal enrichment to JSON: %v", err)
 	}
 }
+
+// --- sortIPv4First ---
+
+func TestSortIPv4First_MixedFamilies(t *testing.T) {
+	in := []string{"fd00::1", "127.0.0.1", "192.168.1.10", "fe80::1"}
+	got := sortIPv4First(in)
+	want := []string{"127.0.0.1", "192.168.1.10", "fd00::1", "fe80::1"}
+	if !equalStrings(got, want) {
+		t.Errorf("sortIPv4First(%v)\n  got:  %v\n  want: %v", in, got, want)
+	}
+}
+
+func TestSortIPv4First_AllIPv4_Unchanged(t *testing.T) {
+	in := []string{"127.0.0.1", "10.0.0.1", "192.168.1.10"}
+	got := sortIPv4First(in)
+	if !equalStrings(got, in) {
+		t.Errorf("expected unchanged, got %v", got)
+	}
+}
+
+func TestSortIPv4First_AllIPv6_Unchanged(t *testing.T) {
+	in := []string{"::1", "fd00::1", "fe80::1"}
+	got := sortIPv4First(in)
+	if !equalStrings(got, in) {
+		t.Errorf("expected unchanged, got %v", got)
+	}
+}
+
+func TestSortIPv4First_IPv4MappedTreatedAsIPv4(t *testing.T) {
+	in := []string{"fd00::1", "::ffff:192.0.2.1"}
+	got := sortIPv4First(in)
+	want := []string{"::ffff:192.0.2.1", "fd00::1"}
+	if !equalStrings(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestSortIPv4First_HandlesGarbageGracefully(t *testing.T) {
+	in := []string{"not-an-ip", "10.0.0.1"}
+	got := sortIPv4First(in)
+	want := []string{"10.0.0.1", "not-an-ip"}
+	if !equalStrings(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+// TestConnectToNode_PrefersIPv4ManagementIPs verifies that when the device
+// status returns IPv6 ahead of IPv4 in its NetStatusList, ConnectToNode
+// reorders the candidate list so IPv4 (loopback first, then mgmt IPv4)
+// reaches StartProxyMulti before IPv6. Routable IPv6 (fd00::/8 here) is kept
+// at the back; link-local IPv6 (fe80::/10) is dropped entirely by the
+// dropLinkLocalIPv6 step that runs before the sort.
+func TestConnectToNode_PrefersIPv4ManagementIPs(t *testing.T) {
+	fakeClient := &fakeZededaClient{
+		initSessionScript: "edgeview -token tok",
+		parseCfg:          &zededa.SessionConfig{URL: "wss://example", Token: "tok", MaxInst: 2},
+		deviceStatus: &zededa.DeviceStatus{
+			NetStatusList: []zededa.NetStatus{
+				// IPv6 first in the API response — this is exactly the
+				// pathological order the sort exists to fix. fe80::1 is
+				// link-local and should be dropped before the sort runs.
+				{Up: true, IfName: "eth0", IPs: []string{"fd00::5", "192.168.1.10"}},
+				{Up: true, IfName: "eth1", IPs: []string{"fe80::1", "10.0.0.5"}},
+			},
+		},
+	}
+	fakeSess := &fakeSessionManager{
+		startProxyPort: 9001,
+		startProxyID:   "tunnel-v4",
+	}
+
+	a := newTestApp(fakeClient, fakeSess)
+	if _, _, err := a.ConnectToNode("node-v4-pref", true); err != nil {
+		t.Fatalf("ConnectToNode returned error: %v", err)
+	}
+
+	got := fakeSess.lastMultiCandidateIPs
+	want := []string{"127.0.0.1", "192.168.1.10", "10.0.0.5", "fd00::5"}
+	if !equalStrings(got, want) {
+		t.Errorf("candidate IP order:\n  got:  %v\n  want: %v", got, want)
+	}
+}
+
+// --- dropLinkLocalIPv6 ---
+
+func TestDropLinkLocalIPv6_RemovesFe80(t *testing.T) {
+	in := []string{"127.0.0.1", "fe80::1", "192.168.1.1", "fe80::ab38:13eb:e4c5:8b8e"}
+	got := dropLinkLocalIPv6(in)
+	want := []string{"127.0.0.1", "192.168.1.1"}
+	if !equalStrings(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestDropLinkLocalIPv6_KeepsRoutableIPv6(t *testing.T) {
+	in := []string{"fd00::5", "::1", "2001:db8::1"}
+	got := dropLinkLocalIPv6(in)
+	if !equalStrings(got, in) {
+		t.Errorf("expected unchanged, got %v", got)
+	}
+}
+
+func TestDropLinkLocalIPv6_KeepsIPv4LinkLocalAndGarbage(t *testing.T) {
+	// 169.254.0.0/16 is IPv4 link-local but we explicitly only filter IPv6
+	// here; non-IP strings pass through too (the upstream sort sends them
+	// to the IPv6 bucket where they fail probing harmlessly).
+	in := []string{"169.254.1.5", "not-an-ip", "10.0.0.1"}
+	got := dropLinkLocalIPv6(in)
+	if !equalStrings(got, in) {
+		t.Errorf("expected unchanged, got %v", got)
+	}
+}
+
+func TestDropLinkLocalIPv6_HandlesEmpty(t *testing.T) {
+	if got := dropLinkLocalIPv6(nil); len(got) != 0 {
+		t.Errorf("nil input should yield empty result, got %v", got)
+	}
+	if got := dropLinkLocalIPv6([]string{}); len(got) != 0 {
+		t.Errorf("empty input should yield empty result, got %v", got)
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
