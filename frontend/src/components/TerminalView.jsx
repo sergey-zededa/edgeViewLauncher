@@ -112,7 +112,12 @@ const TerminalView = ({ port }) => {
         term.loadAddon(fitAddon);
         term.loadAddon(new WebLinksAddon());
 
-        // Handle Copy/Paste
+        // Handle Copy only — paste is handled natively by xterm via the
+        // browser's paste event on its hidden textarea, which fires
+        // `term.onData(text)` exactly once. We previously also read the
+        // clipboard here on Ctrl/Cmd-V and sent it manually, which
+        // duplicated (sometimes tripled) the pasted text. Right-click paste
+        // works because it only fires the native paste event.
         const handleKeyDown = (e) => {
             const ctrlOrCmd = e.ctrlKey || e.metaKey;
             const key = e.key.toLowerCase();
@@ -127,17 +132,6 @@ const TerminalView = ({ port }) => {
                 return true; // Allow default (SIGINT) if no selection
             }
 
-            if (ctrlOrCmd && key === 'v') {
-                // Paste
-                navigator.clipboard.readText().then(text => {
-                    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                        wsRef.current.send(JSON.stringify({ type: 'input', data: text }));
-                    }
-                }).catch(err => {
-                    console.error('Failed to read clipboard:', err);
-                });
-                return false; // Prevent default browser paste
-            }
             return true;
         };
 

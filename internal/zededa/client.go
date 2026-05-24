@@ -726,12 +726,12 @@ func (c *Client) UpdateEdgeViewExternalPolicy(nodeID string, enable bool) error 
 
 	device["edgeviewconfig"] = evConfig
 
-	// 3. Update Device
-	if err := c.UpdateDevice(nodeID, device); err != nil {
-		return fmt.Errorf("failed to update device config: %w", err)
-	}
-
-	return nil
+	// 3. Update Device. We do NOT wrap the returned error here — UpdateDevice
+	// already produces a user-readable "ZEDEDA Cloud rejected the request:
+	// <reason>" message. Wrapping would just stack redundant prefixes in
+	// the toast (e.g. "Failed to disable external policy: failed to update
+	// device config: ZEDEDA Cloud rejected the request: …").
+	return c.UpdateDevice(nodeID, device)
 }
 
 type SessionConfig struct {
@@ -936,10 +936,54 @@ func (c *Client) UpdateDevice(nodeID string, device map[string]interface{}) erro
 
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("failed to update device (status %d): %s", resp.StatusCode, string(body))
+		return fmt.Errorf("%s", formatCloudError(resp.StatusCode, body))
 	}
 
 	return nil
+}
+
+// formatCloudError extracts a human-readable message from a ZEDEDA Cloud
+// operation-response envelope. The cloud rejects mutating requests with a
+// JSON body shaped like:
+//
+//	{
+//	  "operationType": "OPS_TYPE_UPDATE",
+//	  "operationStatus": "OPS_STATUS_FAILED",
+//	  "httpStatusCode": 400,
+//	  "error": [ { "ec": "BadReqBody", "details": "<reason>" }, ... ]
+//	}
+//
+// We pull the `error[].details` field(s) out and return just that, so the
+// UI doesn't have to render a wall of JSON. Falls back to the raw body if
+// the response doesn't match this shape.
+func formatCloudError(status int, body []byte) string {
+	var env struct {
+		Error []struct {
+			Details string `json:"details"`
+			EC      string `json:"ec"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &env); err == nil && len(env.Error) > 0 {
+		parts := make([]string, 0, len(env.Error))
+		for _, e := range env.Error {
+			d := strings.TrimSpace(e.Details)
+			if d == "" {
+				d = e.EC
+			}
+			if d != "" {
+				parts = append(parts, d)
+			}
+		}
+		if len(parts) > 0 {
+			return fmt.Sprintf("ZEDEDA Cloud rejected the request (HTTP %d): %s", status, strings.Join(parts, "; "))
+		}
+	}
+	// Couldn't parse — fall back to truncated raw body so the toast isn't a wall of JSON.
+	raw := strings.TrimSpace(string(body))
+	if len(raw) > 300 {
+		raw = raw[:300] + "…"
+	}
+	return fmt.Sprintf("ZEDEDA Cloud rejected the request (HTTP %d): %s", status, raw)
 }
 
 // AddSSHKeyToDevice adds the public key to the device configuration
@@ -1582,4 +1626,65 @@ func (c *Client) VerifyToken(token string) (*TokenInfo, error) {
 		LastLogin: lastLogin,
 		RawData:   result, // Store full response for future use
 	}, nil
+}
+
+// ProbeResult is returned by ProbeBaseURL to indicate whether the given URL
+// looks like a reachable ZEDEDA controller. The HTTP status, when set, is
+// the response code we got from /api/v1/users/self with no auth header —
+// 401 is the expected case and is treated as confirmation that this is a
+// ZEDEDA endpoint.
+type ProbeResult struct {
+	OK         bool   `json:"ok"`
+	Status     int    `json:"status,omitempty"`
+	Detail     string `json:"detail,omitempty"`
+	IsZededa   bool   `json:"isZededa"`
+}
+
+// ProbeBaseURL checks whether baseURL points at something that responds
+// like a ZEDEDA controller. It does an unauthenticated GET to
+// /api/v1/users/self with a short timeout and considers the URL valid if
+// we got an HTTP response (any code) whose Content-Type is JSON or whose
+// status is 401/403 — both indicate a ZEDEDA-shaped API. Network errors,
+// DNS failures, or non-JSON responses (e.g. typo'd domain serving HTML)
+// are treated as "not a ZEDEDA endpoint".
+func ProbeBaseURL(baseURL string) ProbeResult {
+	res := ProbeResult{}
+	reqURL, err := security.BuildAPIURL(baseURL, "/api/v1/users/self")
+	if err != nil {
+		res.Detail = err.Error()
+		return res
+	}
+
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "tcp4", addr)
+	}
+	transport.TLSClientConfig = &tls.Config{NextProtos: []string{"http/1.1"}}
+	client := &http.Client{Timeout: 8 * time.Second, Transport: transport}
+
+	req, err := http.NewRequest("GET", reqURL, nil)
+	if err != nil {
+		res.Detail = err.Error()
+		return res
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		res.Detail = err.Error()
+		return res
+	}
+	defer resp.Body.Close()
+
+	res.OK = true
+	res.Status = resp.StatusCode
+
+	ct := strings.ToLower(resp.Header.Get("Content-Type"))
+	isJSON := strings.Contains(ct, "application/json")
+	// 401/403 is the expected unauthenticated response from ZEDEDA. Any
+	// JSON body is also a strong signal. Either makes us confident this
+	// is a real ZEDEDA controller. A 200 with HTML, by contrast, almost
+	// certainly means a typo that landed on someone else's web server.
+	if isJSON || resp.StatusCode == 401 || resp.StatusCode == 403 {
+		res.IsZededa = true
+	}
+	return res
 }

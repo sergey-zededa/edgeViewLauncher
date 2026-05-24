@@ -125,6 +125,9 @@ export const GetProjects = () =>
 export const VerifyToken = (token, baseUrl) =>
     apiCall('/api/verify-token', 'POST', { token, baseUrl }).then(r => r?.data);
 
+export const ProbeBaseUrl = (baseUrl) =>
+    apiCall('/api/probe-base-url', 'POST', { baseUrl }).then(r => r?.data);
+
 // ── Collect Info ──────────────────────────────────────────────────────────────
 
 export const StartCollectInfo = (nodeId) =>
