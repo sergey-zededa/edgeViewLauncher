@@ -1647,6 +1647,17 @@ type ProbeResult struct {
 // status is 401/403 — both indicate a ZEDEDA-shaped API. Network errors,
 // DNS failures, or non-JSON responses (e.g. typo'd domain serving HTML)
 // are treated as "not a ZEDEDA endpoint".
+//
+// Security note: baseURL is user-supplied (typed into the Settings →
+// Cluster Base URL field) and we validate scheme + host via
+// security.BuildAPIURL before issuing the request. This will trigger
+// CodeQL's go/request-forgery query (URL "depends on a user-provided
+// value") — that alert is accepted in this codebase under the same
+// threat model documented at internal/security/url.go: the user is the
+// only entity who configures the cluster URL and they are sending their
+// own credentials to their own chosen endpoint, so there is no
+// untrusted attacker in the request path. See dismissed alerts on
+// PR #83 for prior history.
 func ProbeBaseURL(baseURL string) ProbeResult {
 	res := ProbeResult{}
 	reqURL, err := security.BuildAPIURL(baseURL, "/api/v1/users/self")
