@@ -3,7 +3,16 @@ import { createPortal } from 'react-dom';
 import { Copy, Check, ExternalLink } from 'lucide-react';
 import { openExternal } from '../tauriAPI';
 
-const Tooltip = ({ text, children, position = 'top', simple = false, helpUrl = null, helpLabel = null, usePortal = false }) => {
+// Default delay (ms) before a tooltip appears on hover. 500 ms is the
+// sweet spot most design systems land on (Material, Atlassian, Fluent UI
+// all sit between 400–700 ms) — long enough that tooltips don't flash
+// while the cursor is just passing over controls, short enough that
+// users who do want help don't feel the UI is sluggish. macOS's native
+// help-tag default is ~750 ms; we pick 500 ms because tooltip content
+// here is action-oriented rather than purely supplemental help text.
+const DEFAULT_OPEN_DELAY = 500;
+
+const Tooltip = ({ text, children, position = 'top', simple = false, helpUrl = null, helpLabel = null, usePortal = false, openDelay = DEFAULT_OPEN_DELAY }) => {
     const [isVisible, setIsVisible] = useState(false);
     const [adjustedPosition, setAdjustedPosition] = useState(position);
     const [offset, setOffset] = useState({ left: '50%', transform: 'translateX(-50%)' });
@@ -11,7 +20,12 @@ const Tooltip = ({ text, children, position = 'top', simple = false, helpUrl = n
     const [portalPos, setPortalPos] = useState(null);
     const tooltipRef = useRef(null);
     const containerRef = useRef(null);
-    const timeoutRef = useRef(null);
+    // Pending "hide" timeout (so the tooltip lingers briefly when the
+    // mouse crosses the gap between trigger and the interactive panel).
+    const hideTimeoutRef = useRef(null);
+    // Pending "show" timeout — kept separately so a quick mouse-out can
+    // cancel a not-yet-fired show without affecting hide scheduling.
+    const showTimeoutRef = useRef(null);
 
     // Determine if we should show copy button (if text length > 50 chars and not simple mode)
     const showCopy = !simple && !helpUrl && typeof text === 'string' && text.length > 50;
@@ -29,17 +43,39 @@ const Tooltip = ({ text, children, position = 'top', simple = false, helpUrl = n
     };
 
     const handleMouseEnter = () => {
-        if (timeoutRef.current) {
-            clearTimeout(timeoutRef.current);
-            timeoutRef.current = null;
+        // Any pending hide cancels: user came back before the close
+        // grace period expired, keep the tooltip up.
+        if (hideTimeoutRef.current) {
+            clearTimeout(hideTimeoutRef.current);
+            hideTimeoutRef.current = null;
         }
-        setIsVisible(true);
+        // Already visible (e.g. cursor moved from trigger into the
+        // tooltip body for an interactive tooltip) — no need to
+        // re-schedule the show timer.
+        if (isVisible) return;
+        // Avoid stacking show timers if the user wiggles in/out fast.
+        if (showTimeoutRef.current) return;
+        showTimeoutRef.current = setTimeout(() => {
+            showTimeoutRef.current = null;
+            setIsVisible(true);
+        }, openDelay);
     };
 
     const handleMouseLeave = () => {
-        // Simple tooltips close immediately, interactive ones (with links or copy) have delay
+        // Cancel a pending show — the user moved away before the
+        // open delay elapsed, so the tooltip should never appear.
+        if (showTimeoutRef.current) {
+            clearTimeout(showTimeoutRef.current);
+            showTimeoutRef.current = null;
+            return;
+        }
+        // Simple tooltips close immediately, interactive ones (with
+        // links or copy) get a short grace period so the cursor can
+        // bridge the gap between trigger and tooltip body without
+        // dismissing the panel.
         const delay = (simple && !helpUrl) ? 0 : 300;
-        timeoutRef.current = setTimeout(() => {
+        hideTimeoutRef.current = setTimeout(() => {
+            hideTimeoutRef.current = null;
             setIsVisible(false);
             if (copied) setTimeout(() => setCopied(false), 300);
         }, delay);
@@ -47,7 +83,8 @@ const Tooltip = ({ text, children, position = 'top', simple = false, helpUrl = n
 
     useEffect(() => {
         return () => {
-            if (timeoutRef.current) clearTimeout(timeoutRef.current);
+            if (showTimeoutRef.current) clearTimeout(showTimeoutRef.current);
+            if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
         };
     }, []);
 

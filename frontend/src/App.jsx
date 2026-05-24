@@ -197,6 +197,10 @@ const PortComboBox = ({ value, onChange, exposedPorts = [], showCommonPorts = tr
       <input
         ref={inputRef}
         type="text"
+        autoComplete="off"
+        autoCorrect="off"
+        autoCapitalize="off"
+        spellCheck={false}
         value={value}
         onChange={(e) => {
           onChange(e.target.value);
@@ -3110,6 +3114,10 @@ Do you want to try connecting anyway?`)) {
           <input
             autoFocus={!showSettings}
             type="text"
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
             placeholder="Search nodes, projects..."
             className="search-input"
             value={query}
@@ -3362,11 +3370,14 @@ Do you want to try connecting anyway?`)) {
                     <Search size={12} className="cluster-search-icon" />
                     <input
                       type="text"
+                      autoComplete="off"
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      spellCheck={false}
                       className="cluster-search-input"
                       placeholder="Search clusters..."
                       value={clusterFilter}
                       onChange={(e) => setClusterFilter(e.target.value)}
-                      spellCheck={false}
                     />
                     {clusterFilter && (
                       <button
@@ -3521,6 +3532,10 @@ Do you want to try connecting anyway?`)) {
                   </Tooltip>
                   <input
                     type="text"
+                    autoComplete="off"
+                    autoCorrect="off"
+                    autoCapitalize="off"
+                    spellCheck={false}
                     value={editingCluster.name}
                     onChange={(e) => setEditingCluster({ ...editingCluster, name: e.target.value })}
                     placeholder="e.g. Production, Staging"
@@ -3533,6 +3548,10 @@ Do you want to try connecting anyway?`)) {
                   <div ref={baseUrlPresetsRef} style={{ position: 'relative', width: '100%' }}>
                     <input
                       type="text"
+                      autoComplete="off"
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      spellCheck={false}
                       value={editingCluster.baseUrl}
                       onChange={(e) => {
                         setEditingCluster({ ...editingCluster, baseUrl: e.target.value });
@@ -4666,6 +4685,10 @@ Do you want to try connecting anyway?`)) {
                                                 </div>
                                                 <input
                                                   type="text"
+                                                  autoComplete="off"
+                                                  autoCorrect="off"
+                                                  autoCapitalize="off"
+                                                  spellCheck={false}
                                                   value={sshPopover.username}
                                                   onChange={(e) => setSshPopover({ ...sshPopover, username: e.target.value })}
                                                   placeholder="Username"
@@ -4795,6 +4818,10 @@ Do you want to try connecting anyway?`)) {
                                           </div>
                                           <input
                                             type="text"
+                                            autoComplete="off"
+                                            autoCorrect="off"
+                                            autoCapitalize="off"
+                                            spellCheck={false}
                                             value={diagPrompt.username}
                                             onChange={e => setDiagPrompt(prev => ({ ...prev, username: e.target.value }))}
                                             placeholder="Username (e.g. ubuntu)"
@@ -4822,6 +4849,10 @@ Do you want to try connecting anyway?`)) {
                                           <input
                                             id="diag-password-input"
                                             type="password"
+                                            autoComplete="new-password"
+                                            autoCorrect="off"
+                                            autoCapitalize="off"
+                                            spellCheck={false}
                                             value={diagPrompt.password}
                                             onChange={e => setDiagPrompt(prev => ({ ...prev, password: e.target.value }))}
                                             placeholder="Password"
@@ -4991,6 +5022,10 @@ Do you want to try connecting anyway?`)) {
                                                 </div>
                                                 <input
                                                   type="text"
+                                                  autoComplete="off"
+                                                  autoCorrect="off"
+                                                  autoCapitalize="off"
+                                                  spellCheck={false}
                                                   value={shellPrompt.username}
                                                   onChange={(e) => setShellPrompt({ ...shellPrompt, username: e.target.value })}
                                                   placeholder="Username (e.g. ubuntu)"
@@ -5019,6 +5054,10 @@ Do you want to try connecting anyway?`)) {
                                                 <input
                                                   id={`shell-pass-${c.containerName}`}
                                                   type="password"
+                                                  autoComplete="new-password"
+                                                  autoCorrect="off"
+                                                  autoCapitalize="off"
+                                                  spellCheck={false}
                                                   value={shellPrompt.password || ''}
                                                   onChange={(e) => setShellPrompt({ ...shellPrompt, password: e.target.value })}
                                                   placeholder="Password (optional)"
@@ -5299,6 +5338,10 @@ Do you want to try connecting anyway?`)) {
                     ) : (
                       <input
                         type="text"
+                        autoComplete="off"
+                        autoCorrect="off"
+                        autoCapitalize="off"
+                        spellCheck={false}
                         value={tcpIpInput}
                         onChange={(e) => setTcpIpInput(e.target.value)}
                         placeholder="192.168.1.10"
@@ -5395,6 +5438,10 @@ Do you want to try connecting anyway?`)) {
                       <label>Username</label>
                       <input
                         type="text"
+                        autoComplete="off"
+                        autoCorrect="off"
+                        autoCapitalize="off"
+                        spellCheck={false}
                         value={sshUser}
                         onChange={(e) => setSshUser(e.target.value)}
                         placeholder="root"
@@ -5415,6 +5462,10 @@ Do you want to try connecting anyway?`)) {
                     <label>Password (Optional)</label>
                     <input
                       type="password"
+                      autoComplete="new-password"
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      spellCheck={false}
                       value={sshPassword}
                       onChange={(e) => setSshPassword(e.target.value)}
                       placeholder="Leave empty for interactive password prompt"
