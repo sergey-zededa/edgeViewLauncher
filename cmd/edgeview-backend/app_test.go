@@ -87,7 +87,7 @@ func (f *fakeZededaClient) GetEdgeViewStatus(nodeID string) (*zededa.EdgeViewSta
 	}
 	return f.edgeStatus, nil
 }
-func (f *fakeZededaClient) DisableSSH(nodeID string) error { return f.disableErr }
+func (f *fakeZededaClient) DisableSSH(nodeID, ourKey string) error { return f.disableErr }
 func (f *fakeZededaClient) StopEdgeView(nodeID string) error {
 	return f.stopErr
 }

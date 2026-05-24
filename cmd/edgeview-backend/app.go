@@ -31,7 +31,7 @@ type zededaAPI interface {
 	ParseEdgeViewToken(token string) (*zededa.SessionConfig, error)
 	AddSSHKeyToDevice(nodeID, pubKey string) error
 	GetEdgeViewStatus(nodeID string) (*zededa.EdgeViewStatus, error)
-	DisableSSH(nodeID string) error
+	DisableSSH(nodeID, ourKey string) error
 	StopEdgeView(nodeID string) error
 	StartEdgeView(nodeID string) error
 	SetVGAEnabled(nodeID string, enabled bool) error
@@ -1009,6 +1009,22 @@ type SSHStatus struct {
 	IsEncrypted    bool     `json:"isEncrypted"`
 	ExternalPolicy bool     `json:"externalPolicy"`
 	ManagementIPs  []string `json:"managementIPs"`
+	// AuthorizedKeys is the parsed list of keys currently in
+	// debug.enable.ssh on the device. Used by the audit panel in the UI;
+	// the entry with IsLauncherKey=true is the one this launcher manages.
+	AuthorizedKeys []AuthorizedKeyInfo `json:"authorizedKeys"`
+}
+
+// AuthorizedKeyInfo is the audit-friendly view of one SSH key listed on
+// the device. We expose type / fingerprint / comment rather than the full
+// blob to keep the UI compact while still allowing an operator to verify
+// the key with `ssh-keygen -lf authorized_keys`.
+type AuthorizedKeyInfo struct {
+	Type           string `json:"type"`
+	Fingerprint    string `json:"fingerprint"`
+	Comment        string `json:"comment"`
+	IsLauncherKey  bool   `json:"isLauncherKey"`
+	Valid          bool   `json:"valid"`
 }
 
 // GetSSHStatus returns the current SSH status of the node
@@ -1020,28 +1036,51 @@ func (a *App) GetSSHStatus(nodeID string) *SSHStatus {
 		return &SSHStatus{Status: "unknown"}
 	}
 
-	status := "disabled"
-	if evStatus.SSHKey != "" {
-		status = "enabled"
+	// Parse the device's authorized-keys value into a list. The string
+	// stored in debug.enable.ssh is written verbatim to the device's
+	// /run/authorized_keys, so it can carry many keys — only some of
+	// which are ours.
+	parsedKeys := zededa.ParseAuthorizedKeys(evStatus.SSHKey)
+
+	var localPubKey string
+	if _, lk, err := ssh.EnsureSSHKey(); err == nil {
+		localPubKey = lk
+	} else {
+		fmt.Printf("Warning: Failed to load local SSH key: %v\n", err)
+	}
+	launcherID := ""
+	if localPubKey != "" {
+		if lk := zededa.ParseAuthorizedKeys(localPubKey); len(lk) > 0 && lk[0].Valid {
+			launcherID = lk[0].Identity()
+		}
 	}
 
-	// Check for key mismatch
-	if status == "enabled" {
-		_, localPubKey, err := ssh.EnsureSSHKey()
-		if err == nil {
-			// Normalize keys for comparison (trim whitespace)
-			deviceKey := strings.TrimSpace(evStatus.SSHKey)
-			localKey := strings.TrimSpace(localPubKey)
-
-			// Simple comparison - if they don't match, it's a mismatch
-			// Note: This assumes the key type and content are identical strings.
-			// For more robust comparison we might need to parse them, but exact string match is usually sufficient for keys generated/managed by this tool.
-			if deviceKey != localKey {
-				status = "mismatch"
-			}
+	// status is:
+	//   "disabled"  -> field is empty/whitespace
+	//   "enabled"   -> our key is one of the lines
+	//   "mismatch"  -> device has keys, but ours is not among them
+	status := "disabled"
+	if len(parsedKeys) > 0 {
+		if launcherID != "" && containsIdentity(parsedKeys, launcherID) {
+			status = "enabled"
 		} else {
-			fmt.Printf("Warning: Failed to get local SSH key for comparison: %v\n", err)
+			status = "mismatch"
 		}
+	}
+
+	// Audit-friendly list for the UI.
+	authorizedKeys := make([]AuthorizedKeyInfo, 0, len(parsedKeys))
+	for _, k := range parsedKeys {
+		info := AuthorizedKeyInfo{
+			Type:        k.Type,
+			Fingerprint: k.Fingerprint,
+			Comment:     k.Comment,
+			Valid:       k.Valid,
+		}
+		if launcherID != "" && k.Valid && k.Identity() == launcherID {
+			info.IsLauncherKey = true
+		}
+		authorizedKeys = append(authorizedKeys, info)
 	}
 
 	sshStatus := &SSHStatus{
@@ -1055,6 +1094,7 @@ func (a *App) GetSSHStatus(nodeID string) *SSHStatus {
 		ConsoleEnabled: evStatus.ConsoleEnabled,
 		IsEncrypted:    evStatus.IsEncrypted,
 		ExternalPolicy: evStatus.ExternalPolicy,
+		AuthorizedKeys: authorizedKeys,
 	}
 
 	// Fetch management IPs for display
@@ -1084,9 +1124,26 @@ func (a *App) GetSSHStatus(nodeID string) *SSHStatus {
 	return sshStatus
 }
 
-// DisableSSH disables SSH access on the device
+// containsIdentity reports whether any parsed authorized-key has the
+// given type+blob identity.
+func containsIdentity(keys []zededa.AuthorizedKey, id string) bool {
+	for _, k := range keys {
+		if k.Valid && k.Identity() == id {
+			return true
+		}
+	}
+	return false
+}
+
+// DisableSSH removes the launcher's own SSH key from the device. Other
+// keys (operator-added) are preserved; if no keys remain, the underlying
+// configItem is dropped which fully disables SSH on EVE-OS.
 func (a *App) DisableSSH(nodeID string) error {
-	if err := a.zededaClient.DisableSSH(nodeID); err != nil {
+	_, localPubKey, err := ssh.EnsureSSHKey()
+	if err != nil {
+		return fmt.Errorf("failed to load local SSH key: %w", err)
+	}
+	if err := a.zededaClient.DisableSSH(nodeID, localPubKey); err != nil {
 		return fmt.Errorf("failed to disable ssh: %w", err)
 	}
 	return nil

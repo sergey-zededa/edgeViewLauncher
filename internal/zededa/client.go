@@ -986,54 +986,59 @@ func formatCloudError(status int, body []byte) string {
 	return fmt.Sprintf("ZEDEDA Cloud rejected the request (HTTP %d): %s", status, raw)
 }
 
-// AddSSHKeyToDevice adds the public key to the device configuration
+// AddSSHKeyToDevice appends publicKey to the device's debug.enable.ssh
+// value, preserving any other authorized keys that are already there.
+// If the same key (matched by type+blob identity, ignoring comment) is
+// already listed, it is replaced in place so we don't accumulate
+// near-duplicate copies on repeated SetupSSH calls. EVE-OS writes the
+// value verbatim into /run/authorized_keys (one key per line), so this
+// is sufficient to authorize our key without locking out any operator
+// who installed their own key by hand or via another tool.
 func (c *Client) AddSSHKeyToDevice(nodeID, publicKey string) error {
-	// 1. Get Device
 	device, err := c.GetDevice(nodeID)
 	if err != nil {
 		return fmt.Errorf("failed to get device: %w", err)
 	}
 
-	// 2. Update Config Items
-	// configItem is a list of objects
-	configItems, ok := device["configItem"].([]interface{})
-	if !ok {
-		// If missing, create it
-		configItems = []interface{}{}
-	}
+	configItems, _ := device["configItem"].([]interface{})
 
-	keyFound := false
+	existingValue := ""
+	itemIdx := -1
 	for i, item := range configItems {
 		if cfg, ok := item.(map[string]interface{}); ok {
 			if cfg["key"] == "debug.enable.ssh" {
-				// Update existing key
-				cfg["stringValue"] = publicKey
-				configItems[i] = cfg
-				keyFound = true
+				if v, ok := cfg["stringValue"].(string); ok {
+					existingValue = v
+				}
+				itemIdx = i
 				break
 			}
 		}
 	}
 
-	if !keyFound {
-		// Add new key
+	newValue := AppendOrReplaceKey(existingValue, publicKey)
+	if newValue == existingValue {
+		// Our key is already there with the same comment — skip the
+		// PUT to avoid spurious device-config bumps.
+		return nil
+	}
+
+	if itemIdx >= 0 {
+		if cfg, ok := configItems[itemIdx].(map[string]interface{}); ok {
+			cfg["stringValue"] = newValue
+			configItems[itemIdx] = cfg
+		}
+	} else {
 		configItems = append(configItems, map[string]interface{}{
 			"key":         "debug.enable.ssh",
-			"stringValue": publicKey,
+			"stringValue": newValue,
 		})
 	}
-
 	device["configItem"] = configItems
 
-	// Clean all boolean config items before sending to API
 	cleanBooleanConfigItems(configItems)
 
-	// 3. Update Device
-	if err := c.UpdateDevice(nodeID, device); err != nil {
-		return fmt.Errorf("failed to update device config: %w", err)
-	}
-
-	return nil
+	return c.UpdateDevice(nodeID, device)
 }
 
 // cleanBooleanConfigItems removes extraneous fields from boolean config items
@@ -1376,44 +1381,73 @@ func (c *Client) GetEdgeViewStatus(nodeID string) (*EdgeViewStatus, error) {
 	return status, nil
 }
 
-// DisableSSH removes the SSH key from the device configuration
-func (c *Client) DisableSSH(nodeID string) error {
-	// 1. Get Device
+// DisableSSH removes ourKey from the device's debug.enable.ssh value,
+// leaving any other authorized keys intact. If after the removal no
+// keys remain, the entire debug.enable.ssh config-item is dropped
+// (EVE-OS reads an empty/missing value as "SSH disabled" —
+// dpcreconciler/linux.go gcpAllowSSH = gcp.GlobalValueString(...) != "").
+//
+// ourKey is identified by type+blob; the comment portion is ignored, so
+// renaming the laptop the key was generated on won't strand our key on
+// the device.
+func (c *Client) DisableSSH(nodeID, ourKey string) error {
 	device, err := c.GetDevice(nodeID)
 	if err != nil {
 		return fmt.Errorf("failed to get device: %w", err)
 	}
 
-	// 2. Filter Config Items
 	configItems, ok := device["configItem"].([]interface{})
 	if !ok {
-		return nil // Already disabled (no config)
+		return nil // Already disabled (no config items at all)
 	}
 
-	newConfigItems := []interface{}{}
-	found := false
-	for _, item := range configItems {
+	itemIdx := -1
+	existingValue := ""
+	for i, item := range configItems {
 		if cfg, ok := item.(map[string]interface{}); ok {
 			if cfg["key"] == "debug.enable.ssh" {
-				found = true
-				continue // Skip this item to remove it
+				if v, ok := cfg["stringValue"].(string); ok {
+					existingValue = v
+				}
+				itemIdx = i
+				break
 			}
 		}
-		newConfigItems = append(newConfigItems, item)
+	}
+	if itemIdx < 0 {
+		return nil // No SSH config item — nothing to do
 	}
 
-	if !found {
-		return nil // Key not present, nothing to do
+	remaining := RemoveKey(existingValue, ourKey)
+	if remaining == existingValue {
+		// Our key wasn't there to begin with — no PUT needed.
+		return nil
 	}
 
-	device["configItem"] = newConfigItems
-
-	// 3. Update Device
-	if err := c.UpdateDevice(nodeID, device); err != nil {
-		return fmt.Errorf("failed to update device config: %w", err)
+	if remaining == "" {
+		// No keys left — drop the configItem entirely so EVE-OS treats
+		// SSH as fully disabled.
+		newConfigItems := make([]interface{}, 0, len(configItems)-1)
+		for i, item := range configItems {
+			if i == itemIdx {
+				continue
+			}
+			newConfigItems = append(newConfigItems, item)
+		}
+		device["configItem"] = newConfigItems
+	} else {
+		// Other admins' keys remain — keep the configItem and just
+		// rewrite stringValue.
+		if cfg, ok := configItems[itemIdx].(map[string]interface{}); ok {
+			cfg["stringValue"] = remaining
+			configItems[itemIdx] = cfg
+		}
+		device["configItem"] = configItems
 	}
 
-	return nil
+	cleanBooleanConfigItems(configItems)
+
+	return c.UpdateDevice(nodeID, device)
 }
 
 // TokenInfo contains information about a session token
