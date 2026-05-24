@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, EnableExternalPolicy, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, ProbeBaseUrl, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo, StartComposeDiagnostics, GetComposeDiagnosticsStatus, SaveComposeDiagnostics, CheckForUpdates, openTerminalWindow, openVncWindow, openExternalTerminal, getElectronAppInfo, startContainerShell, getSystemTimeFormat, openExternal, InjectSecureConfig, GetDeviceCache, RefreshDeviceCache } from './tauriAPI';
-import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, ChevronRight, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers, Shield, Moon, Sun, HelpCircle } from 'lucide-react';
+import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, ChevronRight, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers, Shield, Moon, Sun, HelpCircle, Key } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
 import Tooltip from './components/Tooltip';
 import About from './components/About';
@@ -768,6 +768,8 @@ function App() {
   // soon as one URL is typed, the other presets disappear.
   const [showBaseUrlPresets, setShowBaseUrlPresets] = useState(false);
   const baseUrlPresetsRef = useRef(null);
+  // Collapsible "Authorized SSH Keys" audit panel on the device-details view.
+  const [showAuthorizedKeys, setShowAuthorizedKeys] = useState(false);
   const [settingsError, setSettingsError] = useState(null); // Track settings save errors
   const [globalStatus, setGlobalStatus] = useState(null);
   const [sshError, setSshError] = useState(null);
@@ -4357,6 +4359,79 @@ Do you want to try connecting anyway?`)) {
                             </Tooltip>
 
                           </div>
+
+                          {/* Authorized SSH Keys audit panel — collapsed by default.
+                              Shows the keys currently in debug.enable.ssh on the
+                              device so an operator can verify that other users'
+                              keys are preserved when the launcher manages its own. */}
+                          {Array.isArray(sshStatus.authorizedKeys) && sshStatus.authorizedKeys.length > 0 && (
+                            <div style={{ marginTop: '12px' }}>
+                              <div
+                                onClick={() => setShowAuthorizedKeys((v) => !v)}
+                                style={{
+                                  display: 'flex', alignItems: 'center', gap: '6px',
+                                  cursor: 'pointer', userSelect: 'none',
+                                  fontSize: '12px', color: 'var(--text-secondary)',
+                                }}
+                                title="Show / hide the SSH keys currently authorized on this device"
+                              >
+                                {showAuthorizedKeys
+                                  ? <ChevronDown size={14} />
+                                  : <ChevronRight size={14} />}
+                                <Key size={13} />
+                                <span>Authorized SSH Keys ({sshStatus.authorizedKeys.length})</span>
+                              </div>
+                              {showAuthorizedKeys && (
+                                <div style={{
+                                  marginTop: '8px', padding: '8px 10px',
+                                  background: 'var(--bg-secondary)',
+                                  border: '1px solid var(--border-subtle)',
+                                  borderRadius: '6px',
+                                  display: 'flex', flexDirection: 'column', gap: '6px',
+                                }}>
+                                  {sshStatus.authorizedKeys.map((k, i) => (
+                                    <div key={`${k.fingerprint || 'invalid'}-${i}`}
+                                      style={{
+                                        display: 'flex', flexDirection: 'column',
+                                        padding: '6px 8px', borderRadius: '4px',
+                                        background: k.isLauncherKey ? 'var(--color-success-bg)' : 'transparent',
+                                        border: k.isLauncherKey ? '1px solid var(--color-success-border, transparent)' : '1px solid transparent',
+                                      }}
+                                    >
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
+                                        <span style={{
+                                          fontFamily: 'Menlo, monospace', fontWeight: 600,
+                                          color: k.valid ? 'var(--text-primary)' : 'var(--color-warning)',
+                                        }}>
+                                          {k.valid ? k.type : 'unparseable line'}
+                                        </span>
+                                        {k.isLauncherKey && (
+                                          <span style={{
+                                            fontSize: '10px', fontWeight: 700, padding: '1px 6px',
+                                            borderRadius: '3px', background: 'var(--color-success)',
+                                            color: '#fff', textTransform: 'uppercase', letterSpacing: '0.5px',
+                                          }}>
+                                            This launcher
+                                          </span>
+                                        )}
+                                        {k.comment && (
+                                          <span style={{ color: 'var(--text-tertiary)' }}>{k.comment}</span>
+                                        )}
+                                      </div>
+                                      {k.fingerprint && (
+                                        <div style={{
+                                          fontFamily: 'Menlo, monospace', fontSize: '11px',
+                                          color: 'var(--text-tertiary)', marginTop: '2px',
+                                        }}>
+                                          {k.fingerprint}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </div>
                     ) : !loadingSSH && (
