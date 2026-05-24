@@ -19,6 +19,7 @@ import (
 	"edgeViewLauncher/internal/security"
 	"edgeViewLauncher/internal/session"
 	sshInternal "edgeViewLauncher/internal/ssh"
+	"edgeViewLauncher/internal/zededa"
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
@@ -574,6 +575,7 @@ func (s *HTTPServer) Start() {
 	router.HandleFunc("/api/ssh/term", s.handleSSHTerminal)
 	router.HandleFunc("/api/connection-progress", s.handleGetConnectionProgress)
 	router.HandleFunc("/api/verify-token", s.handleVerifyToken)
+	router.HandleFunc("/api/probe-base-url", s.handleProbeBaseURL).Methods("POST")
 	router.HandleFunc("/api/set-vga", s.handleSetVGAEnabled)
 	router.HandleFunc("/api/set-usb", s.handleSetUSBEnabled)
 	router.HandleFunc("/api/set-console", s.handleSetConsoleEnabled)
@@ -1234,6 +1236,17 @@ func (s *HTTPServer) handleDownloadComposeDiagnostics(w http.ResponseWriter, r *
 	}
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", job.Filename))
 	http.ServeFile(w, r, job.FilePath)
+}
+
+func (s *HTTPServer) handleProbeBaseURL(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		BaseURL string `json:"baseUrl"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, err)
+		return
+	}
+	s.sendSuccess(w, zededa.ProbeBaseURL(req.BaseURL))
 }
 
 func (s *HTTPServer) handleVerifyToken(w http.ResponseWriter, r *http.Request) {

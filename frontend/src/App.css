@@ -577,6 +577,11 @@ body {
     color: var(--color-info);
 }
 
+.env-pill.env-dev {
+    background: rgba(63, 185, 80, 0.15);
+    color: var(--color-success);
+}
+
 .cluster-item {
     padding: 10px;
     border-radius: 6px;

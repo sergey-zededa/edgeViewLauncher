@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, EnableExternalPolicy, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo, StartComposeDiagnostics, GetComposeDiagnosticsStatus, SaveComposeDiagnostics, CheckForUpdates, openTerminalWindow, openVncWindow, openExternalTerminal, getElectronAppInfo, startContainerShell, getSystemTimeFormat, openExternal, InjectSecureConfig, GetDeviceCache, RefreshDeviceCache } from './tauriAPI';
+import { ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, EnableExternalPolicy, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, ProbeBaseUrl, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo, StartComposeDiagnostics, GetComposeDiagnosticsStatus, SaveComposeDiagnostics, CheckForUpdates, openTerminalWindow, openVncWindow, openExternalTerminal, getElectronAppInfo, startContainerShell, getSystemTimeFormat, openExternal, InjectSecureConfig, GetDeviceCache, RefreshDeviceCache } from './tauriAPI';
 import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, ChevronRight, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers, Shield, Moon, Sun, HelpCircle } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
 import Tooltip from './components/Tooltip';
@@ -431,6 +431,15 @@ const Copyable = ({ text, children, style = {} }) => {
   );
 };
 
+// Preset cluster URLs offered as a dropdown in the edit-cluster dialog.
+// Users can still type any URL (the input accepts free-form values).
+const CLUSTER_URL_PRESETS = [
+  'https://zedcontrol.zededa.net',
+  'https://zedcontrol.gmwtus.zededa.net',
+  'https://zedcontrol.pmwtus.zededa.net',
+  'https://zedcontrol.pacteu.zededa.net',
+];
+
 function App() {
   const [config, setConfig] = useState({ baseUrl: '', apiToken: '', clusters: [], activeCluster: '' });
   const [query, setQuery] = useState('');
@@ -751,6 +760,14 @@ function App() {
   const [showTokenGuide, setShowTokenGuide] = useState(false);
   const [saveStatus, setSaveStatus] = useState('');
   const [tokenStatus, setTokenStatus] = useState(null);
+  // { state: 'idle' | 'checking' | 'ok' | 'warn' | 'error', message: string }
+  const [baseUrlProbe, setBaseUrlProbe] = useState({ state: 'idle' });
+  // Whether the Base URL preset dropdown is open in the edit dialog.
+  // We render our own dropdown instead of a native <datalist> because
+  // datalist filters options based on the current input value — so as
+  // soon as one URL is typed, the other presets disappear.
+  const [showBaseUrlPresets, setShowBaseUrlPresets] = useState(false);
+  const baseUrlPresetsRef = useRef(null);
   const [settingsError, setSettingsError] = useState(null); // Track settings save errors
   const [globalStatus, setGlobalStatus] = useState(null);
   const [sshError, setSshError] = useState(null);
@@ -770,6 +787,26 @@ function App() {
     // Token verification disabled - will be re-enabled in future
     setTokenStatus(null);
   };
+
+  // Clear the cluster URL probe state whenever the user switches to a
+  // different cluster in the edit dialog — otherwise the warning/ok badge
+  // from the previous cluster would briefly appear next to the new URL.
+  useEffect(() => {
+    setBaseUrlProbe({ state: 'idle' });
+    setShowBaseUrlPresets(false);
+  }, [viewingClusterName]);
+
+  // Close the Base URL preset dropdown on outside click.
+  useEffect(() => {
+    if (!showBaseUrlPresets) return;
+    const onDocClick = (e) => {
+      if (baseUrlPresetsRef.current && !baseUrlPresetsRef.current.contains(e.target)) {
+        setShowBaseUrlPresets(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [showBaseUrlPresets]);
 
   // Sync tunnels on node selection (polling + diff-based logging)
   useEffect(() => {
@@ -2192,18 +2229,40 @@ Do you want to try connecting anyway?`)) {
 
   const handleToggleConsole = async (enabled) => {
     if (!selectedNode) return;
+    const nodeId = selectedNode.id;
     setLoadingSSH(true);
     setGlobalStatus({ type: 'loading', message: enabled ? "Enabling Console..." : "Disabling Console..." });
     try {
-      await SetConsoleEnabled(selectedNode.id, enabled);
+      await SetConsoleEnabled(nodeId, enabled);
       // Optimistic UI update — cloud API may not have propagated yet
       setSshStatus(prev => prev ? { ...prev, consoleEnabled: enabled } : prev);
       addLog(`Console access ${enabled ? 'enabled' : 'disabled'}`, 'success');
       setLoadingSSH(false);
       setGlobalStatus({ type: 'success', message: `Console ${enabled ? 'enabled' : 'disabled'}` });
       setTimeout(() => setGlobalStatus(null), 3000);
-      // Background refresh after cloud propagation delay
-      setTimeout(() => loadSSHStatus(selectedNode.id), 2000);
+
+      // Poll until cloud reflects the requested state, then merge the full
+      // fresh status. If we just call loadSSHStatus on a fixed timer, an
+      // early read-back returns the OLD value and stomps the optimistic
+      // update, making the button appear to revert after a moment.
+      const verifyConsoleState = async () => {
+        const maxAttempts = 6; // ~12s total (6 × 2s)
+        for (let i = 0; i < maxAttempts; i++) {
+          await new Promise(r => setTimeout(r, 2000));
+          if (!selectedNode || selectedNode.id !== nodeId) return;
+          try {
+            const fresh = await GetSSHStatus(nodeId);
+            if (fresh && fresh.consoleEnabled === enabled) {
+              setSshStatus(fresh);
+              return;
+            }
+          } catch (e) {
+            // Ignore — keep polling.
+          }
+        }
+        addLog(`Console ${enabled ? 'enable' : 'disable'} request was sent; cloud has not yet reported the new state.`, 'warning');
+      };
+      verifyConsoleState();
     } catch (err) {
       console.error(err);
       addLog(`Failed to toggle Console: ${err}`, 'error');
@@ -2297,7 +2356,16 @@ Do you want to try connecting anyway?`)) {
       setTimeout(() => setGlobalStatus(null), 5000);
     } catch (err) {
       console.error(`Failed to ${action} external policy:`, err);
-      const errMsg = err.message || String(err);
+      let errMsg = err.message || String(err);
+      // The cloud guard "edgeview exp policy can not be changed" fires when
+      // the project's EdgeviewPolicy has accessAllowChange = false — in that
+      // case the per-device extPolicy.allowExt is locked to the project's
+      // value (see zedcloud srvs/seine/devproc.go verifyEdgeviewCfgToPolicy).
+      // This is NOT related to an active session; it is a project-level
+      // setting that only a ZEDEDA Cloud administrator can change.
+      if (/exp\s+policy\s+can\s+not\s+be\s+changed/i.test(errMsg)) {
+        errMsg = "The project's Edge View Policy does not allow per-device changes. A ZEDEDA Cloud administrator must turn on 'Override Access Policies' in the project's Policies → Edge View Policy, or change the project-level Access EVE-OS / Access Edge App Instances setting directly.";
+      }
       addLog(`Failed to ${action} external policy: ${errMsg}`, 'error');
       setGlobalStatus({ type: 'error', message: `Failed to ${action} external policy: ${errMsg}` });
     }
@@ -3457,15 +3525,100 @@ Do you want to try connecting anyway?`)) {
                   />
                 </div>
                 <div className="form-group">
-                  <Tooltip text="The ZEDEDA Cloud controller URL (e.g. zedcontrol.zededa.net)." simple>
+                  <Tooltip text="The ZEDEDA Cloud controller URL. Pick a preset or type a custom URL." simple>
                     <label style={{ cursor: 'help' }}>Base URL</label>
                   </Tooltip>
-                  <input
-                    type="text"
-                    value={editingCluster.baseUrl}
-                    onChange={(e) => setEditingCluster({ ...editingCluster, baseUrl: e.target.value })}
-                    placeholder="https://zedcontrol.zededa.net"
-                  />
+                  <div ref={baseUrlPresetsRef} style={{ position: 'relative', width: '100%' }}>
+                    <input
+                      type="text"
+                      value={editingCluster.baseUrl}
+                      onChange={(e) => {
+                        setEditingCluster({ ...editingCluster, baseUrl: e.target.value });
+                        if (baseUrlProbe.state !== 'idle') setBaseUrlProbe({ state: 'idle' });
+                      }}
+                      onFocus={() => setShowBaseUrlPresets(true)}
+                      onBlur={async (e) => {
+                        // Don't close the dropdown when the blur target is the chevron or a preset item — let those handlers run first.
+                        const url = e.target.value.trim().replace(/\/+$/, '');
+                        if (!url) { setBaseUrlProbe({ state: 'idle' }); return; }
+                        if (!/^https?:\/\//i.test(url)) {
+                          setBaseUrlProbe({ state: 'warn', message: 'URL must start with http:// or https://' });
+                          return;
+                        }
+                        setBaseUrlProbe({ state: 'checking', message: 'Checking…' });
+                        try {
+                          const res = await ProbeBaseUrl(url);
+                          if (res?.isZededa) {
+                            setBaseUrlProbe({ state: 'ok', message: 'ZEDEDA controller reachable' });
+                          } else if (res?.ok) {
+                            setBaseUrlProbe({ state: 'warn', message: 'Host responded but does not look like a ZEDEDA controller — check the URL.' });
+                          } else {
+                            setBaseUrlProbe({ state: 'warn', message: `Could not reach this URL${res?.detail ? `: ${res.detail}` : ''}` });
+                          }
+                        } catch (err) {
+                          setBaseUrlProbe({ state: 'warn', message: `Probe failed: ${err.message || err}` });
+                        }
+                      }}
+                      placeholder="https://zedcontrol.zededa.net"
+                      style={{ paddingRight: '32px', width: '100%', boxSizing: 'border-box' }}
+                    />
+                    <button
+                      type="button"
+                      onMouseDown={(e) => { e.preventDefault(); setShowBaseUrlPresets((v) => !v); }}
+                      title="Show preset URLs"
+                      style={{
+                        position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)',
+                        background: 'transparent', border: 'none', cursor: 'pointer',
+                        color: 'var(--text-tertiary)', padding: '2px', display: 'flex', alignItems: 'center',
+                      }}
+                    >
+                      <ChevronDown size={16} style={{ transition: 'transform 0.2s', transform: showBaseUrlPresets ? 'rotate(180deg)' : 'none' }} />
+                    </button>
+                    {showBaseUrlPresets && (
+                      <div
+                        role="listbox"
+                        style={{
+                          position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0,
+                          background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)',
+                          borderRadius: '6px', boxShadow: '0 6px 18px rgba(0,0,0,0.18)',
+                          zIndex: 30, maxHeight: '240px', overflowY: 'auto',
+                        }}
+                      >
+                        {CLUSTER_URL_PRESETS.map((u) => (
+                          <div
+                            key={u}
+                            role="option"
+                            aria-selected={editingCluster.baseUrl === u}
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              setEditingCluster({ ...editingCluster, baseUrl: u });
+                              setBaseUrlProbe({ state: 'idle' });
+                              setShowBaseUrlPresets(false);
+                            }}
+                            style={{
+                              padding: '8px 10px', cursor: 'pointer',
+                              background: editingCluster.baseUrl === u ? 'var(--bg-hover)' : 'transparent',
+                              fontFamily: 'Menlo, monospace', fontSize: '13px',
+                            }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = editingCluster.baseUrl === u ? 'var(--bg-hover)' : 'transparent'; }}
+                          >
+                            {u}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {baseUrlProbe.state !== 'idle' && (
+                    <div
+                      className={`token-status ${baseUrlProbe.state === 'ok' ? 'valid' : baseUrlProbe.state === 'checking' ? '' : 'expired'}`}
+                      style={{ marginTop: '4px' }}
+                    >
+                      {baseUrlProbe.state === 'ok' && <Check size={12} />}
+                      {baseUrlProbe.state === 'warn' && <AlertCircle size={12} />}
+                      {baseUrlProbe.message}
+                    </div>
+                  )}
                 </div>
                 <div className="form-group">
                   <Tooltip text="Optional tag to distinguish customer-prod from staging/demo clusters at a glance." simple>
@@ -3479,6 +3632,7 @@ Do you want to try connecting anyway?`)) {
                     <option value="prod">Production</option>
                     <option value="staging">Staging</option>
                     <option value="demo">Demo</option>
+                    <option value="dev">Development</option>
                   </select>
                 </div>
                 <div className="form-group">
