@@ -28,7 +28,7 @@
     "url": "https://github.com/sergio-zededa/edgeViewLauncher.git"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.11.1",
+    "@tauri-apps/cli": "^2.11.2",
     "cross-env": "^10.1.0"
   }
 }
