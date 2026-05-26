@@ -9,6 +9,14 @@
   nsExec::Exec 'taskkill /F /IM "EdgeView Launcher.exe"'
   nsExec::Exec 'taskkill /F /IM "edgeview-launcher.exe"'
 
-  ; Match the old Electron install path so the upgrade is seamless
+  ; Match the old Electron install path so the upgrade is seamless.
+  ; SetOutPath must be re-issued because Tauri's NSIS template ran
+  ; `SetOutPath $INSTDIR` immediately before this hook (see installer.nsi:
+  ; "SetOutPath $INSTDIR" right above "!insertmacro NSIS_HOOK_PREINSTALL").
+  ; That call captured the previous $INSTDIR as the file-extraction target;
+  ; updating $INSTDIR alone leaves files going to the old path while
+  ; shortcuts / uninstaller / registry use the new one — producing a
+  ; broken Start Menu shortcut on fresh installs.
   StrCpy $INSTDIR "$LOCALAPPDATA\Programs\edgeview-launcher"
+  SetOutPath $INSTDIR
 !macroend
