@@ -1427,6 +1427,16 @@ function App() {
     setLogs(prev => [...prev, { timestamp, message, type }]);
   };
 
+  // Whether an error came from the user clicking Cancel on a connection toast.
+  // Those paths get a single "Connection attempts cancelled" log entry from
+  // the onCancel handler — the per-flow catch blocks should suppress their
+  // own "Failed to start ..." log to avoid duplication.
+  const isCancelError = (err) => {
+    if (!err) return false;
+    const msg = (err.message || String(err)).toLowerCase();
+    return msg.includes('cancel') || msg.includes('context canceled');
+  };
+
   // Extract user-friendly error message from API errors
   const extractErrorMessage = (err) => {
     const fullMessage = err.message || String(err);
@@ -1527,7 +1537,9 @@ function App() {
       handleTunnelError(err);
       const msg = err.message || String(err);
       setTcpError(msg);
-      addLog(`Failed to start TCP tunnel: ${msg}`, 'error');
+      if (!isCancelError(err)) {
+        addLog(`Failed to start TCP tunnel: ${msg}`, 'error');
+      }
     } finally {
       if (pollInterval) clearInterval(pollInterval);
       setTunnelLoading(null);
@@ -1575,7 +1587,9 @@ function App() {
       if (pollInterval) clearInterval(pollInterval);
       console.error(err);
       handleTunnelError(err);
-      addLog(`Failed to start TCP tunnel: ${err.message || err}`, 'error');
+      if (!isCancelError(err)) {
+        addLog(`Failed to start TCP tunnel: ${err.message || err}`, 'error');
+      }
     } finally {
       if (pollInterval) clearInterval(pollInterval);
       setTunnelLoading(null);
@@ -1629,7 +1643,9 @@ function App() {
       if (pollInterval) clearInterval(pollInterval);
       console.error(err);
       handleTunnelError(err);
-      addLog(`Failed to start VNC: ${err.message || err}`, 'error');
+      if (!isCancelError(err)) {
+        addLog(`Failed to start VNC: ${err.message || err}`, 'error');
+      }
     } finally {
       if (pollInterval) clearInterval(pollInterval);
       setTunnelLoading(null);
@@ -1689,7 +1705,9 @@ function App() {
       if (pollInterval) clearInterval(pollInterval);
       console.error(err);
       handleTunnelError(err);
-      addLog(`Failed to start SSH: ${err.message || err}`, 'error');
+      if (!isCancelError(err)) {
+        addLog(`Failed to start SSH: ${err.message || err}`, 'error');
+      }
     } finally {
       if (pollInterval) clearInterval(pollInterval);
       setTunnelLoading(null);
@@ -1780,7 +1798,9 @@ function App() {
       console.error(err);
       handleTunnelError(err);
       setSshError(err.message);
-      addLog(`Failed to start SSH tunnel: ${err.message}`, 'error');
+      if (!isCancelError(err)) {
+        addLog(`Failed to start SSH tunnel: ${err.message}`, 'error');
+      }
     } finally {
       if (pollInterval) clearInterval(pollInterval);
       setTunnelLoading(null);
@@ -2199,9 +2219,9 @@ Do you want to try connecting anyway?`)) {
       setCancellableConnection(null);
       console.error('Failed to connect:', err);
       const userMessage = extractErrorMessage(err);
-      if (/cancel/i.test(userMessage)) {
-        addLog('Connection attempts cancelled', 'warning');
-      } else {
+      // The user-triggered cancel path already logged "Connection attempts
+      // cancelled" from the onCancel handler — don't double-log here.
+      if (!/cancel/i.test(userMessage)) {
         addLog(`Connection failed: ${userMessage}`, 'error');
       }
       // Don't show error banner - activity log entry is sufficient
@@ -5288,7 +5308,9 @@ Do you want to try connecting anyway?`)) {
                                               } catch (err) {
                                                 console.error(err);
                                                 handleTunnelError(err);
-                                                addLog(`Failed to start VNC tunnel: ${err.message}`, 'error');
+                                                if (!isCancelError(err)) {
+                                                  addLog(`Failed to start VNC tunnel: ${err.message}`, 'error');
+                                                }
                                               } finally {
                                                 setTunnelLoading(null);
                                                 setCancellableConnection(null);
@@ -5333,7 +5355,9 @@ Do you want to try connecting anyway?`)) {
                                               } catch (err) {
                                                 console.error(err);
                                                 handleTunnelError(err);
-                                                addLog(`Failed to start VNC tunnel: ${err.message}`, 'error');
+                                                if (!isCancelError(err)) {
+                                                  addLog(`Failed to start VNC tunnel: ${err.message}`, 'error');
+                                                }
                                               } finally {
                                                 setTunnelLoading(null);
                                                 setCancellableConnection(null);
