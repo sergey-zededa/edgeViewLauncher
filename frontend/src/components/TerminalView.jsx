@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect } from 'react';
-import { getBackendPort, closeCurrentWindow, CloseTunnel } from '../tauriAPI';
+import { getBackendPort, closeCurrentWindow, CloseTunnel, EmitTunnelClosing } from '../tauriAPI';
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { WebLinksAddon } from 'xterm-addon-web-links';
@@ -363,6 +363,10 @@ const TerminalView = ({ port }) => {
 
     const handleStopTunnelAndClose = async () => {
         if (connectionInfo.tunnelId) {
+            // Notify the main window's tunnel list immediately so it can render
+            // a "Terminating..." state rather than appearing stale for 5s until
+            // the next poll catches the removal.
+            EmitTunnelClosing(connectionInfo.tunnelId);
             try {
                 await CloseTunnel(connectionInfo.tunnelId);
             } catch (err) {

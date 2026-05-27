@@ -174,6 +174,7 @@ func newTestApp(client zededaAPI, sessMgr sessionAPI) *App {
 		nodeMetaCache:      make(map[string]NodeMeta),
 		connectionProgress: make(map[string]string),
 		enrichingJobs:      make(map[string]chan struct{}),
+		connectionCancels:  make(map[string]context.CancelFunc),
 	}
 }
 
@@ -380,7 +381,7 @@ func TestConnectToNode_LiveCachedTunnelIsReused(t *testing.T) {
 
 	a := newTestApp(fakeClient, fakeSess)
 
-	port, tunnelID, err := a.ConnectToNode("node1", false)
+	port, tunnelID, err := a.ConnectToNode("node1", false, "")
 	if err != nil {
 		t.Fatalf("ConnectToNode returned error: %v", err)
 	}
@@ -425,7 +426,7 @@ func TestConnectToNode_DeadCachedTunnelTriggersFreshProxy(t *testing.T) {
 
 	a := newTestApp(fakeClient, fakeSess)
 
-	port, tunnelID, err := a.ConnectToNode("node1", false)
+	port, tunnelID, err := a.ConnectToNode("node1", false, "")
 	if err != nil {
 		t.Fatalf("ConnectToNode returned error: %v", err)
 	}
@@ -455,7 +456,7 @@ func TestConnectToNode_ReturnsTunnelID(t *testing.T) {
 	a := newTestApp(fakeClient, fakeSess)
 
 	// Simulate "In-App Terminal" which always creates a new proxy
-	port, tunnelID, err := a.ConnectToNode("node2", true)
+	port, tunnelID, err := a.ConnectToNode("node2", true, "")
 	if err != nil {
 		t.Fatalf("ConnectToNode returned error: %v", err)
 	}
@@ -492,7 +493,7 @@ func TestConnectToNode_StartProxyMultiReceivesAllCandidateIPs(t *testing.T) {
 
 	a := newTestApp(fakeClient, fakeSess)
 
-	port, tunnelID, err := a.ConnectToNode("node-multi", true)
+	port, tunnelID, err := a.ConnectToNode("node-multi", true, "")
 	if err != nil {
 		t.Fatalf("ConnectToNode returned error: %v", err)
 	}
@@ -628,7 +629,7 @@ func TestConnectToNode_InitSessionError(t *testing.T) {
 
 	a := newTestApp(fakeClient, fakeSess)
 
-	_, _, err := a.ConnectToNode("node-err", true)
+	_, _, err := a.ConnectToNode("node-err", true, "")
 	if err == nil || !strings.Contains(err.Error(), "failed to init session") {
 		t.Fatalf("expected init-session error to be propagated, got: %v", err)
 	}
@@ -956,7 +957,7 @@ func TestConnectToNode_PrefersIPv4ManagementIPs(t *testing.T) {
 	}
 
 	a := newTestApp(fakeClient, fakeSess)
-	if _, _, err := a.ConnectToNode("node-v4-pref", true); err != nil {
+	if _, _, err := a.ConnectToNode("node-v4-pref", true, ""); err != nil {
 		t.Fatalf("ConnectToNode returned error: %v", err)
 	}
 

@@ -51,6 +51,7 @@ type SearchNodesRequest struct {
 type ConnectRequest struct {
 	NodeID           string `json:"nodeId"`
 	UseInAppTerminal bool   `json:"useInApp"`
+	TargetIP         string `json:"targetIP,omitempty"`
 }
 
 type SaveSettingsRequest struct {
@@ -118,7 +119,7 @@ func (s *HTTPServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	port, tunnelID, err := s.app.ConnectToNode(req.NodeID, req.UseInAppTerminal)
+	port, tunnelID, err := s.app.ConnectToNode(req.NodeID, req.UseInAppTerminal, req.TargetIP)
 	if err != nil {
 		s.sendError(w, err)
 		return
@@ -574,6 +575,7 @@ func (s *HTTPServer) Start() {
 	router.HandleFunc("/api/tunnels", s.handleListTunnels)
 	router.HandleFunc("/api/ssh/term", s.handleSSHTerminal)
 	router.HandleFunc("/api/connection-progress", s.handleGetConnectionProgress)
+	router.HandleFunc("/api/cancel-connection", s.handleCancelConnection).Methods("POST")
 	router.HandleFunc("/api/verify-token", s.handleVerifyToken)
 	router.HandleFunc("/api/probe-base-url", s.handleProbeBaseURL).Methods("POST")
 	router.HandleFunc("/api/set-vga", s.handleSetVGAEnabled)
@@ -1126,6 +1128,20 @@ func (s *HTTPServer) handleGetConnectionProgress(w http.ResponseWriter, r *http.
 
 	status := s.app.GetConnectionProgress(nodeID)
 	s.sendSuccess(w, map[string]string{"status": status})
+}
+
+func (s *HTTPServer) handleCancelConnection(w http.ResponseWriter, r *http.Request) {
+	var req NodeIDRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, err)
+		return
+	}
+	if req.NodeID == "" {
+		s.sendError(w, fmt.Errorf("nodeId is required"))
+		return
+	}
+	s.app.CancelConnection(req.NodeID)
+	s.sendSuccess(w, map[string]bool{"cancelled": true})
 }
 
 func (s *HTTPServer) handleStartCollectInfo(w http.ResponseWriter, r *http.Request) {

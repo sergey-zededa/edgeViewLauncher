@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { ConnectToNode, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, EnableExternalPolicy, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, ProbeBaseUrl, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo, StartComposeDiagnostics, GetComposeDiagnosticsStatus, SaveComposeDiagnostics, CheckForUpdates, openTerminalWindow, openVncWindow, openExternalTerminal, getElectronAppInfo, startContainerShell, getSystemTimeFormat, openExternal, InjectSecureConfig, GetDeviceCache, RefreshDeviceCache } from './tauriAPI';
+import { ConnectToNode, CancelConnection, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, EnableExternalPolicy, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, ProbeBaseUrl, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo, StartComposeDiagnostics, GetComposeDiagnosticsStatus, SaveComposeDiagnostics, CheckForUpdates, openTerminalWindow, openVncWindow, openExternalTerminal, getElectronAppInfo, startContainerShell, getSystemTimeFormat, openExternal, InjectSecureConfig, GetDeviceCache, RefreshDeviceCache, OnTunnelClosing } from './tauriAPI';
 import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, ChevronRight, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers, Shield, Moon, Sun, HelpCircle, Key } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
 import Tooltip from './components/Tooltip';
@@ -776,6 +776,10 @@ function App() {
   const [showAuthorizedKeys, setShowAuthorizedKeys] = useState(false);
   const [settingsError, setSettingsError] = useState(null); // Track settings save errors
   const [globalStatus, setGlobalStatus] = useState(null);
+  // When set to a nodeID, the global status banner shows a "Cancel" action
+  // wired to CancelConnection(nodeID). Set while a connection attempt
+  // (EVE-OS SSH session, SSH tunnel, VNC tunnel, TCP tunnel) is in flight.
+  const [cancellableConnection, setCancellableConnection] = useState(null);
   const [sshError, setSshError] = useState(null);
   // Last SSH update timestamp
   const [lastSSHUpdate, setLastSSHUpdate] = useState(0);
@@ -930,12 +934,19 @@ function App() {
 
           // Merge: keep tunnels for other nodes + updated list for this node
           // Preserve username from previous tunnel state (not returned by backend)
+          // Preserve a 'terminating' status across polls until the backend
+          // actually drops the tunnel — otherwise the in-progress "Terminating..."
+          // chip would flicker back to active for one poll cycle.
           const others = prev.filter(t => t.nodeId !== selectedNode.id);
           const prevByIdMap = new Map(prev.map(t => [t.id, t]));
-          const mergedMapped = mapped.map(t => ({
-            ...t,
-            username: prevByIdMap.get(t.id)?.username || ''
-          }));
+          const mergedMapped = mapped.map(t => {
+            const prevT = prevByIdMap.get(t.id);
+            return {
+              ...t,
+              username: prevT?.username || '',
+              status: prevT?.status === 'terminating' ? 'terminating' : t.status,
+            };
+          });
           return [...others, ...mergedMapped];
         });
       } catch (err) {
@@ -1022,10 +1033,15 @@ function App() {
           });
 
           // Preserve username from previous state (not returned by backend)
-          return mapped.map(t => ({
-            ...t,
-            username: prevById.get(t.id)?.username || '',
-          }));
+          // and preserve 'terminating' across polls (see per-node fetch).
+          return mapped.map(t => {
+            const prevT = prevById.get(t.id);
+            return {
+              ...t,
+              username: prevT?.username || '',
+              status: prevT?.status === 'terminating' ? 'terminating' : t.status,
+            };
+          });
         });
       } catch (err) {
         console.error('Failed to list all tunnels:', err);
@@ -1040,6 +1056,20 @@ function App() {
       clearInterval(intervalId);
     };
   }, [showGlobalTunnels]);
+
+  // Cross-window tunnel teardown signal: child windows (TerminalView,
+  // VncViewer) and the tray menu emit `tunnel-closing` right before they call
+  // the DELETE endpoint. Mark the tunnel as 'terminating' so the active
+  // tunnels list shows visible feedback ("Terminating...") instead of
+  // appearing unchanged until the next 5s poll reconciles the removal.
+  useEffect(() => {
+    const unlisten = OnTunnelClosing((payload) => {
+      const tid = payload?.tunnelId;
+      if (!tid) return;
+      setActiveTunnels(prev => prev.map(t => t.id === tid ? { ...t, status: 'terminating' } : t));
+    });
+    return () => unlisten();
+  }, []);
 
   // Polling for device services (every 15-60 seconds while a node is selected)
   // This ensures VNC details and real-time status are updated as background enrichment finishes.
@@ -1459,6 +1489,7 @@ function App() {
     try {
       setTcpError('');
       setTunnelLoading('tcp');
+      setCancellableConnection(selectedNode.id);
       setGlobalStatus({ type: 'loading', message: `Starting TCP tunnel to ${ip}:${port}...` });
       addLog(`Starting TCP tunnel to ${ip}:${port}...`, 'info');
 
@@ -1500,6 +1531,7 @@ function App() {
     } finally {
       if (pollInterval) clearInterval(pollInterval);
       setTunnelLoading(null);
+      setCancellableConnection(null);
       setGlobalStatus(prev => prev?.type === 'error' ? prev : null);
     }
   };
@@ -1512,6 +1544,7 @@ function App() {
     let pollInterval = null;
     try {
       setTunnelLoading(tunnelKey);
+      setCancellableConnection(selectedNode.id);
       setGlobalStatus({ type: 'loading', message: `Starting TCP tunnel to ${ip}:${port}...` });
       addLog(`Starting TCP tunnel to ${ip}:${port}...`, 'info');
 
@@ -1546,6 +1579,7 @@ function App() {
     } finally {
       if (pollInterval) clearInterval(pollInterval);
       setTunnelLoading(null);
+      setCancellableConnection(null);
       setGlobalStatus(prev => prev?.type === 'error' ? prev : null);
     }
   };
@@ -1557,6 +1591,7 @@ function App() {
     let pollInterval = null;
     try {
       setTunnelLoading('vnc');
+      setCancellableConnection(selectedNode.id);
       setGlobalStatus({ type: 'loading', message: `Starting VNC connection to ${ip}:${port}...` });
       addLog(`Starting VNC tunnel to ${ip}:${port}...`, 'info');
 
@@ -1598,6 +1633,7 @@ function App() {
     } finally {
       if (pollInterval) clearInterval(pollInterval);
       setTunnelLoading(null);
+      setCancellableConnection(null);
       setGlobalStatus(prev => prev?.type === 'error' ? prev : null);
     }
   };
@@ -1614,6 +1650,7 @@ function App() {
     let pollInterval = null;
     try {
       setTunnelLoading('ssh');
+      setCancellableConnection(selectedNode.id);
       setGlobalStatus({ type: 'loading', message: `Starting SSH connection to ${username}@${ip}...` });
       addLog(`Starting SSH tunnel to ${username}@${ip}:22...`, 'info');
 
@@ -1656,6 +1693,7 @@ function App() {
     } finally {
       if (pollInterval) clearInterval(pollInterval);
       setTunnelLoading(null);
+      setCancellableConnection(null);
       setGlobalStatus(prev => prev?.type === 'error' ? prev : null);
     }
   };
@@ -1681,6 +1719,7 @@ function App() {
         saveSshUsername(sshTunnelConfig.appName, sshUser);
       }
       setTunnelLoading('ssh');
+      setCancellableConnection(selectedNode.id);
       const sshTarget = ip;
       setGlobalStatus({ type: 'loading', message: `Starting SSH tunnel to ${sshTarget}:${targetPort}...` });
       addLog(`Starting SSH tunnel to ${sshTarget}:${targetPort}...`, 'info');
@@ -1745,13 +1784,17 @@ function App() {
     } finally {
       if (pollInterval) clearInterval(pollInterval);
       setTunnelLoading(null);
+      setCancellableConnection(null);
       setGlobalStatus(prev => prev?.type === 'error' ? prev : null);
     }
   };
 
   const removeTunnel = async (tunnelId) => {
+    const tunnel = activeTunnels.find(t => t.id === tunnelId);
+    // Optimistically flip to 'terminating' so the UI feedback is instant; the
+    // poll (or the DELETE response below) then drops the entry entirely.
+    setActiveTunnels(prev => prev.map(t => t.id === tunnelId ? { ...t, status: 'terminating' } : t));
     try {
-      const tunnel = activeTunnels.find(t => t.id === tunnelId);
       await CloseTunnel(tunnelId);
       setActiveTunnels(prev => prev.filter(t => t.id !== tunnelId));
 
@@ -2043,7 +2086,7 @@ function App() {
     }
   };
 
-  const startSession = async (nodeId, useInApp) => {
+  const startSession = async (nodeId, useInApp, targetIP) => {
     // Check if SSH was recently updated (within last 60 seconds)
     if (Date.now() - lastSSHUpdate < 60000) {
       if (!window.confirm(`The SSH key was updated less than a minute ago. The device might not be ready yet.
@@ -2061,6 +2104,9 @@ Do you want to try connecting anyway?`)) {
       try {
         const progress = await GetConnectionProgress(nodeId);
         if (progress && typeof progress.status === 'string' && progress.status.trim().length > 0) {
+          // Don't resurrect the toast after the user cancelled — the backend
+          // may still emit one last progress update mid-teardown.
+          if (progress.status === 'Cancelled') return;
           setGlobalStatus({ type: 'loading', message: progress.status });
         }
       } catch (e) {
@@ -2071,14 +2117,15 @@ Do you want to try connecting anyway?`)) {
     try {
       setShowTerminalMenu(false);
       setLoadingSSH(true);
-      setGlobalStatus({ type: 'loading', message: 'Starting EdgeView session...' });
-      addLog(`Starting EdgeView SSH session (${useInApp ? 'In-App Terminal' : 'Native Terminal'})...`, 'info');
+      setCancellableConnection(nodeId);
+      setGlobalStatus({ type: 'loading', message: targetIP ? `Starting EdgeView session to ${targetIP}...` : 'Starting EdgeView session...' });
+      addLog(`Starting EdgeView SSH session (${useInApp ? 'In-App Terminal' : 'Native Terminal'})${targetIP ? ` to ${targetIP}` : ''}...`, 'info');
 
       // Start polling connection progress while backend works.
       pollProgress();
       intervalId = setInterval(pollProgress, 1000);
 
-      const result = await ConnectToNode(nodeId, useInApp);
+      const result = await ConnectToNode(nodeId, useInApp, targetIP);
 
       const { port, tunnelId } = result;
 
@@ -2143,14 +2190,20 @@ Do you want to try connecting anyway?`)) {
       clearInterval(intervalId);
       setGlobalStatus(null);
       setLoadingSSH(false);
+      setCancellableConnection(null);
     } catch (err) {
       cancelled = true;
       clearInterval(intervalId);
       setLoadingSSH(false);
       setGlobalStatus(null);
+      setCancellableConnection(null);
       console.error('Failed to connect:', err);
       const userMessage = extractErrorMessage(err);
-      addLog(`Connection failed: ${userMessage}`, 'error');
+      if (/cancel/i.test(userMessage)) {
+        addLog('Connection attempts cancelled', 'warning');
+      } else {
+        addLog(`Connection failed: ${userMessage}`, 'error');
+      }
       // Don't show error banner - activity log entry is sufficient
       // Error banner blocks "Running Applications" section and there's no recovery action
     }
@@ -3265,6 +3318,14 @@ Do you want to try connecting anyway?`)) {
         <GlobalStatusBanner
           status={globalStatus}
           onDismiss={() => setGlobalStatus(null)}
+          onCancel={cancellableConnection ? () => {
+            const nodeId = cancellableConnection;
+            setCancellableConnection(null);
+            CancelConnection(nodeId).catch(err => {
+              console.error('CancelConnection failed:', err);
+            });
+            addLog('Connection attempts cancelled', 'warning');
+          } : null}
         />
 
         {/* Migration Status Banner */}
@@ -3796,8 +3857,10 @@ Do you want to try connecting anyway?`)) {
               <div className={`active-tunnels-section ${activeTunnels.filter(t => t.nodeId === selectedNode.id && t.status !== 'failed').length > 0 ? 'expanded' : 'collapsed'} ${highlightTunnels ? 'highlight' : ''}`}>
                 <div className="section-title">Active Tunnels</div>
                 <div className="tunnel-list">
-                  {activeTunnels.filter(t => t.nodeId === selectedNode.id && t.status !== 'failed').map(tunnel => (
-                    <div key={tunnel.id} className="tunnel-item">
+                  {activeTunnels.filter(t => t.nodeId === selectedNode.id && t.status !== 'failed').map(tunnel => {
+                    const isTerminating = tunnel.status === 'terminating';
+                    return (
+                    <div key={tunnel.id} className={`tunnel-item${isTerminating ? ' terminating' : ''}`}>
                       <div className="tunnel-info">
                         <div className="tunnel-type">
                           {tunnel.type === 'VNC' && <Monitor size={14} className="tunnel-icon" />}
@@ -3811,6 +3874,12 @@ Do you want to try connecting anyway?`)) {
                           ) : (
                             <span className="tunnel-badge unencrypted" title="Not Encrypted">
                               <Unlock size={10} />
+                            </span>
+                          )}
+                          {isTerminating && (
+                            <span className="tunnel-badge terminating" title="Tunnel is being stopped">
+                              <RefreshCw size={10} className="animate-spin" />
+                              <span style={{ marginLeft: '4px' }}>Terminating…</span>
                             </span>
                           )}
                         </div>
@@ -3827,6 +3896,7 @@ Do you want to try connecting anyway?`)) {
                           <button
                             className="icon-btn"
                             title="Open in Browser"
+                            disabled={isTerminating}
                             onClick={() => openExternal(`http://localhost:${tunnel.localPort}`)}
                           >
                             <ExternalLink size={12} />
@@ -3850,6 +3920,7 @@ Do you want to try connecting anyway?`)) {
                             <button
                               className="icon-btn"
                               title="Open External VNC Viewer"
+                              disabled={isTerminating}
                               onClick={() => openExternal(`vnc://localhost:${tunnel.localPort}`)}
                             >
                               <ExternalLink size={14} />
@@ -3857,6 +3928,7 @@ Do you want to try connecting anyway?`)) {
                             <button
                               className="icon-btn"
                               title="Open Built-in VNC Viewer"
+                              disabled={isTerminating}
                               onClick={() => openVncWindow({
                                 port: tunnel.localPort,
                                 nodeName: tunnel.nodeName || selectedNode.name,
@@ -3873,6 +3945,7 @@ Do you want to try connecting anyway?`)) {
                             <button
                               className="icon-btn"
                               title="Open External Terminal"
+                              disabled={isTerminating}
                               onClick={() => openExternalTerminal(`ssh -p ${tunnel.localPort} ${tunnel.username || 'root'}@localhost`)}
                             >
                               <ExternalLink size={14} />
@@ -3880,6 +3953,7 @@ Do you want to try connecting anyway?`)) {
                             <button
                               className="icon-btn"
                               title="Open Built-in Terminal"
+                              disabled={isTerminating}
                               onClick={() => openTerminalWindow({
                                 port: tunnel.localPort,
                                 username: tunnel.username,
@@ -3895,14 +3969,16 @@ Do you want to try connecting anyway?`)) {
                         )}
                         <button
                           className="icon-btn danger"
-                          title="Stop Tunnel"
+                          title={isTerminating ? "Tunnel is being stopped" : "Stop Tunnel"}
+                          disabled={isTerminating}
                           onClick={() => StopTunnel(tunnel.id)}
                         >
-                          <X size={14} />
+                          {isTerminating ? <RefreshCw size={14} className="animate-spin" /> : <X size={14} />}
                         </button>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -3912,8 +3988,10 @@ Do you want to try connecting anyway?`)) {
               <div className="active-tunnels-section global expanded">
                 <div className="section-title">All Active Tunnels</div>
                 <div className="tunnel-list">
-                  {activeTunnels.filter(t => t.status !== 'failed').map(tunnel => (
-                    <div key={tunnel.id} className="tunnel-item">
+                  {activeTunnels.filter(t => t.status !== 'failed').map(tunnel => {
+                    const isTerminating = tunnel.status === 'terminating';
+                    return (
+                    <div key={tunnel.id} className={`tunnel-item${isTerminating ? ' terminating' : ''}`}>
                       <div className="tunnel-info">
                         <div className="tunnel-type">
                           {tunnel.type === 'VNC' && <Monitor size={14} className="tunnel-icon" />}
@@ -3927,6 +4005,12 @@ Do you want to try connecting anyway?`)) {
                           ) : (
                             <span className="tunnel-badge unencrypted" title="Not Encrypted">
                               <Unlock size={10} />
+                            </span>
+                          )}
+                          {isTerminating && (
+                            <span className="tunnel-badge terminating" title="Tunnel is being stopped">
+                              <RefreshCw size={10} className="animate-spin" />
+                              <span style={{ marginLeft: '4px' }}>Terminating…</span>
                             </span>
                           )}
                         </div>
@@ -3963,6 +4047,7 @@ Do you want to try connecting anyway?`)) {
                           <button
                             className="icon-btn"
                             title="Open in Browser"
+                            disabled={isTerminating}
                             onClick={() => openExternal(`http://localhost:${tunnel.localPort}`)}
                           >
                             <ExternalLink size={12} />
@@ -3986,6 +4071,7 @@ Do you want to try connecting anyway?`)) {
                             <button
                               className="icon-btn"
                               title="Open External VNC Viewer"
+                              disabled={isTerminating}
                               onClick={() => openExternal(`vnc://localhost:${tunnel.localPort}`)}
                             >
                               <ExternalLink size={14} />
@@ -3993,6 +4079,7 @@ Do you want to try connecting anyway?`)) {
                             <button
                               className="icon-btn"
                               title="Open Built-in VNC Viewer"
+                              disabled={isTerminating}
                               onClick={() => openVncWindow({
                                 port: tunnel.localPort,
                                 nodeName: tunnel.nodeName || tunnel.nodeId,
@@ -4009,6 +4096,7 @@ Do you want to try connecting anyway?`)) {
                             <button
                               className="icon-btn"
                               title="Open External Terminal"
+                              disabled={isTerminating}
                               onClick={() => openExternalTerminal(`ssh -p ${tunnel.localPort} ${tunnel.username || 'root'}@localhost`)}
                             >
                               <ExternalLink size={14} />
@@ -4016,6 +4104,7 @@ Do you want to try connecting anyway?`)) {
                             <button
                               className="icon-btn"
                               title="Open Built-in Terminal"
+                              disabled={isTerminating}
                               onClick={() => openTerminalWindow({
                                 port: tunnel.localPort,
                                 username: tunnel.username,
@@ -4031,14 +4120,16 @@ Do you want to try connecting anyway?`)) {
                         )}
                         <button
                           className="icon-btn danger"
-                          title="Stop Tunnel"
+                          title={isTerminating ? "Tunnel is being stopped" : "Stop Tunnel"}
+                          disabled={isTerminating}
                           onClick={() => StopTunnel(tunnel.id)}
                         >
-                          <X size={14} />
+                          {isTerminating ? <RefreshCw size={14} className="animate-spin" /> : <X size={14} />}
                         </button>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -4212,24 +4303,50 @@ Do you want to try connecting anyway?`)) {
                         {sshStatus.managementIPs && sshStatus.managementIPs.length > 0 && (() => {
                           const ipv4 = sshStatus.managementIPs.filter(ip => !ip.includes(':'));
                           const ipv6 = sshStatus.managementIPs.filter(ip => ip.includes(':'));
+                          const canSshThisIp = sshStatus && sshStatus.status === 'enabled' && isSessionConnected && isDeviceOnline;
+                          const sshDisabledReason = !isDeviceOnline
+                            ? 'Device is offline'
+                            : (!sshStatus || sshStatus.status !== 'enabled')
+                              ? 'SSH must be enabled first'
+                              : !isSessionConnected
+                                ? 'EdgeView session is not active'
+                                : '';
                           const renderBadge = (ip, i) => (
                             <Copyable key={i} text={ip}>
-                              <span style={{
-                                backgroundColor: 'var(--bg-tertiary, rgba(255, 255, 255, 0.08))',
-                                padding: '3px 10px',
-                                borderRadius: '6px',
-                                fontSize: '11px',
-                                fontFamily: 'monospace',
-                                whiteSpace: 'nowrap',
-                                border: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.06))',
-                              }}>
+                              <button
+                                className="quick-tunnel-btn"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (!canSshThisIp || !!tunnelLoading) return;
+                                  startSession(selectedNode.id, true, ip);
+                                }}
+                                disabled={!canSshThisIp || !!tunnelLoading}
+                                title={canSshThisIp
+                                  ? `SSH to EVE-OS via ${ip}`
+                                  : sshDisabledReason}
+                                style={{
+                                  backgroundColor: 'var(--bg-tertiary, rgba(255, 255, 255, 0.08))',
+                                  padding: '3px 10px',
+                                  borderRadius: '6px',
+                                  fontSize: '11px',
+                                  fontFamily: 'monospace',
+                                  whiteSpace: 'nowrap',
+                                  border: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.06))',
+                                  color: 'inherit',
+                                  cursor: canSshThisIp ? 'pointer' : 'not-allowed',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '6px',
+                                }}
+                              >
+                                <Terminal size={11} />
                                 {ip}
-                              </span>
+                              </button>
                             </Copyable>
                           );
                           return (
                             <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.05))' }}>
-                              <div className="status-label" style={{ marginBottom: '10px', textAlign: 'center' }}>MANAGEMENT IPS</div>
+                              <div className="status-label" style={{ marginBottom: '10px', textAlign: 'center' }}>MANAGEMENT IPS{canSshThisIp ? ' — click to SSH' : ''}</div>
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                 {ipv4.length > 0 && (
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -5148,6 +5265,7 @@ Do you want to try connecting anyway?`)) {
                                               setVncMenuAppId(null);
                                               try {
                                                 setTunnelLoading('vnc');
+                                                setCancellableConnection(selectedNode.id);
                                                 setGlobalStatus({ type: 'loading', message: `Starting VNC tunnel to localhost:${app.vncPort}...` });
                                                 const vncTarget = 'localhost';
                                                 addLog(`Starting VNC tunnel to ${vncTarget}:${app.vncPort}...`, 'info');
@@ -5173,6 +5291,7 @@ Do you want to try connecting anyway?`)) {
                                                 addLog(`Failed to start VNC tunnel: ${err.message}`, 'error');
                                               } finally {
                                                 setTunnelLoading(null);
+                                                setCancellableConnection(null);
                                                 setGlobalStatus(prev => prev?.type === 'error' ? prev : null);
                                               }
                                             }}
@@ -5195,6 +5314,7 @@ Do you want to try connecting anyway?`)) {
                                               setVncMenuAppId(null);
                                               try {
                                                 setTunnelLoading('vnc');
+                                                setCancellableConnection(selectedNode.id);
                                                 setGlobalStatus({ type: 'loading', message: `Starting VNC tunnel to localhost:${app.vncPort}...` });
                                                 const vncTarget = 'localhost';
                                                 addLog(`Starting VNC tunnel to ${vncTarget}:${app.vncPort}...`, 'info');
@@ -5216,6 +5336,7 @@ Do you want to try connecting anyway?`)) {
                                                 addLog(`Failed to start VNC tunnel: ${err.message}`, 'error');
                                               } finally {
                                                 setTunnelLoading(null);
+                                                setCancellableConnection(null);
                                                 setGlobalStatus(prev => prev?.type === 'error' ? prev : null);
                                               }
                                             }}

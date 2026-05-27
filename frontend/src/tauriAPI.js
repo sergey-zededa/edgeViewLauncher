@@ -10,7 +10,7 @@
  * ipcRenderer.on() — the returned cleanup function contract is preserved.
  */
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { listen, emit } from '@tauri-apps/api/event';
 import { openUrl } from '@tauri-apps/plugin-opener';
 
 // ── Generic backend proxy ─────────────────────────────────────────────────────
@@ -28,8 +28,11 @@ const apiCall = (endpoint, method = 'GET', body = undefined) =>
 export const SearchNodes = (query, limit = 200, pageToken = '', projectId = '', nodeId = '') =>
     apiCall('/api/search-nodes', 'POST', { query, limit, pageToken, projectId, nodeId }).then(r => r?.data);
 
-export const ConnectToNode = (nodeId, useInApp) =>
-    apiCall('/api/connect', 'POST', { nodeId, useInApp }).then(r => r?.data);
+export const ConnectToNode = (nodeId, useInApp, targetIP) =>
+    apiCall('/api/connect', 'POST', { nodeId, useInApp, targetIP: targetIP || '' }).then(r => r?.data);
+
+export const CancelConnection = (nodeId) =>
+    apiCall('/api/cancel-connection', 'POST', { nodeId }).then(r => r?.data);
 
 export const GetDeviceServices = (nodeId, nodeName) =>
     apiCall('/api/device-services', 'POST', { nodeId, nodeName }).then(r =>
@@ -94,6 +97,25 @@ export const StartTunnel = (nodeId, targetIP, targetPort, protocol) =>
 
 export const CloseTunnel = (tunnelId) =>
     apiCall(`/api/tunnel/${tunnelId}`, 'DELETE').then(r => r?.data);
+
+/**
+ * Notify other windows (specifically the main App) that a tunnel teardown
+ * has been initiated, so its active-tunnel list can show "Terminating..."
+ * immediately rather than waiting for the next 5s poll to reconcile.
+ * Fire-and-forget: best-effort, never throws.
+ */
+export const EmitTunnelClosing = (tunnelId) => {
+    if (!tunnelId) return Promise.resolve();
+    return emit('tunnel-closing', { tunnelId }).catch(() => { });
+};
+
+/** Subscribe to tunnel-closing events. Returns an unlisten function. */
+export const OnTunnelClosing = (callback) => {
+    let unlisten = () => { };
+    listen('tunnel-closing', (event) => callback(event.payload))
+        .then(fn => { unlisten = fn; });
+    return () => unlisten();
+};
 
 export const ListTunnels = (nodeId) =>
     apiCall(`/api/tunnels?nodeId=${nodeId}`, 'GET').then(res => {

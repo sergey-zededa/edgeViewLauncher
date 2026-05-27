@@ -4,7 +4,7 @@ import React, { useEffect, useRef, useState } from 'react';
 // default export.
 import RFB from '@novnc/novnc';
 import { Maximize, Minimize, Unplug, X } from 'lucide-react';
-import { CloseTunnel } from '../tauriAPI';
+import { CloseTunnel, EmitTunnelClosing } from '../tauriAPI';
 
 const VncViewer = ({ url, onClose, password = '', tunnelId = null }) => {
     const rfbRef = useRef(null);
@@ -150,6 +150,9 @@ const VncViewer = ({ url, onClose, password = '', tunnelId = null }) => {
                     {tunnelId && (
                         <button
                             onClick={async () => {
+                                // Notify the main window so its tunnel list flips
+                                // to "Terminating..." immediately.
+                                EmitTunnelClosing(tunnelId);
                                 try { await CloseTunnel(tunnelId); } catch (e) { console.error('Failed to close tunnel:', e); }
                                 onClose();
                             }}

@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -83,6 +84,11 @@ type App struct {
 	connectionProgress map[string]string // nodeID -> status message
 	progressMu         sync.RWMutex
 
+	// Per-node cancel handles for in-flight ConnectToNode / StartTunnel
+	// attempts. Populated when an attempt starts, cleared on completion
+	// or after CancelConnection fires. Guarded by progressMu.
+	connectionCancels map[string]context.CancelFunc
+
 	// Cache for app enrichments (IPs, VNC ports)
 	enrichmentCache map[string]AppEnrichment // Key: App UUID
 	enrichmentMu    sync.RWMutex
@@ -141,6 +147,7 @@ func NewApp() *App {
 		nodeMetaCache:      make(map[string]NodeMeta),
 		connectionProgress: make(map[string]string),
 		enrichingJobs:      make(map[string]chan struct{}),
+		connectionCancels:  make(map[string]context.CancelFunc),
 		deviceCache:        cache.NewManager(),
 	}
 
@@ -164,6 +171,61 @@ func (a *App) GetConnectionProgress(nodeID string) string {
 	a.progressMu.RLock()
 	defer a.progressMu.RUnlock()
 	return a.connectionProgress[nodeID]
+}
+
+// beginConnection creates a cancellable child context for an in-flight
+// ConnectToNode / StartTunnel attempt, keyed by nodeID. If a prior attempt is
+// still tracked, it is cancelled first so only one is in flight per node. The
+// returned cleanup function deregisters the cancel and should be called once
+// the attempt completes.
+func (a *App) beginConnection(nodeID string) (context.Context, func()) {
+	parent := a.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parent)
+
+	a.progressMu.Lock()
+	if prev, ok := a.connectionCancels[nodeID]; ok && prev != nil {
+		prev()
+	}
+	a.connectionCancels[nodeID] = cancel
+	a.progressMu.Unlock()
+
+	cleanup := func() {
+		a.progressMu.Lock()
+		if cur, ok := a.connectionCancels[nodeID]; ok {
+			// Only remove if this is still our cancel — avoid clobbering a
+			// newer in-flight attempt that replaced us.
+			if &cur == &cancel || sameFunc(cur, cancel) {
+				delete(a.connectionCancels, nodeID)
+			}
+		}
+		a.progressMu.Unlock()
+		cancel()
+	}
+	return ctx, cleanup
+}
+
+// sameFunc is a best-effort pointer comparison of two CancelFuncs. Since Go
+// does not allow == on funcs, we compare via reflect.ValueOf.Pointer.
+func sameFunc(a, b context.CancelFunc) bool {
+	return reflect.ValueOf(a).Pointer() == reflect.ValueOf(b).Pointer()
+}
+
+// CancelConnection cancels any in-flight ConnectToNode / StartTunnel for the
+// given nodeID. Safe to call when no attempt is running.
+func (a *App) CancelConnection(nodeID string) {
+	a.progressMu.Lock()
+	cancel, ok := a.connectionCancels[nodeID]
+	if ok {
+		delete(a.connectionCancels, nodeID)
+	}
+	a.progressMu.Unlock()
+	if ok && cancel != nil {
+		cancel()
+		a.SetConnectionProgress(nodeID, "Cancelled")
+	}
 }
 
 // startup is called when the app starts. The context is saved
@@ -366,10 +428,15 @@ func (a *App) AddRecentDevice(nodeID string) {
 	config.Save(a.config)
 }
 
-// ConnectToNode initiates a session to the node
-func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (int, string, error) {
-	fmt.Printf("ConnectToNode called for %s (In-App: %v)\n", nodeID, useInAppTerminal)
+// ConnectToNode initiates a session to the node. If targetIP is non-empty, the
+// proxy is restricted to that single management IP instead of probing every
+// candidate returned by the Cloud API.
+func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool, targetIP string) (int, string, error) {
+	fmt.Printf("ConnectToNode called for %s (In-App: %v, TargetIP: %q)\n", nodeID, useInAppTerminal, targetIP)
 	a.SetConnectionProgress(nodeID, "Initializing connection...")
+
+	ctx, releaseConnection := a.beginConnection(nodeID)
+	defer releaseConnection()
 
 	var sessionConfig *zededa.SessionConfig
 	var port int
@@ -474,49 +541,60 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (int, string, 
 		// fmt.Println("Starting proxy...")
 		a.SetConnectionProgress(nodeID, "Starting local secure proxy...")
 
-		// 1. Gather candidate IPs
-		// Always try localhost first
-		candidateIPs := []string{"127.0.0.1"}
+		var candidateIPs []string
+		if targetIP != "" {
+			// User selected a specific management IP — restrict probing to it.
+			candidateIPs = []string{targetIP}
+			fmt.Printf("DEBUG: Restricted to user-selected IP: %s\n", targetIP)
+		} else {
+			// 1. Gather candidate IPs
+			// Always try localhost first
+			candidateIPs = []string{"127.0.0.1"}
 
-		// Fetch device status to find other management IPs
-		status, err := a.zededaClient.GetDeviceStatus(nodeID)
-		if err == nil && status != nil {
-			for _, ns := range status.NetStatusList {
-				if ns.Up {
-					for _, ip := range ns.IPs {
-						if ip != "" && ip != "127.0.0.1" {
-							candidateIPs = append(candidateIPs, ip)
+			// Fetch device status to find other management IPs
+			status, err := a.zededaClient.GetDeviceStatus(nodeID)
+			if err == nil && status != nil {
+				for _, ns := range status.NetStatusList {
+					if ns.Up {
+						for _, ip := range ns.IPs {
+							if ip != "" && ip != "127.0.0.1" {
+								candidateIPs = append(candidateIPs, ip)
+							}
 						}
 					}
 				}
+			} else {
+				fmt.Printf("Warning: Failed to fetch device status for IP discovery: %v\n", err)
 			}
-		} else {
-			fmt.Printf("Warning: Failed to fetch device status for IP discovery: %v\n", err)
-		}
 
-		// Remove duplicates
-		candidateIPs = uniqueStrings(candidateIPs)
-		// Drop IPv6 link-local (fe80::/10) — they never work through the
-		// EdgeView relay (no scope ID) and the dispatcher silently times them
-		// out, eating a probe slot and dragging the round to its 10s ceiling.
-		candidateIPs = dropLinkLocalIPv6(candidateIPs)
-		// Prefer IPv4 (incl. 127.0.0.1) over IPv6: with MaxInst parallel probes
-		// per round, an IPv6 address early in the API response would push IPv4
-		// candidates into round 2 and behind exponential backoff. Stable sort
-		// preserves the existing within-family order.
-		candidateIPs = sortIPv4First(candidateIPs)
-		fmt.Printf("DEBUG: Candidate IPs for SSH: %v\n", candidateIPs)
+			// Remove duplicates
+			candidateIPs = uniqueStrings(candidateIPs)
+			// Drop IPv6 link-local (fe80::/10) — they never work through the
+			// EdgeView relay (no scope ID) and the dispatcher silently times them
+			// out, eating a probe slot and dragging the round to its 10s ceiling.
+			candidateIPs = dropLinkLocalIPv6(candidateIPs)
+			// Prefer IPv4 (incl. 127.0.0.1) over IPv6: with MaxInst parallel probes
+			// per round, an IPv6 address early in the API response would push IPv4
+			// candidates into round 2 and behind exponential backoff. Stable sort
+			// preserves the existing within-family order.
+			candidateIPs = sortIPv4First(candidateIPs)
+			fmt.Printf("DEBUG: Candidate IPs for SSH: %v\n", candidateIPs)
+		}
 
 		// Probe every candidate IP in parallel batches (sized by MaxInst) per
 		// round, instead of waterfalling 5 retries through one IP at a time.
 		// First IP to answer wins.
 		port, tunnelID, err := a.sessionManager.StartProxyMulti(
-			a.ctx, sessionConfig, nodeID, candidateIPs, 22, "ssh",
+			ctx, sessionConfig, nodeID, candidateIPs, 22, "ssh",
 			func(status string) {
 				a.SetConnectionProgress(nodeID, status)
 			},
 		)
 		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				a.SetConnectionProgress(nodeID, "Cancelled")
+				return 0, "", err
+			}
 			a.SetConnectionProgress(nodeID, "Error: Connection failed on all interfaces")
 			return 0, "", fmt.Errorf("failed to start proxy on any candidate IP: %w", err)
 		}
@@ -561,6 +639,9 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool) (int, string, 
 func (a *App) StartTunnel(nodeID, targetIP string, targetPort int, protocol string) (int, string, error) {
 	// callID := time.Now().UnixNano()
 	// fmt.Printf("StartTunnel[%d] called for %s -> %s:%d (protocol: %s)\n", callID, nodeID, targetIP, targetPort, protocol)
+
+	ctx, releaseConnection := a.beginConnection(nodeID)
+	defer releaseConnection()
 
 	// Get cached session
 	cached, ok := a.sessionManager.GetCachedSession(nodeID)
@@ -651,13 +732,22 @@ func (a *App) StartTunnel(nodeID, targetIP string, targetPort int, protocol stri
 	}
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
+		if ctx.Err() != nil {
+			a.SetConnectionProgress(nodeID, "Cancelled")
+			return 0, "", ctx.Err()
+		}
 		fmt.Printf("DEBUG: Starting tunnel (attempt %d/%d)...\n", attempt, maxRetries)
 
-		port, tunnelID, err = a.sessionManager.StartProxy(a.ctx, cached.Config, nodeID, target, protocol, onProgress)
+		port, tunnelID, err = a.sessionManager.StartProxy(ctx, cached.Config, nodeID, target, protocol, onProgress)
 
 		if err == nil {
 			fmt.Printf("Tunnel started on localhost:%d -> %s (ID: %s)\n", port, target, tunnelID)
 			return port, tunnelID, nil
+		}
+
+		if errors.Is(err, context.Canceled) {
+			a.SetConnectionProgress(nodeID, "Cancelled")
+			return 0, "", err
 		}
 
 		// External policy denial — don't retry, return immediately with user-friendly message
@@ -698,14 +788,25 @@ func (a *App) StartTunnel(nodeID, targetIP string, targetPort int, protocol stri
 				// One more try with fresh session
 				fmt.Println("DEBUG: Retrying with fresh session...")
 				onProgress("Retrying with new session...")
-				port, tunnelID, err = a.sessionManager.StartProxy(a.ctx, cached.Config, nodeID, target, protocol, onProgress)
+				port, tunnelID, err = a.sessionManager.StartProxy(ctx, cached.Config, nodeID, target, protocol, onProgress)
 				if err == nil {
 					fmt.Printf("Tunnel started on localhost:%d -> %s (ID: %s) after session refresh\n", port, target, tunnelID)
 					return port, tunnelID, nil
 				}
+				if errors.Is(err, context.Canceled) {
+					a.SetConnectionProgress(nodeID, "Cancelled")
+					return 0, "", err
+				}
 			} else {
 				// Standard backoff for intermediate attempts
-				time.Sleep(2 * time.Second)
+				timer := time.NewTimer(2 * time.Second)
+				select {
+				case <-timer.C:
+				case <-ctx.Done():
+					timer.Stop()
+					a.SetConnectionProgress(nodeID, "Cancelled")
+					return 0, "", ctx.Err()
+				}
 				continue
 			}
 		}

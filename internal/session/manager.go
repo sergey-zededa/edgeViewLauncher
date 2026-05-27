@@ -577,6 +577,10 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 	seenNoDeviceOnline := false
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
+		if ctx.Err() != nil {
+			listener.Close()
+			return 0, "", ctx.Err()
+		}
 		if attempt > 1 {
 			fmt.Printf("DEBUG: Retry attempt %d/%d for tunnel setup...\n", attempt, maxRetries)
 			reportProgress(fmt.Sprintf("Retrying connection (attempt %d/%d)...", attempt, maxRetries))
@@ -592,6 +596,11 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 		wsConn, clientIP, attemptErr = m.tryProxyAttempt(ctx, config, target, currentInstID)
 		if attemptErr == nil {
 			break // Success
+		}
+
+		if errors.Is(attemptErr, context.Canceled) || errors.Is(attemptErr, context.DeadlineExceeded) {
+			listener.Close()
+			return 0, "", attemptErr
 		}
 
 		if attemptErr == ErrExternalPolicyDenied {
@@ -637,7 +646,14 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 			waitTime := time.Duration(1<<uint(attempt)) * time.Second
 			fmt.Printf("DEBUG: Waiting %v before next attempt...\n", waitTime)
 			reportProgress(fmt.Sprintf("Waiting %ds before retry...", int(waitTime.Seconds())))
-			time.Sleep(waitTime)
+			timer := time.NewTimer(waitTime)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+				listener.Close()
+				return 0, "", ctx.Err()
+			}
 		}
 	}
 
@@ -696,6 +712,10 @@ func (m *Manager) StartProxyMulti(ctx context.Context, config *zededa.SessionCon
 
 	startedAt := time.Now()
 	for round := 1; round <= maxRounds; round++ {
+		if ctx.Err() != nil {
+			listener.Close()
+			return 0, "", ctx.Err()
+		}
 		roundStart := time.Now()
 		if round == 1 {
 			reportProgress(fmt.Sprintf("Probing %d IP(s)...", len(candidateIPs)))
@@ -736,7 +756,14 @@ func (m *Manager) StartProxyMulti(ctx context.Context, config *zededa.SessionCon
 			}
 			infof(fmt.Sprintf("round=%d", round), "FAILED for all %d candidates after %v; backing off %v before round %d", len(candidateIPs), time.Since(roundStart), waitTime, round+1)
 			reportProgress(fmt.Sprintf("Waiting %ds before retry...", int(waitTime.Seconds())))
-			time.Sleep(waitTime)
+			timer := time.NewTimer(waitTime)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+				listener.Close()
+				return 0, "", ctx.Err()
+			}
 		} else {
 			infof(fmt.Sprintf("round=%d", round), "FAILED for all %d candidates after %v (final round)", len(candidateIPs), time.Since(roundStart))
 		}

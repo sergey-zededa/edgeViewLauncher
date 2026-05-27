@@ -36,6 +36,10 @@ pub fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                 let state = app.state::<AppState>();
                 let port_opt = *state.backend_port.lock().unwrap(); // Drops the lock here
                 if let Some(port) = port_opt {
+                    // Surface a "Terminating..." state in the main window's tunnel
+                    // list immediately, so the user gets feedback without having
+                    // to wait for the next 5s poll to reconcile.
+                    let _ = app2.emit("tunnel-closing", serde_json::json!({ "tunnelId": tid }));
                     tauri::async_runtime::spawn(async move {
                         let url = format!("http://localhost:{port}/api/tunnel/{tid}");
                         let _ = reqwest::Client::new().delete(&url).send().await;

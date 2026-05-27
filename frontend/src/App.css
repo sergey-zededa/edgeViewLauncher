@@ -889,6 +889,27 @@ body {
     background: rgba(210, 153, 34, 0.1);
 }
 
+.tunnel-badge.terminating {
+    color: var(--color-warning);
+    background: rgba(210, 153, 34, 0.12);
+    padding: 3px 8px;
+    font-weight: 500;
+    font-size: 10.5px;
+    border: 1px solid rgba(210, 153, 34, 0.35);
+}
+
+.tunnel-item.terminating {
+    opacity: 0.72;
+    border-color: rgba(210, 153, 34, 0.4);
+    background: linear-gradient(90deg, var(--bg-tertiary) 0%, rgba(210, 153, 34, 0.06) 100%);
+}
+
+.tunnel-item.terminating .tunnel-local code,
+.tunnel-item.terminating .tunnel-target {
+    text-decoration: line-through;
+    text-decoration-color: rgba(210, 153, 34, 0.5);
+}
+
 .icon-btn {
     background: transparent;
     border: 1px solid var(--border-color);
