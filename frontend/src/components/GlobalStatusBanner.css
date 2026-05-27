@@ -65,6 +65,13 @@
     flex-shrink: 0;
 }
 
+.status-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
 .dismiss-btn {
     background: transparent;
     border: none;
@@ -81,6 +88,23 @@
 .dismiss-btn:hover {
     background: rgba(255, 255, 255, 0.15);
     color: white;
+}
+
+.cancel-btn {
+    background: rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: white;
+    cursor: pointer;
+    padding: 3px 10px;
+    font-size: 12px;
+    font-weight: 500;
+    border-radius: 4px;
+    transition: all 0.2s;
+}
+
+.cancel-btn:hover {
+    background: rgba(255, 255, 255, 0.28);
+    border-color: rgba(255, 255, 255, 0.5);
 }
 
 @keyframes spin {
