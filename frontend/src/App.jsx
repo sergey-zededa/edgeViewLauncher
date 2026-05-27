@@ -925,9 +925,13 @@ function App() {
               }
             });
 
-          // Closed tunnels detected by polling (IDs no longer present)
+          // Closed tunnels detected by polling (IDs no longer present).
+          // Skip tunnels we already announced — the OnTunnelClosing listener
+          // (child-window close, tray close) and removeTunnel (in-app Stop
+          // button) both log synchronously and mark status='terminating', so
+          // logging again here would duplicate the line.
           prevForNode.forEach(t => {
-            if (!newIds.has(t.id)) {
+            if (!newIds.has(t.id) && t.status !== 'terminating') {
               addLog(`Tunnel closed: ${t.type} localhost:${t.localPort} -> ${t.targetIP}:${t.targetPort}`, 'closed');
             }
           });
@@ -1060,13 +1064,23 @@ function App() {
   // Cross-window tunnel teardown signal: child windows (TerminalView,
   // VncViewer) and the tray menu emit `tunnel-closing` right before they call
   // the DELETE endpoint. Mark the tunnel as 'terminating' so the active
-  // tunnels list shows visible feedback ("Terminating...") instead of
-  // appearing unchanged until the next 5s poll reconciles the removal.
+  // tunnels list shows visible feedback ("Terminating...") and synchronously
+  // log "Tunnel closed" — without this, the close message would only appear
+  // up to 5 seconds later when the next poll reconciled the removal.
   useEffect(() => {
     const unlisten = OnTunnelClosing((payload) => {
       const tid = payload?.tunnelId;
       if (!tid) return;
-      setActiveTunnels(prev => prev.map(t => t.id === tid ? { ...t, status: 'terminating' } : t));
+      setActiveTunnels(prev => {
+        const target = prev.find(t => t.id === tid);
+        if (target && target.status !== 'terminating') {
+          addLog(
+            `Tunnel closed: ${target.type} localhost:${target.localPort} -> ${target.targetIP}:${target.targetPort}`,
+            'closed'
+          );
+        }
+        return prev.map(t => t.id === tid ? { ...t, status: 'terminating' } : t);
+      });
     });
     return () => unlisten();
   }, []);
