@@ -4046,8 +4046,8 @@ Do you want to try connecting anyway?`)) {
             {selectedNode && !isDeviceOnline && (
               <div className="device-offline-banner">
                 <AlertTriangle size={14} />
-                Device is {formatStatus(selectedNode.status)} — EdgeView tunnel operations are unavailable.
-                Cloud configuration and last-known status are shown below.
+                Device is {formatStatus(selectedNode.status)} — live operations (SSH Terminal, VNC, TCP tunnels, Collect Info) are unavailable.
+                Configuration changes (SSH key, VGA, USB, Console, External Policy) can still be made and will be applied when the device reconnects.
               </div>
             )}
 
@@ -4264,11 +4264,13 @@ Do you want to try connecting anyway?`)) {
                             <Tooltip text="Enable SSH access to the EVE-OS shell via EdgeView tunnel." helpUrl="https://help.zededa.com/hc/en-us/articles/39473586111003-Edge-View-Overview#h_01K2NBYMH255X6QMJHP079XVXQ" simple>
                             <div
                               className={`config-chip ${sshStatus.status === 'enabled' ? 'enabled' : sshStatus.status === 'mismatch' ? 'warning' : 'disabled'}`}
-                              onClick={isDeviceOnline ? (sshStatus.status === 'enabled' ? handleDisableSSH : handleSetupSSH) : undefined}
-                              title={!isDeviceOnline ? "Device is offline" : sshStatus.status === 'enabled' ? "SSH Enabled - Click to Disable" : sshStatus.status === 'mismatch' ? "Key Mismatch - Click to Fix" : "SSH Disabled - Click to Enable"}
+                              onClick={sshStatus.status === 'enabled' ? handleDisableSSH : handleSetupSSH}
+                              title={!isDeviceOnline
+                                ? (sshStatus.status === 'enabled' ? "SSH Enabled - Click to Disable (applies when device reconnects)" : sshStatus.status === 'mismatch' ? "Key Mismatch - Click to Fix (applies when device reconnects)" : "SSH Disabled - Click to Enable (applies when device reconnects)")
+                                : sshStatus.status === 'enabled' ? "SSH Enabled - Click to Disable" : sshStatus.status === 'mismatch' ? "Key Mismatch - Click to Fix" : "SSH Disabled - Click to Enable"}
                               style={{
                                 display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
-                                fontSize: '12px', fontWeight: '500', cursor: isDeviceOnline ? 'pointer' : 'default', transition: 'all 0.2s', opacity: isDeviceOnline ? 1 : 0.5,
+                                fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
                                 backgroundColor: sshStatus.status === 'enabled' ? 'var(--color-success-bg)' : sshStatus.status === 'mismatch' ? 'var(--color-warning-bg)' : 'var(--bg-secondary)',
                                 color: sshStatus.status === 'enabled' ? 'var(--color-success)' : sshStatus.status === 'mismatch' ? 'var(--color-warning)' : 'var(--text-primary)',
                                 border: 'none'
@@ -4285,11 +4287,13 @@ Do you want to try connecting anyway?`)) {
                             <Tooltip text="Enable VGA console output on the device for local display or remote VNC access." helpUrl="https://help.zededa.com/hc/en-us/sections/40376827750043-Local-UI-for-Direct-Edge-Node-Access" simple>
                             <div
                               className={`config-chip ${sshStatus.vgaEnabled ? 'enabled' : 'disabled'}`}
-                              onClick={isDeviceOnline ? () => handleToggleVGA(!sshStatus.vgaEnabled) : undefined}
-                              title={!isDeviceOnline ? "Device is offline" : sshStatus.vgaEnabled ? "VGA Enabled - Click to Disable" : "VGA Disabled - Click to Enable"}
+                              onClick={() => handleToggleVGA(!sshStatus.vgaEnabled)}
+                              title={!isDeviceOnline
+                                ? (sshStatus.vgaEnabled ? "VGA Enabled - Click to Disable (applies when device reconnects)" : "VGA Disabled - Click to Enable (applies when device reconnects)")
+                                : sshStatus.vgaEnabled ? "VGA Enabled - Click to Disable" : "VGA Disabled - Click to Enable"}
                               style={{
                                 display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
-                                fontSize: '12px', fontWeight: '500', cursor: isDeviceOnline ? 'pointer' : 'default', transition: 'all 0.2s', opacity: isDeviceOnline ? 1 : 0.5,
+                                fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
                                 backgroundColor: sshStatus.vgaEnabled ? 'var(--color-success-bg)' : 'var(--bg-secondary)',
                                 color: sshStatus.vgaEnabled ? 'var(--color-success)' : 'var(--text-primary)',
                                 border: 'none'
@@ -4304,11 +4308,13 @@ Do you want to try connecting anyway?`)) {
                             <Tooltip text="Allow USB devices (e.g. keyboards) on the device for local access." helpUrl="https://help.zededa.com/hc/en-us/sections/40376827750043-Local-UI-for-Direct-Edge-Node-Access" simple>
                             <div
                               className={`config-chip ${sshStatus.usbEnabled ? 'enabled' : 'disabled'}`}
-                              onClick={isDeviceOnline ? () => handleToggleUSB(!sshStatus.usbEnabled) : undefined}
-                              title={!isDeviceOnline ? "Device is offline" : sshStatus.usbEnabled ? "USB Enabled - Click to Disable" : "USB Disabled - Click to Enable"}
+                              onClick={() => handleToggleUSB(!sshStatus.usbEnabled)}
+                              title={!isDeviceOnline
+                                ? (sshStatus.usbEnabled ? "USB Enabled - Click to Disable (applies when device reconnects)" : "USB Disabled - Click to Enable (applies when device reconnects)")
+                                : sshStatus.usbEnabled ? "USB Enabled - Click to Disable" : "USB Disabled - Click to Enable"}
                               style={{
                                 display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
-                                fontSize: '12px', fontWeight: '500', cursor: isDeviceOnline ? 'pointer' : 'default', transition: 'all 0.2s', opacity: isDeviceOnline ? 1 : 0.5,
+                                fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
                                 backgroundColor: sshStatus.usbEnabled ? 'var(--color-success-bg)' : 'var(--bg-secondary)',
                                 color: sshStatus.usbEnabled ? 'var(--color-success)' : 'var(--text-primary)',
                                 border: 'none'
@@ -4323,11 +4329,13 @@ Do you want to try connecting anyway?`)) {
                             <Tooltip text="Enable serial console access on the device for low-level debugging." helpUrl="https://help.zededa.com/hc/en-us/sections/40376827750043-Local-UI-for-Direct-Edge-Node-Access" simple>
                             <div
                               className={`config-chip ${sshStatus.consoleEnabled ? 'enabled' : 'disabled'}`}
-                              onClick={isDeviceOnline ? () => handleToggleConsole(!sshStatus.consoleEnabled) : undefined}
-                              title={!isDeviceOnline ? "Device is offline" : sshStatus.consoleEnabled ? "Console Enabled - Click to Disable" : "Console Disabled - Click to Enable"}
+                              onClick={() => handleToggleConsole(!sshStatus.consoleEnabled)}
+                              title={!isDeviceOnline
+                                ? (sshStatus.consoleEnabled ? "Console Enabled - Click to Disable (applies when device reconnects)" : "Console Disabled - Click to Enable (applies when device reconnects)")
+                                : sshStatus.consoleEnabled ? "Console Enabled - Click to Disable" : "Console Disabled - Click to Enable"}
                               style={{
                                 display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
-                                fontSize: '12px', fontWeight: '500', cursor: isDeviceOnline ? 'pointer' : 'default', transition: 'all 0.2s', opacity: isDeviceOnline ? 1 : 0.5,
+                                fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
                                 backgroundColor: sshStatus.consoleEnabled ? 'var(--color-success-bg)' : 'var(--bg-secondary)',
                                 color: sshStatus.consoleEnabled ? 'var(--color-success)' : 'var(--text-primary)',
                                 border: 'none'
@@ -4342,11 +4350,13 @@ Do you want to try connecting anyway?`)) {
                             <Tooltip text="Allow EdgeView to route traffic to external IPs beyond the device's local network." helpUrl="https://lf-edge.atlassian.net/wiki/spaces/EVE/pages/14584954/EdgeView+Commands#Access-TCP-Services-of-External-Hosts" simple>
                             <div
                               className={`config-chip ${sshStatus.externalPolicy ? 'enabled' : 'disabled'}`}
-                              onClick={isDeviceOnline ? handleEnableExternalPolicy : undefined}
-                              title={!isDeviceOnline ? "Device is offline" : sshStatus.externalPolicy ? "External Policy Enabled - Click to Disable" : "External Policy Disabled - Click to Enable"}
+                              onClick={handleEnableExternalPolicy}
+                              title={!isDeviceOnline
+                                ? (sshStatus.externalPolicy ? "External Policy Enabled - Click to Disable (applies when device reconnects)" : "External Policy Disabled - Click to Enable (applies when device reconnects)")
+                                : sshStatus.externalPolicy ? "External Policy Enabled - Click to Disable" : "External Policy Disabled - Click to Enable"}
                               style={{
                                 display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
-                                fontSize: '12px', fontWeight: '500', cursor: isDeviceOnline ? 'pointer' : 'default', transition: 'all 0.2s', opacity: isDeviceOnline ? 1 : 0.5,
+                                fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
                                 backgroundColor: sshStatus.externalPolicy ? 'var(--color-success-bg)' : 'var(--bg-secondary)',
                                 color: sshStatus.externalPolicy ? 'var(--color-success)' : 'var(--text-primary)',
                                 border: 'none'

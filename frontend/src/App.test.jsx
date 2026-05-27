@@ -897,12 +897,54 @@ describe('Search with local cache filtering', () => {
 
     // Should show the offline banner
     await waitFor(() => {
-      expect(screen.getByText(/EdgeView tunnel operations are unavailable/)).toBeInTheDocument();
+      expect(screen.getByText(/live operations .* are unavailable/)).toBeInTheDocument();
     });
 
     // Should have called cloud APIs even though device is offline
     expect(electronAPI.GetDeviceServices).toHaveBeenCalledWith('n1', 'Offline-Dev');
     expect(electronAPI.GetSSHStatus).toHaveBeenCalledWith('n1');
+  });
+
+  // Regression: cloud-config controls (VGA/USB/Console/Ext Policy/SSH key) are
+  // ZEDEDA Cloud PUTs the device reconciles on reconnect — they must remain
+  // clickable while the device is offline. Only live-session operations
+  // (SSH Terminal, VNC, TCP tunnels, Collect Info) require the device online.
+  it('config chips (VGA/USB/Console/SSH/Ext Policy) work on offline devices', async () => {
+    const devices = [
+      { id: 'n1', name: 'Offline-Dev', status: 'offline', project: 'p1' },
+    ];
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache(devices));
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify({ services: [] }));
+    electronAPI.GetSSHStatus.mockResolvedValue({
+      status: 'disabled',
+      vgaEnabled: false,
+      usbEnabled: false,
+      consoleEnabled: false,
+      externalPolicy: false,
+      managementIPs: ['10.0.0.1'],
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByText('Offline-Dev'));
+    await waitFor(() => expect(screen.getByText('Activity Log')).toBeInTheDocument());
+
+    // Each chip should be clickable and dispatch its cloud API call, despite
+    // the device being offline. Cloud accepts the change; device reconciles
+    // when it reconnects.
+    fireEvent.click(await screen.findByText('Enable VGA'));
+    await waitFor(() => expect(electronAPI.SetVGAEnabled).toHaveBeenCalledWith('n1', true));
+
+    fireEvent.click(screen.getByText('Enable USB'));
+    await waitFor(() => expect(electronAPI.SetUSBEnabled).toHaveBeenCalledWith('n1', true));
+
+    fireEvent.click(screen.getByText('Enable Console'));
+    await waitFor(() => expect(electronAPI.SetConsoleEnabled).toHaveBeenCalledWith('n1', true));
+
+    fireEvent.click(screen.getByText('Enable SSH'));
+    await waitFor(() => expect(electronAPI.SetupSSH).toHaveBeenCalledWith('n1'));
+
+    fireEvent.click(screen.getByText('Enable Ext. Policy'));
+    await waitFor(() => expect(electronAPI.EnableExternalPolicy).toHaveBeenCalledWith('n1', true));
   });
 
   it('refresh button calls RefreshDeviceCache', async () => {
