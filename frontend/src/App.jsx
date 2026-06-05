@@ -780,6 +780,13 @@ function App() {
   // wired to CancelConnection(nodeID). Set while a connection attempt
   // (EVE-OS SSH session, SSH tunnel, VNC tunnel, TCP tunnel) is in flight.
   const [cancellableConnection, setCancellableConnection] = useState(null);
+  // Authoritative signal that the user clicked the connection-toast Cancel
+  // button. The onCancel handler sets this (and already logs "Connection
+  // attempts cancelled"), so per-flow catch blocks can suppress their own
+  // duplicate log. We can't rely on the error text: a genuine "all probe
+  // rounds failed" error embeds "...cancelled: context deadline exceeded",
+  // which previously matched the cancel filter and was silently swallowed.
+  const userCancelledConnectionRef = useRef(false);
   const [sshError, setSshError] = useState(null);
   // Last SSH update timestamp
   const [lastSSHUpdate, setLastSSHUpdate] = useState(0);
@@ -1446,9 +1453,21 @@ function App() {
   // the onCancel handler — the per-flow catch blocks should suppress their
   // own "Failed to start ..." log to avoid duplication.
   const isCancelError = (err) => {
+    // The connection-toast Cancel button is the authoritative signal that the
+    // user aborted (it already logged the cancellation). Consume the flag so a
+    // *later* genuine failure isn't also suppressed.
+    if (userCancelledConnectionRef.current) {
+      userCancelledConnectionRef.current = false;
+      return true;
+    }
     if (!err) return false;
     const msg = (err.message || String(err)).toLowerCase();
-    return msg.includes('cancel') || msg.includes('context canceled');
+    // Go's context.Canceled stringifies to "context canceled" (single 'l') —
+    // that's what the backend returns on an explicit cancel. Do NOT match the
+    // bare substring "cancel": a real "all probe rounds failed" error embeds
+    // "...cancelled: context deadline exceeded" (double 'l', a per-round
+    // deadline) and MUST be surfaced to the activity log, not swallowed.
+    return msg.includes('context canceled');
   };
 
   // Extract user-friendly error message from API errors
@@ -1967,9 +1986,13 @@ function App() {
           });
           const hasToken = cfg.apiToken || (cfg.clusters && cfg.clusters.some(c => c.name === cfg.activeCluster && c.apiToken));
           if (hasToken) {
+            // Inject secure config to the backend FIRST so its ZEDEDA client
+            // has the token, THEN load user/enterprise info. loadUserInfo()
+            // makes authenticated calls (GetEnterprise); if it raced ahead of
+            // injection the backend had no token yet, the call 401'd, and the
+            // header was stuck showing the bare enterprise ID instead of name.
+            await InjectSecureConfig().catch(err => console.error("Failed to inject config:", err));
             loadUserInfo();
-            // Inject secure config to backend now that we have tokens
-            InjectSecureConfig().catch(err => console.error("Failed to inject config:", err));
           } else {
             setLoading(false);
             setShowSettings(true);
@@ -2151,6 +2174,9 @@ Do you want to try connecting anyway?`)) {
     try {
       setShowTerminalMenu(false);
       setLoadingSSH(true);
+      // Start each attempt with a clean cancel flag so a stale value from a
+      // prior attempt can't suppress this one's genuine-failure log.
+      userCancelledConnectionRef.current = false;
       setCancellableConnection(nodeId);
       setGlobalStatus({ type: 'loading', message: targetIP ? `Starting EdgeView session to ${targetIP}...` : 'Starting EdgeView session...' });
       addLog(`Starting EdgeView SSH session (${useInApp ? 'In-App Terminal' : 'Native Terminal'})${targetIP ? ` to ${targetIP}` : ''}...`, 'info');
@@ -2234,8 +2260,9 @@ Do you want to try connecting anyway?`)) {
       console.error('Failed to connect:', err);
       const userMessage = extractErrorMessage(err);
       // The user-triggered cancel path already logged "Connection attempts
-      // cancelled" from the onCancel handler — don't double-log here.
-      if (!/cancel/i.test(userMessage)) {
+      // cancelled" from the onCancel handler — don't double-log here. A genuine
+      // failure (e.g. all SSH probe rounds exhausted) must still be reported.
+      if (!isCancelError(err)) {
         addLog(`Connection failed: ${userMessage}`, 'error');
       }
       // Don't show error banner - activity log entry is sufficient
@@ -3354,6 +3381,9 @@ Do you want to try connecting anyway?`)) {
           onDismiss={() => setGlobalStatus(null)}
           onCancel={cancellableConnection ? () => {
             const nodeId = cancellableConnection;
+            // Mark this as a user-initiated cancel so the in-flight flow's
+            // catch block suppresses its own duplicate log (see isCancelError).
+            userCancelledConnectionRef.current = true;
             setCancellableConnection(null);
             CancelConnection(nodeId).catch(err => {
               console.error('CancelConnection failed:', err);
