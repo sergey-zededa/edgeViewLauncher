@@ -485,33 +485,54 @@ func (c *Client) GetAppInstanceConfig(appInstanceID string) (*AppInstanceConfig,
 	return &config, nil
 }
 
-// GetEnterprise fetches the enterprise information
+// GetEnterprise fetches the enterprise information.
+//
+// It retries a few times because the ZEDEDA API returns a transient
+// 401 ("Session Cache miss") on the first authenticated request after a new
+// token is injected — which happens on app startup and right after a cluster
+// switch. Without the retry that single failure leaves the enterprise name
+// unresolved and the UI stuck showing the bare enterprise ID.
 func (c *Client) GetEnterprise() (*Enterprise, error) {
-	url := fmt.Sprintf("%s/api/v1/enterprises/self", c.BaseURL)
+	baseURL, token := c.snapshot()
+	url := fmt.Sprintf("%s/api/v1/enterprises/self", baseURL)
 
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, err
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt*750) * time.Millisecond)
+		}
+
+		ent, err := func() (*Enterprise, error) {
+			req, err := http.NewRequest("GET", url, nil)
+			if err != nil {
+				return nil, err
+			}
+			req.Header.Set("Authorization", "Bearer "+token)
+			req.Header.Set("Content-Type", "application/json")
+
+			resp, err := c.HTTPClient.Do(req)
+			if err != nil {
+				return nil, err
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != 200 {
+				return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
+			}
+
+			var enterprise Enterprise
+			if err := json.NewDecoder(resp.Body).Decode(&enterprise); err != nil {
+				return nil, err
+			}
+			return &enterprise, nil
+		}()
+		if err == nil {
+			return ent, nil
+		}
+		lastErr = err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
-	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
-	}
-
-	var enterprise Enterprise
-	if err := json.NewDecoder(resp.Body).Decode(&enterprise); err != nil {
-		return nil, err
-	}
-
-	return &enterprise, nil
+	return nil, lastErr
 }
 
 // GetProjects fetches all projects

@@ -1408,6 +1408,36 @@ describe('EdgeView session controls', () => {
       expect(electronAPI.SetConsoleEnabled).toHaveBeenCalledWith('node-1', true);
     });
   });
+
+  // Regression: when an EVE-OS SSH session fails after all probe rounds, the
+  // backend's leaf error embeds the word "cancelled" (a per-round context
+  // deadline) even though the user never clicked Cancel. The catch block used
+  // to match the bare substring "cancel" and silently swallow the log, leaving
+  // the activity log with no indication the connection failed.
+  it('logs "Connection failed" when the SSH probe exhausts all rounds (error text contains "cancelled")', async () => {
+    const node = { id: 'node-1', name: 'SSH-Fail', status: 'online', project: 'proj-1' };
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([node]));
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'enabled', expiry: Math.floor(Date.now() / 1000) + 3600 });
+    electronAPI.GetSessionStatus.mockResolvedValue({ active: true, expiresAt: new Date(Date.now() + 3600000).toISOString() });
+    electronAPI.ConnectToNode.mockRejectedValue(
+      new Error('failed to start proxy on any candidate IP: failed to establish tunnel after 5 rounds across 4 IP(s): waitForTcpSetupOK cancelled: context deadline exceeded')
+    );
+
+    render(<App />);
+
+    const nodeItem = await screen.findByText('SSH-Fail');
+    fireEvent.click(nodeItem);
+
+    await screen.findByText('EdgeView Session');
+
+    // Open the EVE-OS SSH Terminal split menu, then pick the External Terminal
+    // entry — that calls startSession(node.id, false).
+    fireEvent.click(screen.getByTitle('Open SSH Terminal'));
+    fireEvent.click(await screen.findByText('Use External Terminal'));
+
+    expect(await screen.findByText(/Connection failed:/)).toBeInTheDocument();
+  });
 });
 
 describe('ActivityLog component', () => {
