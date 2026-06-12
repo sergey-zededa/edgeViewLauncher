@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -83,6 +84,10 @@ type APIResponse struct {
 	Success bool        `json:"success"`
 	Data    interface{} `json:"data,omitempty"`
 	Error   string      `json:"error,omitempty"`
+	// Code is a stable, machine-readable classifier the frontend can branch on
+	// without parsing the free-form Error string. Currently only "UNAUTHORIZED"
+	// (expired/invalid API token) is emitted; empty for generic errors.
+	Code string `json:"code,omitempty"`
 }
 
 // ContainerShellRequest is the request body for /api/container-shell
@@ -486,6 +491,20 @@ func (s *HTTPServer) sendSuccess(w http.ResponseWriter, data interface{}) {
 
 func (s *HTTPServer) sendError(w http.ResponseWriter, err error) {
 	w.Header().Set("Content-Type", "application/json")
+
+	// Expired/invalid API token: surface a stable code and a clean, actionable
+	// message so the frontend can prompt the user to update the cluster token
+	// instead of dumping the raw ZEDEDA error envelope into the UI.
+	if errors.Is(err, zededa.ErrUnauthorized) {
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(APIResponse{
+			Success: false,
+			Code:    "UNAUTHORIZED",
+			Error:   "The ZEDEDA API token for this cluster is invalid or expired.",
+		})
+		return
+	}
+
 	w.WriteHeader(http.StatusInternalServerError)
 	json.NewEncoder(w).Encode(APIResponse{
 		Success: false,

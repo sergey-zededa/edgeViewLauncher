@@ -18,7 +18,11 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 const apiCall = (endpoint, method = 'GET', body = undefined) =>
     invoke('api_call', { endpoint, method, body: body ?? null }).then(r => {
         if (r && r.success === false && r.error) {
-            throw new Error(r.error);
+            const e = new Error(r.error);
+            // Preserve the backend's machine-readable classifier (e.g.
+            // "UNAUTHORIZED") so callers can branch without parsing the message.
+            if (r.code) e.code = r.code;
+            throw e;
         }
         return r;
     });

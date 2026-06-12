@@ -6,7 +6,7 @@ const REVEAL_TIMEOUT_MS = 15000;
 // Secure-by-default input for bearer tokens. Masks the stored value,
 // offers one-tap reveal (auto-hides after 15s and on window blur),
 // copy-to-clipboard, and an explicit edit/replace affordance.
-export default function TokenField({ value, onChange, placeholder, autoFocus = false }) {
+export default function TokenField({ value, onChange, placeholder, autoFocus = false, autoEdit = false }) {
   const hasStored = typeof value === 'string' && value.length > 0;
   // `userEditing` is the user's explicit override: true after they click
   // Replace, false after they click Done. Defaulting to false means the UI
@@ -14,7 +14,10 @@ export default function TokenField({ value, onChange, placeholder, autoFocus = f
   // This avoids the "stuck in edit mode after app restart" bug where the
   // token loads asynchronously from secure storage after the component has
   // already mounted with an empty value.
-  const [userEditing, setUserEditing] = useState(false);
+  // `autoEdit` seeds edit mode on mount so a deep-link (e.g. the expired-token
+  // prompt) can open this field focused and ready to paste, even when a token
+  // is already stored.
+  const [userEditing, setUserEditing] = useState(autoEdit);
   const editing = userEditing || !hasStored;
   const [revealed, setRevealed] = useState(false);
   const [copied, setCopied] = useState(false);

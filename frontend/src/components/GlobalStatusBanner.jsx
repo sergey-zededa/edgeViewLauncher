@@ -5,7 +5,7 @@ import './GlobalStatusBanner.css';
 function GlobalStatusBanner({ status, onDismiss, onCancel }) {
     if (!status) return null;
 
-    const { type, message } = status;
+    const { type, message, action } = status;
 
     const getIcon = () => {
         switch (type) {
@@ -42,6 +42,16 @@ function GlobalStatusBanner({ status, onDismiss, onCancel }) {
                 <span>{message}</span>
             </div>
             <div className="status-actions">
+                {action && action.onClick && (
+                    <button
+                        className="action-btn"
+                        onClick={() => {
+                            try { action.onClick(); } catch (_) { /* ignore */ }
+                        }}
+                    >
+                        {action.label || 'Open'}
+                    </button>
+                )}
                 {showCancel && (
                     <button
                         className="cancel-btn"
