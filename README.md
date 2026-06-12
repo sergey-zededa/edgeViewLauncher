@@ -37,7 +37,7 @@ This repository contains three main parts:
 - **Frontend** (`frontend/`) – React UI, device search, tunnel management, terminal and VNC views
 - **Go backend** (root Go files and `internal/`) – HTTP API, EdgeView session management, SSH/VNC/TCP tunneling
 
-For a more detailed architectural overview, see `WARP.md` and the source code in `internal/`, `frontend/`, and `src-tauri/`.
+For a more detailed architectural overview, see `CLAUDE.md` (and `AGENTS.md`) and the source code in `internal/`, `frontend/`, and `src-tauri/`.
 
 ## Development Prerequisites
 
@@ -54,7 +54,7 @@ The development workflow is driven by the Tauri + Go backend + React frontend st
 2. **Run Tauri in development mode**
    - Run `npm run dev` at the project root to start the Tauri app. Tauri will automatically spawn the Go backend and the Vite dev server.
 
-Exact commands and variations can be found in `WARP.md` and the package/config files (`package.json`, `tauri.conf.json`).
+Exact commands and variations can be found in `CLAUDE.md` and the package/config files (`package.json`, `tauri.conf.json`).
 
 ## Key Components
 
@@ -63,10 +63,10 @@ Exact commands and variations can be found in `WARP.md` and the package/config f
 - `frontend/src/App.jsx` – main React UI for clusters, devices, tunnels, and settings
 - `frontend/src/components/TerminalView.jsx` – xterm.js-based SSH terminal over WebSocket
 - `frontend/src/components/VncViewer.jsx` – noVNC-based remote desktop client
-- `http-server.go` – HTTP and WebSocket routes used by the frontend and Electron
+- `http-server.go` – HTTP and WebSocket routes used by the frontend (via the Tauri `api_call` command)
 - `app.go` and `internal/` packages – ZEDEDA API client, EdgeView sessions, tunnel manager, SSH handling
 
-Refer to comments in these files and to `WARP.md` for implementation details and development conventions.
+Refer to comments in these files and to `CLAUDE.md` for implementation details and development conventions.
 
 ## Building
 
@@ -83,7 +83,7 @@ npm run build:windows
 npm run build:linux
 ```
 
-Artifacts are written into `dist-electron/`.
+Artifacts are written into `src-tauri/target/` (per-target `release/bundle/` subfolders).
 
 ### Code Signing
 
@@ -119,7 +119,8 @@ Before contributing, please:
 
 ## Additional Documentation
 
-- `WARP.md` – repository-specific development guidance, architecture notes, and testing instructions
+- `CLAUDE.md` / `AGENTS.md` – repository-specific development guidance, architecture notes, and testing instructions
+- `frontend/WARP.md` – frontend-focused development guidance
 - `docs/AUTO_UPDATE.md` – detailed auto-update implementation and release process
 - Source code (especially `internal/` and `frontend/`) for the authoritative behaviour of sessions, tunnels, and UI flows
 

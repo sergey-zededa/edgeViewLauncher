@@ -50,7 +50,7 @@ EdgeView Launcher is a Tauri desktop application with a Go backend sidecar for m
 │      ├── TerminalView.jsx  – xterm.js WebSocket terminal                 │
 │      └── VncViewer.jsx     – NoVNC remote desktop viewer                 │
 └─────────────────────────────┬────────────────────────────────────────────┘
-                              │ HTTP/WebSocket to localhost:8080
+                              │ HTTP/WebSocket to localhost:<dynamic-port>
 ┌─────────────────────────────▼────────────────────────────────────────────┐
 │                        Go Backend                                         │
 │  http-server.go  – HTTP API routes, WebSocket SSH terminal handler       │
@@ -72,8 +72,10 @@ EdgeView Launcher is a Tauri desktop application with a Go backend sidecar for m
 
 ### Key Concepts
 - **Clusters**: Multiple ZEDEDA cloud endpoints can be configured (baseUrl + apiToken)
-- **EdgeView Sessions**: Authenticated WebSocket tunnels to edge devices via ZEDEDA's EdgeView service
+- **EdgeView Sessions**: Authenticated WebSocket tunnels to edge devices via ZEDEDA's EdgeView service, cached ~5 hours. Expiry is stored wall-clock (monotonic stripped via `expiresAt.Round(0)`) so a session that expires while the machine sleeps isn't mistaken for valid. `ResetEdgeView` invalidates the local cache so a reset re-mints cleanly.
 - **Tunnels**: Persistent TCP tunnels (SSH, VNC, custom ports) tracked in `session.Manager`
+- **Cloud-config vs live-session gating**: Cloud-config ops (Enable SSH/VGA/USB/Console/Ext Policy) are async ZEDEDA PUTs and **must NOT** be gated on device-online; live-session ops (SSH/VNC/tunnels/Collect Info) require an active EdgeView tunnel and **must** be gated on `isSessionConnected`.
+- **Auth errors**: ZEDEDA 401s map to `zededa.ErrUnauthorized` → response `code: "UNAUTHORIZED"` → frontend "Update Token" prompt (no raw error blob).
 
 ## Development Commands
 
@@ -81,8 +83,9 @@ EdgeView Launcher is a Tauri desktop application with a Go backend sidecar for m
 # Start development (runs both frontend and backend automatically via tauri.conf.json)
 npm run dev
 
-# Rebuild Go backend only (after Go code changes) -> needed before Tauri runs
-go build -o src-tauri/binaries/edgeview-backend ./cmd/edgeview-backend
+# Rebuild Go backend only (after Go code changes) -> needed before Tauri runs.
+# The binary MUST carry the platform-triple suffix so Tauri finds the sidecar.
+go build -o src-tauri/binaries/edgeview-backend-aarch64-apple-darwin ./cmd/edgeview-backend
 
 # Build for production
 npm run build                       # Builds Tauri package
@@ -93,7 +96,7 @@ npm run build:linux                 # Linux x64 build
 cd frontend && npm test             # Run all tests with Vitest
 ```
 
-**Important**: The Go binary must be named `edgeview-backend` (not `edgeViewLauncher`) because `electron-main.js` looks for this specific name.
+**Important**: The Go binary is the Tauri **sidecar** — it must be placed in `src-tauri/binaries/` and named `edgeview-backend-<target-triple>` (e.g. `edgeview-backend-aarch64-apple-darwin`) so the Tauri shell can spawn it. Tauri discovers its dynamic HTTP port at startup by parsing the backend's stdout line `"HTTP Server starting on :<PORT>"`.
 
 ## Testing
 
@@ -127,7 +130,8 @@ For full API documentation of the ZEDEDA Cloud API, refer to the Swagger definit
 
 - Config file: `~/.edgeview-config.json` (clusters, recent devices)
 - SSH keys: `~/.ssh/edgeview_rsa` and `~/.ssh/edgeview_rsa.pub`
-- Production build output: `dist-electron/`
+- Go backend binary (dev, mac): `src-tauri/binaries/edgeview-backend-aarch64-apple-darwin`
+- Production build output: `src-tauri/target/`
 
 ## Release Process
 
