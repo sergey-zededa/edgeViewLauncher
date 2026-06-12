@@ -6,7 +6,7 @@ This file provides guidance to WARP (warp.dev) when working with the **frontend*
 
 EdgeView Launcher is a **Tauri v2** desktop application with a Go backend that provides remote device management for ZEDEDA edge nodes. The frontend is a React + Vite app. It does **not** talk to the Go backend directly — every API call is proxied through a single generic Tauri command (`api_call`) implemented in Rust, which forwards HTTP requests to the Go backend running as a sidecar on a dynamic localhost port.
 
-> Note: legacy `electron-main.js` / `electron-preload.js` / `src/electronAPI.js` files may still exist in the tree from the pre-Tauri era, but they are **not** part of the live runtime. The app runs under Tauri (`tauri dev` / `tauri build`); the frontend imports `./tauriAPI`, not `./electronAPI`.
+> Note: the app runs under Tauri (`tauri dev` / `tauri build`); the frontend imports `./tauriAPI`, not `./electronAPI`. The legacy Electron files (`electron-main.js`, `electron-preload.js`, `src/electronAPI.js`) were removed in the Tauri-migration cleanup; see `docs/MIGRATING_FROM_ELECTRON.md` for the history.
 
 ## Architecture
 
