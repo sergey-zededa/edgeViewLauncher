@@ -1,8 +1,10 @@
 /**
- * tauriAPI.js – drop-in replacement for electronAPI.js
+ * tauriAPI.js – the single module that wraps all Tauri `invoke()` calls.
  *
- * Exports the EXACT same function names as electronAPI.js so that App.jsx
- * requires zero changes other than swapping the import path.
+ * It exposes the function names App.jsx consumes. (It was originally
+ * introduced as a drop-in replacement for the legacy Electron preload API
+ * so the UI required no changes beyond swapping the import path; the Electron
+ * layer has since been removed.)
  *
  * All backend calls route through the generic `api_call` Tauri command.
  * Window / system / update functions invoke their dedicated Rust commands.
