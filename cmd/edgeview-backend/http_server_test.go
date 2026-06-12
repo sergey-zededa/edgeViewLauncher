@@ -3,8 +3,11 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -200,5 +203,57 @@ func TestHandleAddRecentDevice(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected node-xyz to be present in RecentDevices")
+	}
+}
+
+// TestSendError_UnauthorizedCode verifies that an error wrapping
+// zededa.ErrUnauthorized is reported with a stable "UNAUTHORIZED" code, a 401
+// status, and a clean message — so the frontend can prompt the user to update
+// the token instead of rendering the raw ZEDEDA error envelope.
+func TestSendError_UnauthorizedCode(t *testing.T) {
+	srv := newTestServer(t)
+
+	rr := httptest.NewRecorder()
+	// Wrap like the real call chain does (fmt.Errorf("...: %w", err)).
+	srv.sendError(rr, fmt.Errorf("failed to get app instances: %w", zededa.ErrUnauthorized))
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status 401, got %d", rr.Code)
+	}
+	var resp APIResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.Success {
+		t.Fatalf("expected success=false")
+	}
+	if resp.Code != "UNAUTHORIZED" {
+		t.Fatalf("expected code UNAUTHORIZED, got %q", resp.Code)
+	}
+	if strings.Contains(resp.Error, "Session Cache miss") || strings.Contains(resp.Error, "%w") {
+		t.Fatalf("expected a clean message, got %q", resp.Error)
+	}
+}
+
+// TestSendError_GenericUnchanged verifies non-auth errors keep the existing
+// 500 + raw-message behavior (no UNAUTHORIZED code).
+func TestSendError_GenericUnchanged(t *testing.T) {
+	srv := newTestServer(t)
+
+	rr := httptest.NewRecorder()
+	srv.sendError(rr, errors.New("some other failure"))
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status 500, got %d", rr.Code)
+	}
+	var resp APIResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.Code != "" {
+		t.Fatalf("expected empty code for generic error, got %q", resp.Code)
+	}
+	if resp.Error != "some other failure" {
+		t.Fatalf("expected raw error message, got %q", resp.Error)
 	}
 }

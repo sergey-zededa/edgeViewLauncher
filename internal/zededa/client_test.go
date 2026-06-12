@@ -3,8 +3,33 @@ package zededa
 import (
     "encoding/base64"
     "encoding/json"
+    "errors"
+    "net/http"
+    "net/http/httptest"
     "testing"
 )
+
+// TestUnauthorizedMapsToErrUnauthorized verifies that a 401 from the ZEDEDA API
+// surfaces as ErrUnauthorized (detectable via errors.Is up the call chain), so
+// the HTTP layer can render a clean "update your token" prompt instead of the
+// raw error body. Representative coverage: a status-returning method and an
+// EdgeView control method, which use different error-construction sites.
+func TestUnauthorizedMapsToErrUnauthorized(t *testing.T) {
+    srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.WriteHeader(http.StatusUnauthorized)
+        w.Write([]byte(`{"error":[{"ec":"Unauthorized","details":"Session Cache miss"}]}`))
+    }))
+    defer srv.Close()
+
+    c := NewClient(srv.URL, "expired-token")
+
+    if _, err := c.GetDeviceAppInstances("dev-1", ""); !errors.Is(err, ErrUnauthorized) {
+        t.Fatalf("GetDeviceAppInstances: expected ErrUnauthorized, got %v", err)
+    }
+    if err := c.StartEdgeView("dev-1"); !errors.Is(err, ErrUnauthorized) {
+        t.Fatalf("StartEdgeView: expected ErrUnauthorized, got %v", err)
+    }
+}
 
 // helper to build a minimal JWT with given claims
 func buildTestJWT(t *testing.T, claims map[string]interface{}) string {

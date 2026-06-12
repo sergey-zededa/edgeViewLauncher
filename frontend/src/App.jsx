@@ -453,6 +453,9 @@ function App() {
   const [deviceCache, setDeviceCache] = useState(null); // { devices, projects, updatedAt, isRefreshing }
   const [cacheLoaded, setCacheLoaded] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  // When set to a cluster name, that cluster's token field opens in edit mode
+  // focused — used to deep-link from the "expired token" prompt.
+  const [focusTokenCluster, setFocusTokenCluster] = useState('');
   const [showAbout, setShowAbout] = useState(false);
   const [showClusterDropdown, setShowClusterDropdown] = useState(null); // null | 'header' | 'icon'
   const clusterDropdownRef = useRef(null);
@@ -1448,6 +1451,35 @@ function App() {
     setLogs(prev => [...prev, { timestamp, message, type }]);
   };
 
+  // --- Expired/invalid API token handling --------------------------------
+  // The Go backend tags ZEDEDA 401s with code "UNAUTHORIZED" (see sendError +
+  // tauriAPI apiCall, which copies it onto the thrown error). We branch on that
+  // code to show one clear, actionable message and a path to re-paste the
+  // token, instead of dumping the raw ZEDEDA error envelope into the UI.
+  const isAuthError = (err) => err?.code === 'UNAUTHORIZED';
+
+  // Deep-link: open Settings focused on the active cluster's token field, ready
+  // to paste a fresh token.
+  const openTokenSettings = () => {
+    const target = config.activeCluster;
+    setGlobalStatus(null);
+    setShowSettings(true);
+    if (target) {
+      handleClusterSelect(target);
+      setFocusTokenCluster(target);
+    }
+  };
+
+  const handleAuthError = () => {
+    const cluster = config.activeCluster || 'this cluster';
+    addLog(`API token for "${cluster}" is invalid or expired — click Update Token to re-paste it.`, 'error');
+    setGlobalStatus({
+      type: 'error',
+      message: `The API token for "${cluster}" has expired or is invalid. Update it to continue.`,
+      action: { label: 'Update Token', onClick: openTokenSettings },
+    });
+  };
+
   // Whether an error came from the user clicking Cancel on a connection toast.
   // Those paths get a single "Connection attempts cancelled" log entry from
   // the onCancel handler — the per-flow catch blocks should suppress their
@@ -2077,8 +2109,13 @@ function App() {
       }
     }).catch(err => {
       console.error("Failed to get services:", err);
-      addLog(`Failed to get services: ${err} `, 'error');
-      setServices({ error: err.toString() });
+      if (isAuthError(err)) {
+        handleAuthError();
+        setServices({ error: 'API token expired or invalid.', code: 'UNAUTHORIZED' });
+      } else {
+        addLog(`Failed to get services: ${err} `, 'error');
+        setServices({ error: err.toString() });
+      }
     }).finally(() => {
       setLoadingServices(false);
       GetSessionStatus(node.id).then(status => {
@@ -2433,8 +2470,11 @@ Do you want to try connecting anyway?`)) {
       console.error("ResetEdgeView failed:", err);
       const errMsg = err.message || String(err);
 
-      // Check if it's a server error
-      if (errMsg.includes('500') || errMsg.includes('internal server error')) {
+      // Expired/invalid token: show the actionable "Update Token" prompt instead
+      // of the raw ZEDEDA error envelope.
+      if (isAuthError(err)) {
+        handleAuthError();
+      } else if (errMsg.includes('500') || errMsg.includes('internal server error')) {
         addLog(`Reset failed: ZEDEDA server error - unable to enable EdgeView on device`, 'error');
         setGlobalStatus({
           type: 'error',
@@ -3798,6 +3838,7 @@ Do you want to try connecting anyway?`)) {
                     value={editingCluster.apiToken}
                     onChange={handleTokenPaste}
                     placeholder="Paste token from ZEDEDA Cloud..."
+                    autoEdit={!!focusTokenCluster && focusTokenCluster === viewingClusterName}
                   />
                   {tokenStatus && (
                     <div
@@ -4734,6 +4775,7 @@ Do you want to try connecting anyway?`)) {
                     });
 
                     const globalError = !Array.isArray(services) ? services.error : null;
+                    const authError = !Array.isArray(services) && services.code === 'UNAUTHORIZED';
                     return (
                       <>
                         {displayList.length > 0 ? (
@@ -5467,13 +5509,20 @@ Do you want to try connecting anyway?`)) {
                           <div className="empty-state">No apps found</div>
                         )}
                         {globalError && (
-                          <div className="error-message">
-                            {globalError.includes("can't have more than 2 peers")
-                              ? "All EdgeView sessions are occupied (max 2 concurrent sessions). Please reset the connection to free up a session slot."
-                              : globalError.includes("no device online")
-                                ? "Device is not connected to EdgeView. Real-time status and connections unavailable."
-                                : `Warning: ${globalError}`}
-                          </div>
+                          authError ? (
+                            <div className="error-message auth-error">
+                              <span>The ZEDEDA API token for "{config.activeCluster || 'this cluster'}" has expired or is invalid. Real-time status and connections are unavailable until it's updated.</span>
+                              <button type="button" className="auth-error-action" onClick={openTokenSettings}>Update Token</button>
+                            </div>
+                          ) : (
+                            <div className="error-message">
+                              {globalError.includes("can't have more than 2 peers")
+                                ? "All EdgeView sessions are occupied (max 2 concurrent sessions). Please reset the connection to free up a session slot."
+                                : globalError.includes("no device online")
+                                  ? "Device is not connected to EdgeView. Real-time status and connections unavailable."
+                                  : `Warning: ${globalError}`}
+                            </div>
+                          )
                         )}
                       </>
                     );

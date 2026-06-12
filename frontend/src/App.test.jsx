@@ -950,6 +950,50 @@ describe('Search with local cache filtering', () => {
     await waitFor(() => expect(electronAPI.EnableExternalPolicy).toHaveBeenCalledWith('n1', true));
   });
 
+  // Regression: when the API token expires mid-session, ZEDEDA returns 401.
+  // The backend tags these with code "UNAUTHORIZED"; the UI must show a clear,
+  // actionable prompt (with an Update Token action that opens Settings) instead
+  // of dumping the raw ZEDEDA error envelope.
+  it('expired API token shows actionable prompt and opens settings, not a raw 401 blob', async () => {
+    const validKey = 'A'.repeat(171);
+    const validToken = `ENT1234:${validKey}`;
+    const config = {
+      baseUrl: 'https://cluster.example',
+      apiToken: validToken,
+      clusters: [{ name: 'Prod', baseUrl: 'https://cluster.example', apiToken: validToken }],
+      activeCluster: 'Prod',
+      recentDevices: [],
+    };
+    electronAPI.GetSettings.mockResolvedValue(config);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(config);
+
+    const devices = [{ id: 'n1', name: 'Offline-Dev', status: 'offline', project: 'p1' }];
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache(devices));
+
+    // Simulate the thrown error tauriAPI produces for a 401 (code attached).
+    const authErr = Object.assign(new Error('The ZEDEDA API token for this cluster is invalid or expired.'), { code: 'UNAUTHORIZED' });
+    electronAPI.GetDeviceServices.mockRejectedValue(authErr);
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'enabled', managementIPs: ['10.0.0.1'] });
+
+    render(<App />);
+    fireEvent.click(await screen.findByText('Offline-Dev'));
+    await waitFor(() => expect(screen.getByText('Activity Log')).toBeInTheDocument());
+
+    // Friendly, actionable message — and crucially NOT the raw envelope.
+    await waitFor(() => {
+      expect(screen.getByText(/expired or is invalid/i)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/OPS_TYPE_UNSPECIFIED|httpStatusCode|Session Cache miss/)).not.toBeInTheDocument();
+
+    // The inline banner exposes an Update Token action that deep-links to
+    // Settings with the cluster's token field ready to paste.
+    const updateBtn = screen.getByText('Update Token');
+    fireEvent.click(updateBtn);
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('Paste token from ZEDEDA Cloud...')).toBeInTheDocument();
+    });
+  });
+
   it('refresh button calls RefreshDeviceCache', async () => {
     const devices = [
       { id: 'n1', name: 'Device-1', status: 'online', project: 'p1' },

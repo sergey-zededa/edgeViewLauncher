@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -17,6 +18,12 @@ import (
 
 	"edgeViewLauncher/internal/security"
 )
+
+// ErrUnauthorized signals that the ZEDEDA Cloud API rejected the request with
+// HTTP 401 — the cluster's API token is missing, invalid, or expired. Callers
+// wrap it with %w so the HTTP layer can detect it via errors.Is and surface a
+// clear, actionable "update your token" message instead of a raw error blob.
+var ErrUnauthorized = errors.New("unauthorized: ZEDEDA API token is invalid or expired")
 
 type Node struct {
 	ID       string `json:"id"`
@@ -197,6 +204,9 @@ func (c *Client) SearchNodesWithTokenCtx(ctx context.Context, query string, limi
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, fmt.Errorf("%w", ErrUnauthorized)
+		}
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("API request failed with status: %d, body: %s", resp.StatusCode, string(body))
 	}
@@ -285,6 +295,9 @@ func (c *Client) GetDeviceAppInstances(deviceId, deviceName string) ([]AppInstan
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, fmt.Errorf("%w", ErrUnauthorized)
+		}
 		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
 	}
 
@@ -395,6 +408,9 @@ func (c *Client) GetAppInstanceDetails(appInstanceID string) (*AppInstanceDetail
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, fmt.Errorf("%w", ErrUnauthorized)
+		}
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("API failed with status %d: %s", resp.StatusCode, string(body))
 	}
@@ -439,6 +455,9 @@ func (c *Client) GetNetworkInstanceDetails(niID string) (*NetworkInstanceStatus,
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, fmt.Errorf("%w", ErrUnauthorized)
+		}
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("API failed with status %d: %s", resp.StatusCode, string(body))
 	}
@@ -473,6 +492,9 @@ func (c *Client) GetAppInstanceConfig(appInstanceID string) (*AppInstanceConfig,
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, fmt.Errorf("%w", ErrUnauthorized)
+		}
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("API failed with status %d: %s", resp.StatusCode, string(body))
 	}
@@ -517,6 +539,9 @@ func (c *Client) GetEnterprise() (*Enterprise, error) {
 			defer resp.Body.Close()
 
 			if resp.StatusCode != 200 {
+				if resp.StatusCode == http.StatusUnauthorized {
+					return nil, fmt.Errorf("%w", ErrUnauthorized)
+				}
 				return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
 			}
 
@@ -559,6 +584,9 @@ func (c *Client) GetProjectsCtx(ctx context.Context) ([]Project, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, fmt.Errorf("%w", ErrUnauthorized)
+		}
 		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
 	}
 
@@ -602,6 +630,9 @@ func (c *Client) GetDeviceStatus(nodeID string) (*DeviceStatus, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, fmt.Errorf("%w", ErrUnauthorized)
+		}
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("API failed with status %d: %s", resp.StatusCode, string(body))
 	}
@@ -652,6 +683,9 @@ func (c *Client) StartEdgeView(nodeID string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
+		if resp.StatusCode == http.StatusUnauthorized {
+			return fmt.Errorf("%w", ErrUnauthorized)
+		}
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("failed to enable EdgeView (status %d): %s", resp.StatusCode, string(body))
 	}
@@ -687,6 +721,9 @@ func (c *Client) StopEdgeView(nodeID string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
+		if resp.StatusCode == http.StatusUnauthorized {
+			return fmt.Errorf("%w", ErrUnauthorized)
+		}
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("failed to disable EdgeView (status %d): %s", resp.StatusCode, string(body))
 	}
@@ -923,6 +960,9 @@ func (c *Client) GetDevice(nodeID string) (map[string]interface{}, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, fmt.Errorf("%w", ErrUnauthorized)
+		}
 		return nil, fmt.Errorf("failed to get device (status %d)", resp.StatusCode)
 	}
 

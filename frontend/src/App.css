@@ -1920,3 +1920,35 @@ body {
         opacity: 1;
     }
 }
+
+/* Expired/invalid API-token banner shown in place of the raw 401 error.
+   Pairs a clear explanation with a one-click path to re-paste the token. */
+.error-message.auth-error {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 10px 14px;
+    border: 1px solid #fca5a5;
+    background: #fef2f2;
+    color: #b91c1c;
+    border-radius: 8px;
+}
+
+.error-message.auth-error .auth-error-action {
+    margin-left: auto;
+    background: #b91c1c;
+    color: white;
+    border: none;
+    cursor: pointer;
+    padding: 5px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: 6px;
+    white-space: nowrap;
+    transition: background 0.2s;
+}
+
+.error-message.auth-error .auth-error-action:hover {
+    background: #991b1b;
+}

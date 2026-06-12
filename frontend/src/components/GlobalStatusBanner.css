@@ -107,6 +107,25 @@
     border-color: rgba(255, 255, 255, 0.5);
 }
 
+/* Primary action inside a banner (e.g. "Update Token"). Higher-contrast than
+   cancel so it reads as the recommended next step. */
+.action-btn {
+    background: white;
+    border: 1px solid white;
+    color: #b91c1c;
+    cursor: pointer;
+    padding: 3px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 4px;
+    white-space: nowrap;
+    transition: all 0.2s;
+}
+
+.action-btn:hover {
+    background: rgba(255, 255, 255, 0.88);
+}
+
 @keyframes spin {
     to {
         transform: rotate(360deg);
