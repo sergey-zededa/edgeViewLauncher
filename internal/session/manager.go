@@ -151,10 +151,17 @@ func (m *Manager) StoreCachedSession(nodeID string, config *zededa.SessionConfig
 	defer m.mu.Unlock()
 
 	m.sessions[nodeID] = &CachedSession{
-		Config:    config,
-		Port:      port,
+		Config: config,
+		Port:   port,
+		// Round(0) strips the monotonic clock reading so expiry is judged by
+		// wall-clock time. On macOS the monotonic clock pauses while the
+		// machine sleeps, so a monotonic comparison treats a session minted
+		// before an overnight sleep as still valid long after its wall-clock
+		// deadline — while the frontend (which only sees the formatted
+		// wall-clock timestamp) correctly shows it expired. Pinning expiry to
+		// wall clock keeps both sides in agreement across sleep/wake.
 		TunnelID:  tunnelID,
-		ExpiresAt: expiresAt,
+		ExpiresAt: expiresAt.Round(0),
 	}
 }
 

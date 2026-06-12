@@ -40,6 +40,26 @@ func TestCachedSessionExpiryAndRetrieval(t *testing.T) {
 	}
 }
 
+// TestStoreCachedSessionStripsMonotonic verifies expiry is pinned to wall-clock
+// time. time.Now() carries a monotonic reading, and on macOS the monotonic
+// clock pauses during sleep — so a monotonic comparison would treat a session
+// minted before an overnight sleep as still valid long past its wall-clock
+// deadline, desyncing the backend from the frontend's wall-clock view. Storing
+// expiry with the monotonic reading stripped keeps both sides in agreement.
+func TestStoreCachedSessionStripsMonotonic(t *testing.T) {
+	m := NewManager()
+	m.StoreCachedSession("node1", &zededa.SessionConfig{URL: "wss://example"}, 0, "", time.Now().Add(time.Hour))
+
+	s, ok := m.GetCachedSession("node1")
+	if !ok {
+		t.Fatalf("expected session to be found")
+	}
+	// A time.Time carrying a monotonic reading prints a trailing " m=±<secs>".
+	if got := s.ExpiresAt.String(); strings.Contains(got, "m=") {
+		t.Fatalf("expected stored expiry to have no monotonic reading, got %q", got)
+	}
+}
+
 func TestTunnelRegistryLifecycle(t *testing.T) {
 	m := NewManager()
 
