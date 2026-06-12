@@ -43,8 +43,13 @@ Go Backend (sidecar) — cmd/edgeview-backend/
 
 **Key concepts**:
 - **Clusters**: Multiple ZEDEDA cloud endpoints (baseUrl + apiToken), stored in `~/.edgeview-config.json`
-- **EdgeView Sessions**: Authenticated WebSocket tunnels to edge devices, cached ~5 hours
+- **EdgeView Sessions**: Authenticated WebSocket tunnels to edge devices, cached ~5 hours. Cache entries store `ExpiresAt` with the monotonic clock reading stripped (`expiresAt.Round(0)` in `internal/session/manager.go` `StoreCachedSession`) so expiry is judged by **wall-clock** time — the macOS monotonic clock pauses during sleep, which would otherwise let the backend treat a session that expired overnight as still valid while the frontend (wall-clock) shows it expired. `ResetEdgeView` (`app.go`) recycles the cloud session **and** calls `InvalidateSession(nodeID)` so a reset forces a fresh mint instead of resurrecting the stale cache entry.
 - **Tunnels**: Persistent TCP tunnels (SSH port 2222, VNC port 5900, custom) tracked in `session.Manager`
+- **Cloud-config vs live-session operations**: Device operations split into two classes with very different UI gating requirements.
+  - *Cloud-config* (Enable SSH/VGA/USB/Console/External Policy, etc.) are ZEDEDA Cloud PUTs via `internal/zededa/client.go` `UpdateDevice()`. The device reconciles asynchronously on reconnect, so these **must NOT be gated on device-online status** — users should be able to queue them while the device is down.
+  - *Live-session* (SSH Terminal, VNC, TCP tunnels, Collect Info) require an active EdgeView WebSocket tunnel from `internal/session/` and **must be gated on `isSessionConnected`** (which implies online).
+  - When adding a new device-detail control, classify it before wiring gating. Regression test pattern: `frontend/src/App.test.jsx` → "config chips (VGA/USB/Console/SSH/Ext Policy) work on offline devices".
+- **Auth errors (expired/invalid token)**: ZEDEDA 401s are mapped to the `zededa.ErrUnauthorized` sentinel in `internal/zededa/client.go`; `sendError` (`http-server.go`) detects it via `errors.Is` and returns a `code: "UNAUTHORIZED"` response. `tauriAPI.js` copies that code onto the thrown error, and `App.jsx` (`isAuthError`/`handleAuthError`) shows an actionable "Update Token" prompt that deep-links to the active cluster's token field — instead of dumping the raw ZEDEDA error envelope. The transient cold-start 401 ("Session Cache miss") is still absorbed by `GetEnterprise`'s retry loop before the sentinel surfaces.
 - The Go binary is named `edgeview-backend` and placed in `src-tauri/binaries/` with a platform triple suffix (e.g., `edgeview-backend-aarch64-apple-darwin`)
 
 ## Development Commands

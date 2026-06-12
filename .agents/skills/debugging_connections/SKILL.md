@@ -33,7 +33,18 @@ If connection stability (e.g., stalling, dropping, "TCP EOF") is observed, the p
 - **noVNC Built-in Viewer:** The built-in viewer might have helpers (like the on-screen keyboard) to send special key combinations. Test this client first as a baseline before debugging external clients.
 - Review keep-alive logic inside `manager.go` specific to VNC proxying.
 
-## 5. Docker Compose App IPs
+## 5. Session Validity, Reset, and Expiry
+
+- **Session shows expired/inactive but log says "Connected" (or reset doesn't recover):** session expiry is judged by **wall-clock** time. `internal/session/manager.go` `StoreCachedSession` stores `ExpiresAt` with the monotonic reading stripped (`expiresAt.Round(0)`) — this is deliberate, because the macOS monotonic clock pauses during sleep and would otherwise make an expired session look valid to the backend while the frontend (wall-clock) shows it expired. Do **not** reintroduce a `time.Now().Add(...)`-with-monotonic expiry comparison.
+- **Reset must clear local state:** `App.ResetEdgeView` recycles the cloud EdgeView session (Stop+Start) **and** calls `sessionManager.InvalidateSession(nodeID)`. If a reset appears to "do nothing," verify the cache is being invalidated so the next connect re-mints a fresh session rather than resurrecting the stale one.
+- **"device instance limit reached (can't have more than 2 peers)":** stale dispatcher peers on the device side. The cloud-side Stop/Start in `ResetEdgeView` is what releases them; local cache invalidation alone won't.
+
+## 6. Authentication / Expired Token (HTTP 401)
+
+- A ZEDEDA 401 is mapped to the `zededa.ErrUnauthorized` sentinel (`internal/zededa/client.go`); `sendError` (`http-server.go`) returns `code: "UNAUTHORIZED"`, which the frontend turns into an "Update Token" prompt. If you see raw ZEDEDA error envelopes in the UI again, check that the failing client method returns `ErrUnauthorized` on 401 and that callers wrap with `%w`.
+- A **transient** 401 ("Session Cache miss") on the first authenticated call after a new token is expected — it's retried inside `GetEnterprise`. Only a persistent 401 (token genuinely expired/invalid) should surface the prompt.
+
+## 7. Docker Compose App IPs
 
 - If attempting to reach Docker Compose apps, confirm the connection targets the device's internal IP (e.g., `10.x.x.x`) rather than an external management IP.
 - Ensure correlation logic accurately maps sibling applications to find the correct internal virtual IP.
