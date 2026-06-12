@@ -1266,6 +1266,12 @@ func (a *App) ResetEdgeView(nodeID string) error {
 		return fmt.Errorf("failed to start EdgeView: %w", err)
 	}
 
+	// Drop the locally cached session so the next connect re-mints from the
+	// freshly recycled cloud session. Without this, reset only recycles the
+	// cloud-side dispatcher while the stale local cache keeps reporting the
+	// dead session as active, leaving the UI stuck and unable to recover.
+	a.sessionManager.InvalidateSession(nodeID)
+
 	return nil
 }
 

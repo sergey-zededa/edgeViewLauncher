@@ -849,6 +849,28 @@ func TestResetEdgeView_PropagatesErrors(t *testing.T) {
 	}
 }
 
+// TestResetEdgeView_InvalidatesCache verifies that a successful reset clears the
+// locally cached session. Otherwise reset only recycles the cloud-side session
+// while the stale local cache keeps reporting the dead session as active,
+// leaving the UI stuck and unable to recover (the bug this fixes).
+func TestResetEdgeView_InvalidatesCache(t *testing.T) {
+	sess := &fakeSessionManager{}
+	// stopErr (ignored by reset) is set only to skip the 2s propagation sleep
+	// that runs when StopEdgeView succeeds.
+	a := newTestApp(&fakeZededaClient{stopErr: errors.New("already stopped")}, sess)
+	sess.StoreCachedSession("node1", &zededa.SessionConfig{URL: "wss://example"}, 0, "", time.Now().Add(time.Hour))
+
+	if _, ok := sess.GetCachedSession("node1"); !ok {
+		t.Fatalf("precondition: expected cached session before reset")
+	}
+	if err := a.ResetEdgeView("node1"); err != nil {
+		t.Fatalf("ResetEdgeView returned error: %v", err)
+	}
+	if _, ok := sess.GetCachedSession("node1"); ok {
+		t.Fatalf("expected cached session to be invalidated after reset")
+	}
+}
+
 // TestParseAppInfo verifies we can extract enrichment data from a representative snippet.
 func TestParseAppInfo(t *testing.T) {
 	sample := `- app uuid 123e4567-e89b-12d3-a456-426614174000
