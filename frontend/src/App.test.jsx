@@ -951,9 +951,12 @@ describe('Search with local cache filtering', () => {
   });
 
   // Regression: when the API token expires mid-session, ZEDEDA returns 401.
-  // The backend tags these with code "UNAUTHORIZED"; the UI must show a clear,
-  // actionable prompt (with an Update Token action that opens Settings) instead
-  // of dumping the raw ZEDEDA error envelope.
+  // The backend tags these with code "UNAUTHORIZED". The UI surfaces this through
+  // ONE persistent, app-global banner (with an Update Token action that deep-links
+  // to Settings) — not the ephemeral status toast and not an inline per-section
+  // message. It must also NOT dump the raw ZEDEDA error envelope, and the Running
+  // Applications section must not lie with "No apps found" when the real cause is
+  // a dead token.
   it('expired API token shows actionable prompt and opens settings, not a raw 401 blob', async () => {
     const validKey = 'A'.repeat(171);
     const validToken = `ENT1234:${validKey}`;
@@ -985,13 +988,58 @@ describe('Search with local cache filtering', () => {
     });
     expect(screen.queryByText(/OPS_TYPE_UNSPECIFIED|httpStatusCode|Session Cache miss/)).not.toBeInTheDocument();
 
-    // The inline banner exposes an Update Token action that deep-links to
-    // Settings with the cluster's token field ready to paste.
-    const updateBtn = screen.getByText('Update Token');
-    fireEvent.click(updateBtn);
+    // Sections that depend on live cloud reads (EdgeView/SSH details, Running
+    // Applications) must not show stale data or lie with "No apps found" — each shows
+    // a neutral unavailable note while the global banner explains why.
+    expect(screen.queryByText('No apps found')).not.toBeInTheDocument();
+    expect(screen.getAllByText(/Unavailable while the API token is expired/i).length).toBeGreaterThan(0);
+
+    // Exactly one Update Token affordance (the consolidated banner — not duplicated
+    // across an inline banner and a toast). It deep-links to Settings with the
+    // cluster's token field ready to paste.
+    const updateBtns = screen.getAllByText('Update Token');
+    expect(updateBtns).toHaveLength(1);
+    fireEvent.click(updateBtns[0]);
     await waitFor(() => {
       expect(screen.getByPlaceholderText('Paste token from ZEDEDA Cloud...')).toBeInTheDocument();
     });
+  });
+
+  // The persistent auth banner can be dismissed, but dismissing it only hides the
+  // banner — it must NOT un-gate the stale device data (authError stays true), so the
+  // "Unavailable while the API token is expired" notes remain. (It re-surfaces on the
+  // next real failure; that reset is covered by the handleAuthError/effect logic.)
+  it('auth banner is dismissible without resurrecting stale device data', async () => {
+    const validKey = 'A'.repeat(171);
+    const validToken = `ENT1234:${validKey}`;
+    const config = {
+      baseUrl: 'https://cluster.example',
+      apiToken: validToken,
+      clusters: [{ name: 'Prod', baseUrl: 'https://cluster.example', apiToken: validToken }],
+      activeCluster: 'Prod',
+      recentDevices: [],
+    };
+    electronAPI.GetSettings.mockResolvedValue(config);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(config);
+
+    const devices = [{ id: 'n1', name: 'Offline-Dev', status: 'offline', project: 'p1' }];
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache(devices));
+
+    const authErr = Object.assign(new Error('invalid or expired'), { code: 'UNAUTHORIZED' });
+    electronAPI.GetDeviceServices.mockRejectedValue(authErr);
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'enabled', managementIPs: ['10.0.0.1'] });
+
+    render(<App />);
+    fireEvent.click(await screen.findByText('Offline-Dev'));
+    await waitFor(() => expect(screen.getByText(/expired or is invalid/i)).toBeInTheDocument());
+
+    // Dismiss hides the banner...
+    fireEvent.click(screen.getByLabelText('Dismiss'));
+    await waitFor(() => expect(screen.queryByText(/expired or is invalid/i)).not.toBeInTheDocument());
+
+    // ...but the device panel still refuses to show stale data — authError is still
+    // true, so the unavailable notes persist independent of the banner's visibility.
+    expect(screen.getAllByText(/Unavailable while the API token is expired/i).length).toBeGreaterThan(0);
   });
 
   it('refresh button calls RefreshDeviceCache', async () => {

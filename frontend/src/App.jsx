@@ -450,6 +450,15 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [authError, setAuthError] = useState(false); // Track authentication failures
+  // Lets the user temporarily hide the persistent auth banner. This is NOT the same as
+  // clearing authError (which still gates stale device data) — it only hides the banner.
+  // It auto-resets when the auth episode ends (authError → false, see effect below) and
+  // on any fresh user-initiated 401 (handleAuthError), so the banner reappears on the
+  // next real failure rather than being dismissed forever.
+  const [authErrorDismissed, setAuthErrorDismissed] = useState(false);
+  useEffect(() => {
+    if (!authError) setAuthErrorDismissed(false);
+  }, [authError]);
   const [deviceCache, setDeviceCache] = useState(null); // { devices, projects, updatedAt, isRefreshing }
   const [cacheLoaded, setCacheLoaded] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -1210,7 +1219,12 @@ function App() {
           scheduleNext(15000);
         }
       } catch (err) {
-        if (err.message?.includes('401')) setAuthError(true);
+        // Raise the persistent auth banner on a 401 from the background poll.
+        // We intentionally do NOT clear it on a *successful* poll: GetDeviceCache
+        // can serve a locally-cached list while the token is already dead, which
+        // would falsely dismiss the banner. Clearing happens only on authoritative
+        // signals (VerifyToken valid / GetDeviceServices success / cluster switch).
+        if (isAuthError(err) || err.message?.includes('401')) setAuthError(true);
       } finally {
         if (!cancelled && activeClusterRef.current === myCluster) setLoading(false);
       }
@@ -1246,6 +1260,9 @@ function App() {
           lastLogin: info.lastLogin
         });
         setTokenStatus({ valid: true, message: 'Token valid' });
+        // Authoritative "token works" signal (e.g. user pasted a fresh token and it
+        // verified) — clear the persistent auth banner so it self-heals.
+        setAuthError(false);
       } else {
         setViewingUserInfo(null);
         setTokenStatus({ valid: false, message: info.error || 'Invalid token' });
@@ -1473,11 +1490,17 @@ function App() {
   const handleAuthError = () => {
     const cluster = config.activeCluster || 'this cluster';
     addLog(`API token for "${cluster}" is invalid or expired — click Update Token to re-paste it.`, 'error');
-    setGlobalStatus({
-      type: 'error',
-      message: `The API token for "${cluster}" has expired or is invalid. Update it to continue.`,
-      action: { label: 'Update Token', onClick: openTokenSettings },
-    });
+    // Token expiry is a persistent, app-global condition — not a transient operation.
+    // It must NOT live in globalStatus (the ephemeral toast channel), because the next
+    // operation's setGlobalStatus(null)/timeout would silently clobber it. Instead we
+    // raise the dedicated, persistent auth banner (authError) and clear any in-flight
+    // operational spinner so it doesn't hang behind the banner. The banner self-clears
+    // once an authenticated call succeeds (GetDeviceServices / VerifyToken) or the
+    // active cluster switches.
+    setGlobalStatus(null);
+    setAuthError(true);
+    // A fresh user-initiated failure re-surfaces the banner even if it was dismissed.
+    setAuthErrorDismissed(false);
   };
 
   // Whether an error came from the user clicking Cancel on a connection toast.
@@ -2101,6 +2124,9 @@ function App() {
       try {
         const parsed = JSON.parse(result);
         setServices(parsed);
+        // A live services fetch succeeding proves the token is valid — clear the
+        // persistent auth banner if it was up.
+        setAuthError(false);
         addLog("Services list updated", 'success');
       } catch (e) {
         console.error("Failed to parse services JSON:", e);
@@ -2314,6 +2340,7 @@ Do you want to try connecting anyway?`)) {
     addLog("Enabling SSH access...", 'info');
     try {
       await SetupSSH(selectedNode.id);
+      setAuthError(false); // authenticated write succeeded → token is valid
       setLastSSHUpdate(Date.now()); // Record update time
       addLog("SSH key pushed to cloud successfully", 'success');
 
@@ -2328,9 +2355,13 @@ Do you want to try connecting anyway?`)) {
       loadSSHStatus(selectedNode.id);
     } catch (err) {
       console.error(err);
-      addLog("Failed to setup SSH: " + err, 'error');
       setLoadingSSH(false);
-      setGlobalStatus(null);
+      if (isAuthError(err)) {
+        handleAuthError();
+      } else {
+        addLog("Failed to setup SSH: " + err, 'error');
+        setGlobalStatus(null);
+      }
     }
   };
 
@@ -2342,13 +2373,18 @@ Do you want to try connecting anyway?`)) {
     addLog("Disabling SSH access...", 'info');
     try {
       await DisableSSH(selectedNode.id);
+      setAuthError(false); // authenticated write succeeded → token is valid
       addLog("SSH access disabled successfully", 'success');
       loadSSHStatus(selectedNode.id);
     } catch (err) {
       console.error(err);
-      addLog("Failed to disable SSH: " + err, 'error');
       setLoadingSSH(false);
-      setGlobalStatus(null);
+      if (isAuthError(err)) {
+        handleAuthError();
+      } else {
+        addLog("Failed to disable SSH: " + err, 'error');
+        setGlobalStatus(null);
+      }
     }
   };
 
@@ -2358,13 +2394,18 @@ Do you want to try connecting anyway?`)) {
     setGlobalStatus({ type: 'loading', message: enabled ? "Enabling VGA..." : "Disabling VGA..." });
     try {
       await SetVGAEnabled(selectedNode.id, enabled);
+      setAuthError(false); // authenticated write succeeded → token is valid
       loadSSHStatus(selectedNode.id);  // Refresh to get updated status
       addLog(`VGA access ${enabled ? 'enabled' : 'disabled'}`, 'success');
     } catch (err) {
       console.error(err);
-      addLog(`Failed to toggle VGA: ${err}`, 'error');
       setLoadingSSH(false);
-      setGlobalStatus(null);
+      if (isAuthError(err)) {
+        handleAuthError();
+      } else {
+        addLog(`Failed to toggle VGA: ${err}`, 'error');
+        setGlobalStatus(null);
+      }
     }
   };
 
@@ -2374,13 +2415,18 @@ Do you want to try connecting anyway?`)) {
     setGlobalStatus({ type: 'loading', message: enabled ? "Enabling USB..." : "Disabling USB..." });
     try {
       await SetUSBEnabled(selectedNode.id, enabled);
+      setAuthError(false); // authenticated write succeeded → token is valid
       loadSSHStatus(selectedNode.id);  // Refresh to get updated status
       addLog(`USB access ${enabled ? 'enabled' : 'disabled'}`, 'success');
     } catch (err) {
       console.error(err);
-      addLog(`Failed to toggle USB: ${err}`, 'error');
       setLoadingSSH(false);
-      setGlobalStatus(null);
+      if (isAuthError(err)) {
+        handleAuthError();
+      } else {
+        addLog(`Failed to toggle USB: ${err}`, 'error');
+        setGlobalStatus(null);
+      }
     }
   };
 
@@ -2391,6 +2437,7 @@ Do you want to try connecting anyway?`)) {
     setGlobalStatus({ type: 'loading', message: enabled ? "Enabling Console..." : "Disabling Console..." });
     try {
       await SetConsoleEnabled(nodeId, enabled);
+      setAuthError(false); // authenticated write succeeded → token is valid
       // Optimistic UI update — cloud API may not have propagated yet
       setSshStatus(prev => prev ? { ...prev, consoleEnabled: enabled } : prev);
       addLog(`Console access ${enabled ? 'enabled' : 'disabled'}`, 'success');
@@ -2422,9 +2469,13 @@ Do you want to try connecting anyway?`)) {
       verifyConsoleState();
     } catch (err) {
       console.error(err);
-      addLog(`Failed to toggle Console: ${err}`, 'error');
       setLoadingSSH(false);
-      setGlobalStatus(null);
+      if (isAuthError(err)) {
+        handleAuthError();
+      } else {
+        addLog(`Failed to toggle Console: ${err}`, 'error');
+        setGlobalStatus(null);
+      }
     }
   };
 
@@ -2440,6 +2491,7 @@ Do you want to try connecting anyway?`)) {
 
     try {
       await ResetEdgeView(selectedNode.id);
+      setAuthError(false); // authenticated write succeeded → token is valid
       addLog("Reset command sent successfully", 'success');
 
       setGlobalStatus({
@@ -2501,6 +2553,7 @@ Do you want to try connecting anyway?`)) {
 
     try {
       await EnableExternalPolicy(selectedNode.id, newState);
+      setAuthError(false); // authenticated write succeeded → token is valid
       addLog(`External policy ${action}d successfully`, 'success');
 
       // Update local state immediately for better UX, though reloadSSHStatus will also catch it
@@ -2516,6 +2569,10 @@ Do you want to try connecting anyway?`)) {
       setTimeout(() => setGlobalStatus(null), 5000);
     } catch (err) {
       console.error(`Failed to ${action} external policy:`, err);
+      if (isAuthError(err)) {
+        handleAuthError();
+        return;
+      }
       let errMsg = err.message || String(err);
       // The cloud guard "edgeview exp policy can not be changed" fires when
       // the project's EdgeviewPolicy has accessAllowChange = false — in that
@@ -3492,22 +3549,31 @@ Do you want to try connecting anyway?`)) {
           </div>
         )}
 
-        {authError && !showSettings && (
-          <div className="auth-error-banner">
+        {/* The single, persistent, app-global surface for an expired/invalid token.
+            Token expiry blocks ALL live data (any cluster call), so this is a pinned
+            alert bar rather than a transient toast or an inline per-section message.
+            It is intentionally non-dismissible — it self-clears when an authenticated
+            call next succeeds (VerifyToken / GetDeviceServices) or the cluster switches
+            (see setAuthError(false) sites). Hidden while Settings is open, since that's
+            where the fix lives. */}
+        {authError && !authErrorDismissed && !showSettings && (
+          <div className="auth-error-banner" role="alert">
             <div className="auth-error-content">
               <AlertTriangle size={20} />
               <div className="auth-error-text">
-                <strong>Authentication Failed</strong>
-                <span>Your API token is expired or invalid. Please update it in settings.</span>
+                <strong>Authentication failed</strong>
+                <span>The ZEDEDA API token for "{config.activeCluster || 'this cluster'}" has expired or is invalid. Real-time status and connections are unavailable until it's updated.</span>
               </div>
+              <button className="auth-error-button" onClick={openTokenSettings}>
+                Update Token
+              </button>
               <button
-                className="auth-error-button"
-                onClick={() => {
-                  setShowSettings(true);
-                  setAuthError(false);
-                }}
+                className="auth-error-dismiss"
+                onClick={() => setAuthErrorDismissed(true)}
+                aria-label="Dismiss"
+                title="Dismiss — reappears on the next failed request"
               >
-                Open Settings
+                <X size={18} />
               </button>
             </div>
           </div>
@@ -4248,7 +4314,16 @@ Do you want to try connecting anyway?`)) {
             )}
 
             {
-              selectedNode && (
+              selectedNode && authError ? (
+                // Token is dead → every EdgeView/SSH read is a 401, so the cached
+                // sshStatus is stale. Show a muted placeholder instead of status lights
+                // and config chips that would imply a live session / valid token. The
+                // app-global banner explains why; this mirrors the Running Applications note.
+                <div className="ssh-status-section">
+                  <div className="section-title"><span>EdgeView Session</span></div>
+                  <div className="empty-state">Unavailable while the API token is expired</div>
+                </div>
+              ) : selectedNode && (
                 <div className="ssh-status-section">
                   <div className="section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span>EdgeView Session</span>
@@ -4775,7 +4850,11 @@ Do you want to try connecting anyway?`)) {
                     });
 
                     const globalError = !Array.isArray(services) ? services.error : null;
-                    const authError = !Array.isArray(services) && services.code === 'UNAUTHORIZED';
+                    // Auth failures are owned by the persistent app-global banner (see the
+                    // authError state / auth-error-banner). We only use this local flag to
+                    // (a) avoid the misleading "No apps found" empty state and (b) suppress
+                    // the generic inline warning when the real cause is an expired token.
+                    const isUnauthorized = !Array.isArray(services) && services.code === 'UNAUTHORIZED';
                     return (
                       <>
                         {displayList.length > 0 ? (
@@ -5506,23 +5585,23 @@ Do you want to try connecting anyway?`)) {
                             </div>
                           ))
                         ) : (
-                          <div className="empty-state">No apps found</div>
+                          <div className="empty-state">
+                            {isUnauthorized
+                              ? 'Unavailable while the API token is expired'
+                              : 'No apps found'}
+                          </div>
                         )}
-                        {globalError && (
-                          authError ? (
-                            <div className="error-message auth-error">
-                              <span>The ZEDEDA API token for "{config.activeCluster || 'this cluster'}" has expired or is invalid. Real-time status and connections are unavailable until it's updated.</span>
-                              <button type="button" className="auth-error-action" onClick={openTokenSettings}>Update Token</button>
-                            </div>
-                          ) : (
-                            <div className="error-message">
-                              {globalError.includes("can't have more than 2 peers")
-                                ? "All EdgeView sessions are occupied (max 2 concurrent sessions). Please reset the connection to free up a session slot."
-                                : globalError.includes("no device online")
-                                  ? "Device is not connected to EdgeView. Real-time status and connections unavailable."
-                                  : `Warning: ${globalError}`}
-                            </div>
-                          )
+                        {/* Auth errors are surfaced by the persistent top banner, not here.
+                            This inline message is only for live-session problems (occupied
+                            sessions / device offline / other warnings). */}
+                        {globalError && !isUnauthorized && (
+                          <div className="error-message">
+                            {globalError.includes("can't have more than 2 peers")
+                              ? "All EdgeView sessions are occupied (max 2 concurrent sessions). Please reset the connection to free up a session slot."
+                              : globalError.includes("no device online")
+                                ? "Device is not connected to EdgeView. Real-time status and connections unavailable."
+                                : `Warning: ${globalError}`}
+                          </div>
                         )}
                       </>
                     );
