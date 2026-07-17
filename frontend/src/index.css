@@ -132,6 +132,43 @@ body {
   /* Ensure rounded corners clip content */
 }
 
+/* SSH terminal window: the terminal container carries a solid background matching
+   the xterm theme, so the padded inset reads as one even dark border on all sides.
+   Override xterm.css's hardcoded black .xterm-viewport so the sub-cell FitAddon
+   leftover on the right/bottom blends into that inset instead of showing #000.
+   !important is required because xterm.css loads after this file with equal
+   specificity and would otherwise win on source order. */
+.terminal-content .xterm .xterm-viewport {
+  background-color: transparent !important;
+}
+
+/* SSH terminal window loads only index.css (not App.css), so the toolbar's
+   .icon-btn controls fall back to the raw WebKit <button> box. Replicate the
+   main app's flat icon-button styling here, scoped to the terminal toolbar.
+   All referenced tokens (--border-color, --bg-hover, --text-*) exist in index.css. */
+.terminal-toolbar .icon-btn {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  padding: 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.terminal-toolbar .icon-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.terminal-toolbar .icon-btn.danger:hover {
+  background: rgba(218, 54, 51, 0.2);
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
 /* Scrollbar Global Styles */
 ::-webkit-scrollbar {
   width: 8px;
