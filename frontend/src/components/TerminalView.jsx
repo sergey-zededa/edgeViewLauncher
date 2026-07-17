@@ -398,7 +398,9 @@ const TerminalView = ({ port }) => {
                 borderBottom: '1px solid var(--border-subtle)',
                 WebkitAppRegion: 'drag',
                 position: 'relative',
-                height: '40px',
+                boxSizing: 'border-box',
+                flexShrink: 0,
+                height: '44px',
                 display: 'block'
             }}>
                 <div style={{
@@ -460,12 +462,16 @@ const TerminalView = ({ port }) => {
             {/* Terminal Container */}
             <div
                 ref={terminalRef}
+                className="terminal-content"
                 style={{
                     flex: 1,
                     width: '100%',
                     textAlign: 'left',
                     display: 'block',
-                    padding: '10px'
+                    padding: '10px',
+                    boxSizing: 'border-box',
+                    minHeight: 0,
+                    backgroundColor: theme === 'light' ? '#ffffff' : '#1e1e1e'
                 }}
             />
         </div >
