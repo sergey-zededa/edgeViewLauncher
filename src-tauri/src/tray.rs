@@ -127,11 +127,7 @@ async fn update_tray_menu(app: &AppHandle) {
     // in /api/tunnels with Status:"failed" after it dies on its own; the app
     // hides those, so the tray must too — otherwise dead tunnels linger in the
     // menu as "active connections".
-    tunnels.retain(|t| {
-        t.get("Status")
-            .and_then(|s| s.as_str())
-            .map_or(true, |s| s != "failed")
-    });
+    tunnels.retain(|t| t.get("Status").and_then(|s| s.as_str()) != Some("failed"));
 
     // Skip rebuilding the native menu when nothing the tray shows has changed.
     // Without this, the 5s backstop poll (and byte-counter updates) would rebuild
