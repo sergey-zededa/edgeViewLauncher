@@ -1932,6 +1932,14 @@ func (m *Manager) tunnelWSReader(ctx context.Context, tunnel *Tunnel) {
 			payloadStr := string(payload)
 			if strings.Contains(payloadStr, "+++tcpDone+++") {
 				fmt.Printf("TUNNEL[%s] Received tcpDone message, closing\n", tunnel.ID)
+				// The device closed the connection gracefully. Remove the tunnel
+				// from the registry so it disappears from /api/tunnels for both
+				// the app window and the tray — otherwise it lingers as
+				// Status:"active" forever even though this reader is exiting.
+				// CloseTunnel only touches tunnelMu/mu (not the wsMu/channelMu the
+				// deferred cleanup below uses) and cancels the context the accept
+				// loop / keepalive select on, so it's safe to call from here.
+				m.CloseTunnel(tunnel.ID)
 				return
 			}
 			// Log when we see +++Done+++ but explicitly ignore it for TCP tunnels

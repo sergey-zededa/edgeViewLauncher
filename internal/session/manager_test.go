@@ -91,6 +91,76 @@ func TestTunnelRegistryLifecycle(t *testing.T) {
 	}
 }
 
+// TestTunnelWSReaderRemovesTunnelOnTcpDone verifies that when the device closes
+// a tunnel gracefully (the +++tcpDone+++ control message), the shared-WS reader
+// removes the tunnel from the registry so it disappears from /api/tunnels for
+// both the app window and the tray — instead of lingering as Status:"active".
+func TestTunnelWSReaderRemovesTunnelOnTcpDone(t *testing.T) {
+	const key = "testkey"
+
+	// WS server that sends one wrapped +++tcpDone+++ frame, then holds the
+	// connection open so the reader exits via the tcpDone path, not a read error.
+	sendErr := make(chan error, 1)
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			sendErr <- err
+			return
+		}
+		defer conn.Close()
+		sendErr <- sendWrappedMessage(conn, []byte("+++tcpDone+++"), key, websocket.BinaryMessage, false)
+		// Block until the reader closes its side (unblocks the read); the read
+		// deadline is a safety net so the handler can't hang the test.
+		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		conn.ReadMessage()
+	}))
+	defer srv.Close()
+
+	url := "ws" + strings.TrimPrefix(srv.URL, "http")
+	clientConn, _, err := websocket.DefaultDialer.Dial(url, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+
+	m := NewManager()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tunnel := &Tunnel{
+		ID:        "t-tcpdone",
+		NodeID:    "nodeA",
+		LocalPort: 12345,
+		Type:      "SSH",
+		Status:    "active",
+		CreatedAt: time.Now(),
+		Cancel:    cancel,
+		wsConn:    clientConn,
+		config:    &zededa.SessionConfig{Key: key, Enc: false},
+		channels:  make(map[uint16]chan []byte),
+	}
+	m.RegisterTunnel(tunnel)
+
+	go m.tunnelWSReader(ctx, tunnel)
+
+	// Confirm the frame was sent (also synchronizes before the assertion).
+	if err := <-sendErr; err != nil {
+		t.Fatalf("server failed to send tcpDone frame: %v", err)
+	}
+
+	// The tunnel must leave the registry shortly after the reader processes it.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, ok := m.GetTunnel(tunnel.ID); !ok {
+			return // success
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("tunnel was not removed from registry after +++tcpDone+++")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestFailTunnel(t *testing.T) {
 	m := NewManager()
 	t1 := &Tunnel{ID: "t1", NodeID: "nodeA", Status: "active"}
