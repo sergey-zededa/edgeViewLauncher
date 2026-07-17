@@ -62,6 +62,7 @@ vi.mock('./tauriAPI', () => {
     OnTunnelClosing: vi.fn(noop),
     CancelConnection: vi.fn().mockResolvedValue({ cancelled: true }),
     EmitTunnelClosing: vi.fn(),
+    EmitTunnelsChanged: vi.fn(),
     DownloadUpdate: vi.fn(fn),
     InstallUpdate: vi.fn(fn),
     CheckForUpdates: vi.fn().mockResolvedValue({ success: true }),
@@ -1148,6 +1149,59 @@ describe('Status bar and global tunnels', () => {
     const withinGlobal = within(globalSection);
     expect(withinGlobal.getByText('Node 1')).toBeInTheDocument();
     expect(withinGlobal.getByText('Node 2')).toBeInTheDocument();
+  });
+
+  it('notifies the tray (tunnels-changed) when an active tunnel appears', async () => {
+    electronAPI.GetSettings.mockResolvedValue(configWithToken);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(configWithToken);
+
+    const node = { id: 'node-1', name: 'Node 1', status: 'online', project: 'proj-1' };
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([node], [{ id: 'proj-1', name: 'Project 1' }]));
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'enabled' });
+    electronAPI.GetSessionStatus.mockResolvedValue({ active: true, expiresAt: new Date(Date.now() + 3600000).toISOString() });
+
+    // A tunnel is present, so the immediate poll on node selection surfaces it.
+    electronAPI.ListTunnels.mockResolvedValue([
+      {
+        ID: 'tun-1', NodeID: 'node-1', NodeName: 'Node 1', Type: 'TCP',
+        TargetIP: '10.0.0.1:5900', LocalPort: 6001, Status: 'active',
+        IsEncrypted: true, BytesSent: 0, BytesReceived: 0,
+      },
+    ]);
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByText('Node 1'));
+    await screen.findByText('Running Applications');
+
+    await waitFor(() => {
+      expect(screen.getByText('Active Tunnels')).toBeInTheDocument();
+    });
+    // The active-tunnel set changed from empty to one, so the tray is notified.
+    await waitFor(() => {
+      expect(electronAPI.EmitTunnelsChanged).toHaveBeenCalled();
+    });
+  });
+
+  it('does not notify the tray when there are no active tunnels', async () => {
+    electronAPI.GetSettings.mockResolvedValue(configWithToken);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(configWithToken);
+
+    const node = { id: 'node-1', name: 'Node 1', status: 'online', project: 'proj-1' };
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([node], [{ id: 'proj-1', name: 'Project 1' }]));
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'enabled' });
+    electronAPI.GetSessionStatus.mockResolvedValue({ active: true, expiresAt: new Date(Date.now() + 3600000).toISOString() });
+    electronAPI.ListTunnels.mockResolvedValue([]);
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByText('Node 1'));
+    await screen.findByText('Running Applications');
+
+    // The active-tunnel set stays empty (matches the baseline), so no tray churn.
+    expect(electronAPI.EmitTunnelsChanged).not.toHaveBeenCalled();
   });
 
   it('clicking Hide All Tunnels dismisses the panel', async () => {

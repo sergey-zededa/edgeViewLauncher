@@ -115,6 +115,13 @@ export const EmitTunnelClosing = (tunnelId) => {
     return emit('tunnel-closing', { tunnelId }).catch(() => { });
 };
 
+/**
+ * Notify the native tray (Rust) that the set of active tunnels has changed, so
+ * it rebuilds its menu immediately instead of waiting for its backstop poll.
+ * Fire-and-forget: best-effort, never throws.
+ */
+export const EmitTunnelsChanged = () => emit('tunnels-changed', {}).catch(() => { });
+
 /** Subscribe to tunnel-closing events. Returns an unlisten function. */
 export const OnTunnelClosing = (callback) => {
     let unlisten = () => { };
