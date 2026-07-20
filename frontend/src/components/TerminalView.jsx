@@ -468,7 +468,6 @@ const TerminalView = ({ port }) => {
                     width: '100%',
                     textAlign: 'left',
                     display: 'block',
-                    padding: '10px',
                     boxSizing: 'border-box',
                     minHeight: 0,
                     backgroundColor: theme === 'light' ? '#ffffff' : '#1e1e1e'
