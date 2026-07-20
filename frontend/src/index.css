@@ -133,11 +133,19 @@ body {
 }
 
 /* SSH terminal window: the terminal container carries a solid background matching
-   the xterm theme, so the padded inset reads as one even dark border on all sides.
-   Override xterm.css's hardcoded black .xterm-viewport so the sub-cell FitAddon
-   leftover on the right/bottom blends into that inset instead of showing #000.
-   !important is required because xterm.css loads after this file with equal
-   specificity and would otherwise win on source order. */
+   the xterm theme. The 10px inset padding lives on the .xterm element itself (NOT
+   the wrapper) because xterm's FitAddon only subtracts padding read from .xterm when
+   computing rows/cols — padding on the wrapper is ignored vertically and clips the
+   bottom row with no margin. Its absolutely-positioned viewport fills this padding,
+   so the inset reads as one even dark border on all four sides. */
+.terminal-content .xterm {
+  box-sizing: border-box;
+  padding: 10px;
+}
+
+/* Override xterm.css's hardcoded black .xterm-viewport so the sub-cell FitAddon
+   leftover blends into the inset instead of showing #000. !important is required
+   because xterm.css loads after this file with equal specificity. */
 .terminal-content .xterm .xterm-viewport {
   background-color: transparent !important;
 }
