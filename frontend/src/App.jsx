@@ -4833,13 +4833,28 @@ Do you want to try connecting anyway?`)) {
 
                     rawList.forEach(app => {
                       if (app.appType === 'APP_TYPE_DOCKER_COMPOSE') {
-                        // Find parent runtime (non-compose app sharing an IP)
-                        const parent = rawList.find(p =>
-                          p.id !== app.id &&
-                          p.appType !== 'APP_TYPE_DOCKER_COMPOSE' &&
-                          p.ips && app.ips &&
-                          p.ips.some(ip => app.ips.includes(ip))
-                        );
+                        // The backend resolves parentage from the ZEDEDA app-instance
+                        // data (network instance, self-reported IPs, docker-runtime
+                        // deploymentType), so prefer it whenever it is present.
+                        let parent = app.parentAppId
+                          ? rawList.find(p => p.id === app.parentAppId)
+                          : null;
+
+                        // Fallback for older backends that don't send parentAppId:
+                        // match on a shared IP, but never nest under an app that
+                        // declares a deploymentType other than docker runtime — a
+                        // K3s or standalone VM cannot host a compose app, and picking
+                        // one is what put compose apps under the wrong instance.
+                        if (!parent) {
+                          parent = rawList.find(p =>
+                            p.id !== app.id &&
+                            p.appType !== 'APP_TYPE_DOCKER_COMPOSE' &&
+                            (!p.deploymentType || p.deploymentType === 'DEPLOYMENT_TYPE_DOCKER_RUNTIME') &&
+                            p.ips && app.ips &&
+                            p.ips.some(ip => app.ips.includes(ip))
+                          );
+                        }
+
                         if (parent) {
                           if (!parentsMap.has(parent.id)) parentsMap.set(parent.id, []);
                           parentsMap.get(parent.id).push(app);

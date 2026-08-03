@@ -1283,19 +1283,25 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 	}
 
 	// Transform and enrich with Cloud API (immediate, reliable)
+	//
+	// ParentAppID is the app instance ID of the docker runtime hosting a
+	// APP_TYPE_DOCKER_COMPOSE instance, and is empty for every other app as well
+	// as for compose apps whose runtime could not be identified unambiguously.
 	type Service struct {
-		Name          string                 `json:"name"`
-		Status        string                 `json:"status"`
-		ID            string                 `json:"id"`
-		IPs           []string               `json:"ips,omitempty"`
-		VNCPort       int                    `json:"vncPort,omitempty"`
-		EdgeViewState string                 `json:"edgeViewState,omitempty"`
-		Containers    []zededa.ContainerInfo `json:"containers,omitempty"`
-		AppType       string                 `json:"appType,omitempty"`
-		DockerCompose string                 `json:"dockerCompose,omitempty"`
-		AppVersion    string                 `json:"appVersion,omitempty"`
-		InternalIPs   []string               `json:"internalIps,omitempty"`
-		Error         string                 `json:"error,omitempty"`
+		Name           string                 `json:"name"`
+		Status         string                 `json:"status"`
+		ID             string                 `json:"id"`
+		IPs            []string               `json:"ips,omitempty"`
+		VNCPort        int                    `json:"vncPort,omitempty"`
+		EdgeViewState  string                 `json:"edgeViewState,omitempty"`
+		Containers     []zededa.ContainerInfo `json:"containers,omitempty"`
+		AppType        string                 `json:"appType,omitempty"`
+		DeploymentType string                 `json:"deploymentType,omitempty"`
+		ParentAppID    string                 `json:"parentAppId,omitempty"`
+		DockerCompose  string                 `json:"dockerCompose,omitempty"`
+		AppVersion     string                 `json:"appVersion,omitempty"`
+		InternalIPs    []string               `json:"internalIps,omitempty"`
+		Error          string                 `json:"error,omitempty"`
 	}
 
 	type ServicesResponse struct {
@@ -1306,7 +1312,6 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 	// 1. Fetch details for all apps
 	appDetails := make(map[string]*zededa.AppInstanceStatus)
 	appConfigs := make(map[string]*zededa.AppInstanceConfig)
-	var dockerRuntimeIPs []string
 
 	for _, app := range apps {
 		fmt.Printf("DEBUG: Fetching Cloud API status for app %s (ID: %s)...\n", app.Name, app.ID)
@@ -1325,24 +1330,18 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 			appConfigs[app.ID] = config
 		}
 
-		// Collect Docker Runtime IPs for fallback (if still needed)
-		if status.DeploymentType == "DEPLOYMENT_TYPE_DOCKER_RUNTIME" {
-			if config != nil {
-				for _, net := range config.Interfaces {
-					if addr, ok := net["ipaddr"].(string); ok && addr != "" {
-						dockerRuntimeIPs = append(dockerRuntimeIPs, addr)
-					}
-				}
-			}
-			for _, ns := range status.NetStatusList {
-				dockerRuntimeIPs = append(dockerRuntimeIPs, ns.IPs...)
-			}
-		}
 	}
-	dockerRuntimeIPs = uniqueStrings(dockerRuntimeIPs)
 
-	// 2. Build services list
+	// 2. Build services list.
+	//
+	// Each service is first populated with only the IPs it reports for itself.
+	// Compose apps report no IP of their own, so they inherit their runtime's IP
+	// further down — but only after that runtime has been identified, and only for
+	// compose apps. Handing every IP-less app the IPs of some arbitrary runtime
+	// fabricates an IP overlap that the parent/child grouping then reads as
+	// evidence of nesting.
 	var services []Service
+	composeInfos := make([]composeAppInfo, 0, len(apps))
 	for _, app := range apps {
 		svc := Service{
 			Name:   app.Name,
@@ -1387,14 +1386,30 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 				}
 			}
 
-			// Fallback to Docker Runtime IPs if still empty
-			if len(ips) == 0 {
-				ips = dockerRuntimeIPs
-			}
-
 			svc.IPs = uniqueStrings(ips)
 			svc.Containers = status.Containers
 			svc.AppType = status.AppType
+			svc.DeploymentType = status.DeploymentType
+
+			// Network instances this app is attached to. A compose app and the
+			// runtime hosting it sit on the same network instance, which is a far
+			// stronger parent signal than an IP (see resolveComposeParents).
+			var netInstIDs []string
+			if hasConfig {
+				for _, iface := range config.Interfaces {
+					if id, ok := iface["netinstid"].(string); ok && id != "" {
+						netInstIDs = append(netInstIDs, id)
+					}
+				}
+			}
+			composeInfos = append(composeInfos, composeAppInfo{
+				ID:             app.ID,
+				AppType:        svc.AppType,
+				DeploymentType: svc.DeploymentType,
+				OwnIPs:         svc.IPs,
+				NetInstIDs:     uniqueStrings(netInstIDs),
+			})
+
 			if hasConfig {
 				svc.DockerCompose = config.DockerCompose
 				if config.UserDefinedVersion != "" {
@@ -1501,6 +1516,26 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 		a.enrichmentMu.RUnlock()
 
 		services = append(services, svc)
+	}
+
+	// 2b. Attribute each compose app to the docker runtime hosting it, then let it
+	// inherit that runtime's IPs — a compose app is reached at its runtime's
+	// address. Inheritance stays scoped to compose apps that reported no IP of
+	// their own, so an unrelated VM never displays a runtime's IP.
+	composeParents := resolveComposeParents(composeInfos)
+	ipsByAppID := make(map[string][]string, len(services))
+	for _, svc := range services {
+		ipsByAppID[svc.ID] = svc.IPs
+	}
+	for i := range services {
+		parentID, ok := composeParents[services[i].ID]
+		if !ok {
+			continue
+		}
+		services[i].ParentAppID = parentID
+		if len(services[i].IPs) == 0 {
+			services[i].IPs = ipsByAppID[parentID]
+		}
 	}
 
 	/*
@@ -1736,6 +1771,120 @@ func dropLinkLocalIPv6(ips []string) []string {
 		fmt.Printf("DEBUG: Dropped IPv6 link-local candidates (unreachable through EdgeView relay): %v\n", dropped)
 	}
 	return out
+}
+
+const (
+	appTypeDockerCompose        = "APP_TYPE_DOCKER_COMPOSE"
+	deploymentTypeDockerRuntime = "DEPLOYMENT_TYPE_DOCKER_RUNTIME"
+)
+
+// composeAppInfo carries the per-app-instance facts needed to decide which
+// docker runtime an APP_TYPE_DOCKER_COMPOSE instance is nested under.
+type composeAppInfo struct {
+	ID             string
+	AppType        string
+	DeploymentType string
+	// OwnIPs are the IPs the instance reported for itself. Only self-reported
+	// IPs can prove parentage — an IP inherited from another instance says
+	// nothing about who hosts this one.
+	OwnIPs []string
+	// NetInstIDs are the network instances the instance is attached to.
+	NetInstIDs []string
+}
+
+// resolveComposeParents maps each APP_TYPE_DOCKER_COMPOSE instance ID to the ID
+// of the docker runtime instance hosting it.
+//
+// The ZEDEDA app-instance API exposes no explicit child→runtime reference, so
+// parentage is correlated from the strongest evidence available, in order:
+//
+//  1. the compose app shares a network instance with exactly one runtime
+//  2. the compose app shares a self-reported IP with exactly one runtime
+//  3. the device has exactly one docker runtime, so there is no ambiguity
+//
+// Only instances that actually declare DEPLOYMENT_TYPE_DOCKER_RUNTIME are
+// candidates: a K3s or standalone VM cannot host a compose app, and treating one
+// as a candidate is what previously nested compose apps under an unrelated VM.
+//
+// A signal matching two or more runtimes is ambiguous and is skipped rather than
+// resolved to whichever happened to be listed first. When nothing resolves, the
+// app is left unparented on purpose — rendering a compose app at the top level is
+// better than nesting it under the wrong runtime.
+func resolveComposeParents(apps []composeAppInfo) map[string]string {
+	runtimes := make([]composeAppInfo, 0, len(apps))
+	for _, app := range apps {
+		if app.ID != "" && app.AppType != appTypeDockerCompose && app.DeploymentType == deploymentTypeDockerRuntime {
+			runtimes = append(runtimes, app)
+		}
+	}
+
+	parents := make(map[string]string)
+	if len(runtimes) == 0 {
+		return parents
+	}
+
+	for _, app := range apps {
+		if app.ID == "" || app.AppType != appTypeDockerCompose {
+			continue
+		}
+
+		if id, ok := soleRuntimeMatching(runtimes, func(rt composeAppInfo) bool {
+			return stringsOverlap(rt.NetInstIDs, app.NetInstIDs)
+		}); ok {
+			parents[app.ID] = id
+			continue
+		}
+
+		if id, ok := soleRuntimeMatching(runtimes, func(rt composeAppInfo) bool {
+			return stringsOverlap(rt.OwnIPs, app.OwnIPs)
+		}); ok {
+			parents[app.ID] = id
+			continue
+		}
+
+		if len(runtimes) == 1 {
+			parents[app.ID] = runtimes[0].ID
+		}
+	}
+	return parents
+}
+
+// soleRuntimeMatching returns the one runtime satisfying match. Zero or multiple
+// matches yield no answer, so the caller can fall through to a weaker signal.
+func soleRuntimeMatching(runtimes []composeAppInfo, match func(composeAppInfo) bool) (string, bool) {
+	found := ""
+	for _, rt := range runtimes {
+		if !match(rt) {
+			continue
+		}
+		if found != "" {
+			return "", false
+		}
+		found = rt.ID
+	}
+	return found, found != ""
+}
+
+// stringsOverlap reports whether a and b share at least one non-empty value.
+func stringsOverlap(a, b []string) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
+	seen := make(map[string]struct{}, len(a))
+	for _, v := range a {
+		if v != "" {
+			seen[v] = struct{}{}
+		}
+	}
+	for _, v := range b {
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // uniqueStrings returns a slice with duplicates removed
