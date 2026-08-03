@@ -54,9 +54,9 @@ func TestHandleGetCollectInfoStatus(t *testing.T) {
 	// and returns the ID.
 	expiresAt := time.Now().Add(time.Hour)
 	srv.app.sessionManager.StoreCachedSession("node-1", &zededa.SessionConfig{URL: "wss://example.com", Token: "test-token"}, 0, "", expiresAt)
-	
+
 	jobID, _ := srv.app.StartCollectInfo("node-1")
-	
+
 	// Request
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/collect-info/status?jobId="+jobID, nil)
@@ -69,7 +69,7 @@ func TestHandleGetCollectInfoStatus(t *testing.T) {
 
 	var resp APIResponse
 	json.Unmarshal(rr.Body.Bytes(), &resp)
-	
+
 	dataStr, _ := json.Marshal(resp.Data)
 	var jobResp session.CollectInfoJob
 	json.Unmarshal(dataStr, &jobResp)
@@ -94,11 +94,11 @@ func TestHandleDownloadCollectInfo(t *testing.T) {
 	// Inject job (Hack: using reflection or just creating one via StartCollectInfo and hoping we can modify it?)
 	// Since we can't easily modify the job inside Manager (it's protected), we might face issues here.
 	// BUT, `GetCollectInfoJob` returns a pointer to a copy. We can't modify the internal state.
-	
+
 	// Alternative: Mock the App interface? HTTPServer uses *App struct directly.
 	// We might need to refactor App to use an interface for SessionManager to mock it.
 	// OR: Just verify the 404/400 cases which are easier.
-	
+
 	// Case 1: Job not found
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/collect-info/download?jobId=invalid", nil)
@@ -112,11 +112,11 @@ func TestHandleDownloadCollectInfo(t *testing.T) {
 	expiresAt := time.Now().Add(time.Hour)
 	srv.app.sessionManager.StoreCachedSession("node-1", &zededa.SessionConfig{URL: "wss://example.com", Token: "test-token"}, 0, "", expiresAt)
 	jobID, _ := srv.app.StartCollectInfo("node-1")
-	
+
 	rr = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/api/collect-info/download?jobId="+jobID, nil)
 	srv.handleDownloadCollectInfo(rr, req)
-	
+
 	// It should be 400 Bad Request because status is not completed
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for incomplete job, got %v", rr.Code)

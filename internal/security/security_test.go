@@ -107,6 +107,6 @@ func TestTOFUHostKey(t *testing.T) {
 // fakeKey implements ssh.PublicKey for fingerprint distinctness.
 type fakeKey struct{ s string }
 
-func (f *fakeKey) Type() string                          { return "ssh-rsa" }
-func (f *fakeKey) Marshal() []byte                       { return []byte(f.s) }
-func (f *fakeKey) Verify([]byte, *ssh.Signature) error   { return nil }
+func (f *fakeKey) Type() string                        { return "ssh-rsa" }
+func (f *fakeKey) Marshal() []byte                     { return []byte(f.s) }
+func (f *fakeKey) Verify([]byte, *ssh.Signature) error { return nil }

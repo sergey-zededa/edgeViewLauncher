@@ -13,14 +13,14 @@ import (
 
 // mockFetcher implements ZededaFetcher for testing.
 type mockFetcher struct {
-	mu         sync.Mutex
-	pages      [][]zededa.Node
-	projects   []zededa.Project
-	callIdx    int
-	pageDelay  time.Duration // per-page artificial delay for cancellation tests
-	pageCalls  atomic.Int32  // number of search calls made
-	projCalls  atomic.Int32  // number of project calls made
-	projDelay  time.Duration
+	mu        sync.Mutex
+	pages     [][]zededa.Node
+	projects  []zededa.Project
+	callIdx   int
+	pageDelay time.Duration // per-page artificial delay for cancellation tests
+	pageCalls atomic.Int32  // number of search calls made
+	projCalls atomic.Int32  // number of project calls made
+	projDelay time.Duration
 }
 
 func (m *mockFetcher) SearchNodesWithTokenCtx(ctx context.Context, query string, limit int, pageToken string, projectID string) (*zededa.SearchResult, error) {

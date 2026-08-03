@@ -294,7 +294,7 @@ func TestTunnelSharedConnectionDataIntegrity(t *testing.T) {
 	testData := [][]byte{
 		[]byte("SSH-2.0-OpenSSH_8.9\r\n"),
 		{0x00, 0x00, 0x05, 0x1C}, // SSH packet length header
-		make([]byte, 1308),        // SSH packet body (1308 bytes)
+		make([]byte, 1308),       // SSH packet body (1308 bytes)
 	}
 	// Fill the body with a pattern.
 	for i := range testData[2] {

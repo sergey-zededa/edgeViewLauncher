@@ -4,11 +4,11 @@ import (
 	"context"
 	"edgeViewLauncher/internal/cache"
 	"edgeViewLauncher/internal/config"
-	"errors"
 	"edgeViewLauncher/internal/session"
 	"edgeViewLauncher/internal/ssh"
 	"edgeViewLauncher/internal/zededa"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"reflect"
@@ -23,8 +23,8 @@ type zededaAPI interface {
 	GetEnterprise() (*zededa.Enterprise, error)
 	GetProjects() ([]zededa.Project, error)
 	GetProjectsCtx(ctx context.Context) ([]zededa.Project, error)
-	SearchNodes(query string, limit, skip int, projectID string) (*zededa.SearchResult, error)                                                                       // legacy compat
-	SearchNodesWithToken(query string, limit int, pageToken string, projectID string) (*zededa.SearchResult, error)                                                  // cursor-based
+	SearchNodes(query string, limit, skip int, projectID string) (*zededa.SearchResult, error)                      // legacy compat
+	SearchNodesWithToken(query string, limit int, pageToken string, projectID string) (*zededa.SearchResult, error) // cursor-based
 	SearchNodesWithTokenCtx(ctx context.Context, query string, limit int, pageToken string, projectID string) (*zededa.SearchResult, error)
 	UpdateConfig(baseURL, token string)
 	InitSession(targetID string) (string, error)
@@ -383,7 +383,7 @@ func (a *App) SearchNodes(query string, limit int, pageToken string, projectID s
 			// Not found or error -> return empty search result
 			return &zededa.SearchResult{Nodes: []zededa.Node{}}, nil
 		}
-		
+
 		// Convert DeviceStatus to Node format for the frontend
 		runState := strings.TrimSpace(status.RunState)
 		nodeStatus := "offline"
@@ -393,7 +393,7 @@ func (a *App) SearchNodes(query string, limit int, pageToken string, projectID s
 			nodeStatus = strings.TrimPrefix(runState, "RUN_STATE_")
 			nodeStatus = strings.ToLower(nodeStatus)
 		}
-		
+
 		return &zededa.SearchResult{
 			Nodes: []zededa.Node{{
 				ID:       status.ID,
@@ -614,7 +614,7 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool, targetIP strin
 		} else {
 			// fmt.Printf("Session and proxy cached until %s\n", expiresAt.Format(time.RFC3339))
 		}
-		
+
 		// Return success values
 		a.SetConnectionProgress(nodeID, "Connected")
 		return port, tunnelID, nil
@@ -1099,13 +1099,13 @@ func (a *App) SetConsoleEnabled(nodeID string, enabled bool) error {
 }
 
 type SSHStatus struct {
-	Status         string `json:"status"`
-	PublicKey      string `json:"publicKey"`
-	MaxSessions    int    `json:"maxSessions"`
-	Expiry         string `json:"expiry"`
-	DebugKnob      bool   `json:"debugKnob"`
-	VGAEnabled     bool   `json:"vgaEnabled"`
-	USBEnabled     bool   `json:"usbEnabled"`
+	Status         string   `json:"status"`
+	PublicKey      string   `json:"publicKey"`
+	MaxSessions    int      `json:"maxSessions"`
+	Expiry         string   `json:"expiry"`
+	DebugKnob      bool     `json:"debugKnob"`
+	VGAEnabled     bool     `json:"vgaEnabled"`
+	USBEnabled     bool     `json:"usbEnabled"`
 	ConsoleEnabled bool     `json:"consoleEnabled"`
 	IsEncrypted    bool     `json:"isEncrypted"`
 	ExternalPolicy bool     `json:"externalPolicy"`
@@ -1121,11 +1121,11 @@ type SSHStatus struct {
 // blob to keep the UI compact while still allowing an operator to verify
 // the key with `ssh-keygen -lf authorized_keys`.
 type AuthorizedKeyInfo struct {
-	Type           string `json:"type"`
-	Fingerprint    string `json:"fingerprint"`
-	Comment        string `json:"comment"`
-	IsLauncherKey  bool   `json:"isLauncherKey"`
-	Valid          bool   `json:"valid"`
+	Type          string `json:"type"`
+	Fingerprint   string `json:"fingerprint"`
+	Comment       string `json:"comment"`
+	IsLauncherKey bool   `json:"isLauncherKey"`
+	Valid         bool   `json:"valid"`
 }
 
 // GetSSHStatus returns the current SSH status of the node
@@ -1469,7 +1469,7 @@ func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 			if hasConfig && config.VMInfo.VNC {
 				svc.VNCPort = 5900 + config.VMInfo.VNCDisplay
 			} else {
-			// Fallback: Check containers
+				// Fallback: Check containers
 				for _, c := range status.Containers {
 					for _, pm := range c.PortMaps {
 						if (pm.PublicPort >= 5900 && pm.PublicPort <= 5999) || (pm.PrivatePort >= 5900 && pm.PrivatePort <= 5999) {
