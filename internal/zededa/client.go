@@ -40,9 +40,9 @@ type SearchResult struct {
 
 // API Response structures
 type DeviceListResponse struct {
-	List    []Device        `json:"list"`
-	Next    json.RawMessage `json:"next"`  // Cursor for next page — may be a string or an object
-	Total   int             `json:"totalCount,omitempty"`
+	List  []Device        `json:"list"`
+	Next  json.RawMessage `json:"next"` // Cursor for next page — may be a string or an object
+	Total int             `json:"totalCount,omitempty"`
 }
 
 type Device struct {
@@ -1729,10 +1729,10 @@ func (c *Client) VerifyToken(token string) (*TokenInfo, error) {
 // 401 is the expected case and is treated as confirmation that this is a
 // ZEDEDA endpoint.
 type ProbeResult struct {
-	OK         bool   `json:"ok"`
-	Status     int    `json:"status,omitempty"`
-	Detail     string `json:"detail,omitempty"`
-	IsZededa   bool   `json:"isZededa"`
+	OK       bool   `json:"ok"`
+	Status   int    `json:"status,omitempty"`
+	Detail   string `json:"detail,omitempty"`
+	IsZededa bool   `json:"isZededa"`
 }
 
 // ProbeBaseURL checks whether baseURL points at something that responds

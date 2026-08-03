@@ -735,6 +735,118 @@ describe('App configuration and tunnels', () => {
     expect(screen.queryByText('Diagnostics')).not.toBeInTheDocument();
   });
 
+  // Regression: a device running both a K3s VM and a compose runtime rendered the
+  // nested compose app under the K3s VM. Every IP-less app used to inherit the
+  // runtime's IP, so the K3s VM looked like it shared an IP with the compose app
+  // and — being listed first — won the parent slot.
+  describe('compose app nesting on a device with a non-compose VM', () => {
+    const setUpDevice = (services) => {
+      const validKey = 'A'.repeat(171);
+      const validToken = `ENT1234:${validKey}`;
+      const config = {
+        baseUrl: 'https://cluster.example',
+        apiToken: validToken,
+        clusters: [{ name: 'Prod', baseUrl: 'https://cluster.example', apiToken: validToken }],
+        activeCluster: 'Prod',
+        recentDevices: [],
+      };
+      electronAPI.GetSettings.mockResolvedValue(config);
+      electronAPI.SecureStorageGetSettings.mockResolvedValue(config);
+      electronAPI.GetDeviceCache.mockResolvedValue(
+        makeCache([{ id: 'node-1', name: 'Node 1', status: 'online' }])
+      );
+      electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify(services));
+      electronAPI.GetSessionStatus.mockResolvedValue({ active: true, expiresAt: new Date(Date.now() + 3600000).toISOString() });
+      electronAPI.GetSSHStatus.mockResolvedValue({ status: 'enabled' });
+    };
+
+    // The K3s VM is listed first and shares the runtime's displayed IP, so it wins
+    // any naive "first app with a matching IP" search.
+    const k3sVM = {
+      name: 'dealer-k3s-em321',
+      id: 'k3s-1',
+      status: 'RUN_STATE_ONLINE',
+      appType: 'APP_TYPE_VM',
+      deploymentType: 'DEPLOYMENT_TYPE_K3S',
+      ips: ['10.5.255.254'],
+      internalIps: [],
+      containers: [],
+    };
+    const composeRuntime = {
+      name: 'zededa-berlin-EM321.zcompose',
+      id: 'rt-1',
+      status: 'RUN_STATE_ONLINE',
+      appType: 'APP_TYPE_VM_RUNTIME',
+      deploymentType: 'DEPLOYMENT_TYPE_DOCKER_RUNTIME',
+      appVersion: '2.0.7',
+      ips: ['10.5.255.254'],
+      internalIps: ['10.0.0.5'],
+      containers: [],
+    };
+    const composeApp = {
+      name: 'zededa-berlin-EM321.dealerfd',
+      id: 'ca-1',
+      status: 'RUN_STATE_ERROR',
+      appType: 'APP_TYPE_DOCKER_COMPOSE',
+      deploymentType: 'DEPLOYMENT_TYPE_DOCKER_RUNTIME',
+      ips: ['10.5.255.254'],
+      internalIps: [],
+      containers: [],
+    };
+
+    const assertNestedUnderRuntime = (container) => {
+      const items = [...container.querySelectorAll('.service-item')];
+      const itemFor = (name) => items.find(el => el.textContent.includes(name));
+
+      const child = itemFor('zededa-berlin-EM321.dealerfd');
+      const runtime = itemFor('zededa-berlin-EM321.zcompose');
+      const k3s = itemFor('dealer-k3s-em321');
+      expect(child).toBeTruthy();
+      expect(runtime).toBeTruthy();
+      expect(k3s).toBeTruthy();
+
+      // The compose app is the indented child...
+      expect(child.style.marginLeft).toBe('32px');
+      expect(runtime.style.marginLeft).toBe('0px');
+      expect(k3s.style.marginLeft).toBe('0px');
+
+      // ...and it is rendered directly beneath the runtime, not the K3s VM.
+      expect(items.indexOf(child)).toBe(items.indexOf(runtime) + 1);
+
+      // Only the real docker runtime is labelled as one.
+      const badge = screen.getByText('Compose Runtime');
+      expect(runtime.contains(badge)).toBe(true);
+      expect(k3s.contains(badge)).toBe(false);
+    };
+
+    it('nests the compose app under the runtime named by parentAppId', async () => {
+      setUpDevice([
+        k3sVM,
+        { ...composeApp, parentAppId: 'rt-1' },
+        composeRuntime,
+      ]);
+
+      const { container } = render(<App />);
+      fireEvent.click(await screen.findByText('Node 1'));
+      await screen.findByText('Running Applications');
+      await screen.findByText('zededa-berlin-EM321.dealerfd');
+
+      assertNestedUnderRuntime(container);
+    });
+
+    it('falls back to deploymentType when the backend sends no parentAppId', async () => {
+      // Older backend: no parentAppId, and all three apps display the same IP.
+      setUpDevice([k3sVM, composeApp, composeRuntime]);
+
+      const { container } = render(<App />);
+      fireEvent.click(await screen.findByText('Node 1'));
+      await screen.findByText('Running Applications');
+      await screen.findByText('zededa-berlin-EM321.dealerfd');
+
+      assertNestedUnderRuntime(container);
+    });
+  });
+
   it('does not show Diagnostics button for compose runtime v1.x', async () => {
     const validKey = 'A'.repeat(171);
     const validToken = `ENT1234:${validKey}`;

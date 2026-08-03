@@ -145,7 +145,7 @@ func (m *Manager) runCollectInfo(ctx context.Context, job *CollectInfoJob, confi
 		wsConn, clientIP, err = m.connectToEdgeView(config, fmt.Sprintf("collectinfo/i%d", currentInstID))
 		if err != nil {
 			lastErr = fmt.Errorf("failed to connect: %w", err)
-			
+
 			// Check for specific errors
 			if err == ErrBusyInstance {
 				fmt.Printf("DEBUG: Instance %d is busy\n", currentInstID)
@@ -197,7 +197,7 @@ func (m *Manager) runCollectInfo(ctx context.Context, job *CollectInfoJob, confi
 			if foundAlternative {
 				continue // Skip backoff and try immediately
 			}
-			
+
 			// All instances tried - reset for next full round
 			fmt.Printf("DEBUG: All %d instances have been tried. Will retry with backoff.\n", config.MaxInst)
 			triedInstances = make(map[int]bool)
@@ -220,7 +220,7 @@ func (m *Manager) runCollectInfo(ctx context.Context, job *CollectInfoJob, confi
 		if finalErr == nil {
 			finalErr = fmt.Errorf("failed after %d attempts", maxRetries)
 		}
-		
+
 		fmt.Printf("DEBUG: CollectInfo failed after retries: %v\n", finalErr)
 		m.updateJobError(job, finalErr.Error())
 		return
@@ -291,7 +291,7 @@ func (m *Manager) runCollectInfo(ctx context.Context, job *CollectInfoJob, confi
 				if err := json.Unmarshal(payload, &info); err == nil && info.Name != "" {
 					fmt.Printf("DEBUG: Got file info: %+v\n", info)
 					gotFileInfo = true
-					
+
 					// Determine total size (Size for file, DirSize for tar)
 					totalSize := info.Size
 					if info.DirSize > 0 {
@@ -335,7 +335,7 @@ func (m *Manager) runCollectInfo(ctx context.Context, job *CollectInfoJob, confi
 			if mt == websocket.TextMessage {
 				payloadStr := string(payload)
 				// fmt.Printf("DEBUG: Received TextMessage: %s\n", payloadStr)
-				
+
 				if strings.Contains(payloadStr, tarCopyDoneMsg) {
 					fmt.Println("DEBUG: Tar copy done")
 					tarfileDone = true
@@ -350,7 +350,7 @@ func (m *Manager) runCollectInfo(ctx context.Context, job *CollectInfoJob, confi
 				} else if strings.Contains(payloadStr, closeMessage) {
 					// Done
 					fmt.Println("DEBUG: Transfer completed")
-					
+
 					if !gotFileInfo {
 						// Received close message but never got file info
 						fmt.Println("DEBUG: Close message received but no file info")
@@ -381,7 +381,7 @@ func (m *Manager) runCollectInfo(ctx context.Context, job *CollectInfoJob, confi
 					m.updateJobError(job, fmt.Sprintf("Write error: %v", err))
 					return
 				}
-				
+
 				m.collectMu.Lock()
 				job.Progress += int64(n)
 				m.collectMu.Unlock()

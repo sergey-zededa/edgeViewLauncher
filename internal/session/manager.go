@@ -73,8 +73,8 @@ type Tunnel struct {
 	// terminal auto-recovery). Set when an in-flight client SSH session
 	// gets unrecoverably severed by a tunnel WS reconnect. Read by the
 	// /api/tunnels JSON handler.
-	recoveryMu     sync.Mutex
-	lastRecovery   *RecoveryEvent
+	recoveryMu   sync.Mutex
+	lastRecovery *RecoveryEvent
 }
 
 // RecoveryEvent records a tunnel-level event that interrupted an in-flight
@@ -84,8 +84,8 @@ type Tunnel struct {
 // attempt auto-recovery.
 type RecoveryEvent struct {
 	At     time.Time `json:"At"`
-	Reason string    `json:"Reason"`            // machine-readable: "ws_reconnect_session_killed"
-	Detail string    `json:"Detail,omitempty"`  // human-readable hint
+	Reason string    `json:"Reason"`           // machine-readable: "ws_reconnect_session_killed"
+	Detail string    `json:"Detail,omitempty"` // human-readable hint
 }
 
 type Manager struct {
