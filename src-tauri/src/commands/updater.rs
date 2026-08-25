@@ -9,8 +9,17 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
-/// Holds a downloaded update ready for installation.
-pub struct PendingUpdate(pub Mutex<Option<(Update, Vec<u8>)>>);
+/// Updater state shared across the three updater commands.
+///
+/// `checked` caches the `Update` handle from the most recent
+/// `check_for_updates` so `download_update` can reuse it instead of hitting the
+/// release endpoint a second time. `downloaded` holds the fetched bytes awaiting
+/// installation.
+#[derive(Default)]
+pub struct PendingUpdate {
+    pub checked: Mutex<Option<Update>>,
+    pub downloaded: Mutex<Option<(Update, Vec<u8>)>>,
+}
 
 /// Check for a new version.  Emits `update-available` or `update-not-available`
 /// to ALL windows.
@@ -20,10 +29,13 @@ pub async fn check_for_updates(app: AppHandle) -> Result<Value, String> {
         Ok(updater) => match updater.check().await {
             Ok(Some(update)) => {
                 let version = update.version.clone();
+                // Cache the handle so download_update does not re-query the endpoint.
+                *app.state::<PendingUpdate>().checked.lock().unwrap() = Some(update);
                 let _ = app.emit("update-available", serde_json::json!({ "version": version }));
                 Ok(serde_json::json!({ "success": true, "version": version }))
             }
             Ok(None) => {
+                *app.state::<PendingUpdate>().checked.lock().unwrap() = None;
                 let _ = app.emit("update-not-available", serde_json::json!({}));
                 Ok(serde_json::json!({ "success": true, "upToDate": true }))
             }
@@ -45,15 +57,24 @@ pub async fn check_for_updates(app: AppHandle) -> Result<Value, String> {
 /// Download the update without installing. Stores the bytes for later install.
 #[tauri::command]
 pub async fn download_update(app: AppHandle) -> Result<Value, String> {
-    let updater = app
-        .updater()
-        .map_err(|e| format!("Updater not configured: {e}"))?;
+    // Reuse the handle from the preceding check_for_updates. Only fall back to a
+    // fresh check if there is none cached (e.g. download_update invoked directly).
+    let cached = app.state::<PendingUpdate>().checked.lock().unwrap().take();
 
-    let update = updater
-        .check()
-        .await
-        .map_err(|e| format!("Update check failed: {e}"))?
-        .ok_or_else(|| "No update available".to_string())?;
+    let update = match cached {
+        Some(update) => update,
+        None => {
+            let updater = app
+                .updater()
+                .map_err(|e| format!("Updater not configured: {e}"))?;
+
+            updater
+                .check()
+                .await
+                .map_err(|e| format!("Update check failed: {e}"))?
+                .ok_or_else(|| "No update available".to_string())?
+        }
+    };
 
     println!(
         "[Updater] Found update v{}, downloading from: {}",
@@ -81,7 +102,7 @@ pub async fn download_update(app: AppHandle) -> Result<Value, String> {
 
     // Store the downloaded bytes for later installation
     let pending = app.state::<PendingUpdate>();
-    *pending.0.lock().unwrap() = Some((update, bytes));
+    *pending.downloaded.lock().unwrap() = Some((update, bytes));
 
     let _ = app.emit("update-downloaded", serde_json::json!({}));
 
@@ -94,7 +115,7 @@ pub async fn download_update(app: AppHandle) -> Result<Value, String> {
 pub async fn install_update(app: AppHandle) -> Result<Value, String> {
     let pending = app.state::<PendingUpdate>();
     let (update, bytes) = pending
-        .0
+        .downloaded
         .lock()
         .unwrap()
         .take()
