@@ -9,8 +9,19 @@ permissions:
   contents: write
 
 jobs:
+  check-versions:
+    name: Check version consistency
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Verify versions match the tag
+        run: node scripts/check-versions.js
+
   build-mac:
     name: Build macOS (Universal)
+    needs: check-versions
     runs-on: macos-latest
     steps:
       - name: Checkout code
@@ -153,6 +164,7 @@ jobs:
 
   build-windows:
     name: Build Windows (x64)
+    needs: check-versions
     runs-on: windows-latest
     steps:
       - name: Checkout code
@@ -270,6 +282,7 @@ jobs:
 
   build-linux:
     name: Build Linux (x64)
+    needs: check-versions
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

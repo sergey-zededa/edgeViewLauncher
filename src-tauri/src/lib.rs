@@ -25,7 +25,7 @@ pub fn run() {
             }
         }))
         .manage(AppState::new())
-        .manage(updater::PendingUpdate(std::sync::Mutex::new(None)))
+        .manage(updater::PendingUpdate::default())
         .setup(|app| {
             let app_handle = app.handle().clone();
 

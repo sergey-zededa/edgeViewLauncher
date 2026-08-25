@@ -65,6 +65,9 @@ jobs:
           check-latest: true
           cache: true
 
+      - name: Check version consistency
+        run: node scripts/check-versions.js
+
       - name: Run Go vet
         run: go vet ./...
 
