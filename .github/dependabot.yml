@@ -42,6 +42,14 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    ignore:
+      # Track the floating v4 tag, as GitHub's own codeql-action docs
+      # recommend, so CodeQL bundle and security updates arrive without a
+      # PR per patch release. Major bumps (v4 -> v5) still get proposed.
+      - dependency-name: "github/codeql-action"
+        update-types:
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
     commit-message:
       prefix: "ci(deps)"
     labels:
