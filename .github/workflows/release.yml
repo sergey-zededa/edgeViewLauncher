@@ -493,7 +493,12 @@ jobs:
         uses: ncipollo/release-action@v1
         with:
           artifacts: "release-assets/*"
+          # Only used when this workflow creates the release itself. When the
+          # release was written by hand before tagging, omitBodyDuringUpdate
+          # below keeps those notes instead of overwriting them with the raw
+          # PR list (which is mostly dependency bumps).
           generateReleaseNotes: true
+          omitBodyDuringUpdate: true
           draft: false
           prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-alpha') || contains(github.ref, '-rc') }}
           allowUpdates: true
