@@ -1241,13 +1241,12 @@ describe('Status bar and global tunnels', () => {
     fireEvent.click(nodeItem);
     await screen.findByText('Running Applications');
 
-    // Wait for tunnel polling to populate activeTunnels
-    await waitFor(() => {
-      expect(screen.getByText('Active Tunnels')).toBeInTheDocument();
-    });
-
-    // Click All Tunnels button
-    const allTunnelsBtn = screen.getByText('All Tunnels');
+    // Wait for tunnel polling to populate activeTunnels. Note that waiting on
+    // 'Active Tunnels' would prove nothing: that section title renders for any
+    // selectedNode, and the tunnel count only toggles a CSS class. The
+    // 'All Tunnels' button is gated on activeTunnels being non-empty, so
+    // waiting for it is what actually confirms the ListTunnels poll landed.
+    const allTunnelsBtn = await screen.findByText('All Tunnels');
     fireEvent.click(allTunnelsBtn);
 
     // Global panel should render
@@ -1340,12 +1339,9 @@ describe('Status bar and global tunnels', () => {
     fireEvent.click(nodeItem);
     await screen.findByText('Running Applications');
 
-    await waitFor(() => {
-      expect(screen.getByText('Active Tunnels')).toBeInTheDocument();
-    });
-
-    // Open global tunnels
-    fireEvent.click(screen.getByText('All Tunnels'));
+    // Open global tunnels. findByText waits for the ListTunnels poll to land;
+    // 'Active Tunnels' would not, since it renders for any selectedNode.
+    fireEvent.click(await screen.findByText('All Tunnels'));
     await waitFor(() => {
       expect(screen.getByText('All Active Tunnels')).toBeInTheDocument();
     });
