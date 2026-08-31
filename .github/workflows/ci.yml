@@ -34,6 +34,19 @@ jobs:
       - name: Run frontend tests
         run: cd frontend && npm test -- --run
 
+      - name: Build frontend (verify production build)
+        run: |
+          npm run build:frontend
+          # Assert both entry points were emitted. vnc.html is a second Vite
+          # entry declared in rollupOptions.input, so a config or dependency
+          # change can drop it while the build still exits 0.
+          for f in frontend/dist/index.html frontend/dist/vnc.html; do
+            if [ ! -s "$f" ]; then
+              echo "::error::frontend build did not emit $f"
+              exit 1
+            fi
+          done
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
