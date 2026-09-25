@@ -4,43 +4,31 @@ description: How to release a new version of EdgeView Launcher
 
 # Release Process
 
-When preparing a new release, follow these steps strictly to ensure auto-update compatibility:
+Auto-update depends on the release tag matching the version the app reports, and CI (`scripts/check-versions.js`) fails unless all four version fields agree. Only run this workflow when the user has explicitly asked for a release.
 
-1. Ensure you are in the project root directory
+Run every command from the project root.
+
+1. Bump the version on a release branch. Set the same `<VERSION>` in all four places: `package.json`, `frontend/package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`.
 ```bash
-// turbo
-pwd
+git checkout -b release/v<VERSION>
+npm version <VERSION> --no-git-tag-version
+npm --prefix frontend version <VERSION> --no-git-tag-version
+# then edit src-tauri/tauri.conf.json and src-tauri/Cargo.toml by hand
+(cd src-tauri && cargo check -q)   # refreshes the crate version in Cargo.lock
+node scripts/check-versions.js
 ```
 
-2. Bump Versions in package.json and frontend/package.json
+2. Commit, push the branch, and open a PR. `main` is protected; the bump lands through the PR like any other change.
 ```bash
-// turbo
-npm version patch --no-git-tag-version && cd frontend && npm version patch --no-git-tag-version && cd ..
+git add package.json frontend/package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock
+git commit -m "chore: bump version to v<VERSION>"
+git push -u origin release/v<VERSION>
+gh pr create --fill
 ```
 
-3. Stage and Commit Changes
+3. After the PR is merged, create the release from the latest commit on `main`. The tag must match `v*`.
 ```bash
-// turbo
-git add package.json frontend/package.json
+gh release create v<VERSION> --target main --generate-notes --title "v<VERSION>"
 ```
 
-```bash
-// turbo
-git commit -m "chore: bump version"
-```
-
-```bash
-// turbo
-git push origin main
-```
-
-4. Trigger Release Build on GitHub
-Provide the tag matching the `v*` pattern from the latest commit.
-
-```bash
-// turbo
-gh release create v<VERSION> --generate-notes --title "v<VERSION>"
-```
-
-5. Verify GitHub Action "Release" workflow runs successfully.
-Ensure artifacts are generated correctly.
+4. Verify the GitHub Action "Release" workflow succeeds and that the release has the installers (`.dmg`, `-setup.exe`, `.AppImage`) and `latest.json`, which the updater reads.

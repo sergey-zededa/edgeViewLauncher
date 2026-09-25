@@ -47,6 +47,6 @@ If connection stability (e.g., stalling, dropping, "TCP EOF") is observed, the p
 ## 7. Docker Compose App IPs
 
 - If attempting to reach Docker Compose apps, confirm the connection targets the device's internal IP (e.g., `10.x.x.x`) rather than an external management IP.
-- Ensure correlation logic accurately maps sibling applications to find the correct internal virtual IP.
+- A compose app's IP comes from the docker runtime that hosts it, and that runtime is resolved by `resolveComposeParents` (`cmd/edgeview-backend/app.go`), not by matching IPs. If a compose app shows the wrong IP or no IP, check its resolved `parentAppId` first; an unresolved (ambiguous) parent leaves the app without an inherited IP on purpose.
 
-Remember to document any new findings and apply fixes carefully, running both the backend and frontend components to test end-to-end integration.
+Verify a fix end-to-end with the backend and the Tauri app both running, and add anything you learned to this skill.
