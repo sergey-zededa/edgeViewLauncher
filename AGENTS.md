@@ -4,7 +4,6 @@ This file provides guidance to AI Agents (including WARP) when working with code
 
 ## Critical Rules
 
-**IMPORTANT**: 
 1. **NEVER DELETE KEYCHAIN ITEMS**: You are strictly forbidden from deleting items from the user's keychain (e.g., via `security delete-generic-password`) unless explicitly and unambiguously instructed to do so by the user for a specific item.
 2. **NEVER create git tags** or trigger release builds (CI/CD) unless explicitly instructed by the user.
 3. **ALWAYS work using PR process**:
@@ -15,14 +14,9 @@ This file provides guidance to AI Agents (including WARP) when working with code
    - Include decent human-readable comments describing the changes.
    - This ensures GitHub produces meaningful "What's changed" messages for every new release.
 4. Do not modify `eve/` directory contents as they are reference implementations.
-5. **ALWAYS run tests and build** after modifying code to verify changes:
-   - **Check your current directory** (`pwd`) before running commands.
-   - **If in project root (`edgeViewLauncher/`)**:
-     - Frontend: `npm run build:frontend` (or `cd frontend && npm run build`)
-     - Backend: `go build -o edgeview-backend ./cmd/edgeview-backend`
-   - **If in frontend directory (`edgeViewLauncher/frontend/`)**:
-   - Frontend: `npm run build` (DO NOT run `cd frontend` again)
-     - Backend: `cd .. && go build -o edgeview-backend ./cmd/edgeview-backend`
+5. **Always run tests and build** after modifying code to verify changes. From the project root:
+   - Frontend: `npm run build:frontend` and `npm --prefix frontend test -- --run`
+   - Backend: `go test ./...` and `go build -o src-tauri/binaries/edgeview-backend-aarch64-apple-darwin ./cmd/edgeview-backend`
 6. **Commit Message Attribution**:
    - **DO NOT** include the `Co-Authored-By` attribution line in commit messages.
 
@@ -135,38 +129,16 @@ For full API documentation of the ZEDEDA Cloud API, refer to the Swagger definit
 
 ## Release Process
 
-When preparing a new release, follow these steps strictly to ensure auto-update compatibility:
+Auto-update depends on the release tag matching the version the running app reports. Run these steps from the project root.
 
-1.  **Ensure Root Directory**:
-    *   **CRITICAL**: Make sure you are in the **project root** directory (e.g., `edgeViewLauncher/`), NOT in `frontend/` or `cmd/`.
-    *   Verify by running `ls -l` and checking for `package.json`, `go.mod`, and the `frontend/` directory.
+1.  **Bump versions** in all four places: `package.json` (root), `frontend/package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml` (then `cargo check` in `src-tauri/` to refresh `Cargo.lock`). CI's `scripts/check-versions.js` fails unless they all agree.
 
-2.  **Bump Versions**:
-    *   Update version in `package.json` (root)
-    *   Update version in `frontend/package.json`
-    *   `npm version patch --no-git-tag-version` (in both directories)
+2.  **Land the bump through a PR**, like any other change (see rule 3).
 
-3.  **Commit Changes**:
-    *   **CRITICAL**: Run `git add .` from the **project root** to stage changes from both backend (`.go`) and frontend (`frontend/`).
-    *   Verify status with `git status` before committing.
-    *   Commit the version bump and any code changes.
-    *   Push to `main`.
-
-4.  **Trigger Release Build**:
-    *   Use GitHub CLI or UI to create a release.
-    *   **CRITICAL**: The tag name must match the `v*` pattern (e.g., `v0.1.10`).
-    *   **CRITICAL**: The release MUST be created from the **latest commit** on `main` that contains the version bump.
-    *   If a release is created pointing to an older commit, auto-updates will fail because the internal version won't match the tag.
+3.  **Create the release** after the PR merges. The tag must match `v*` and point at the latest commit on `main`; a release pointing at an older commit breaks auto-update, because the app's internal version won't match the tag.
 
     ```bash
-    # Example
-    gh release create v0.1.10 --generate-notes --title "v0.1.10"
+    gh release create v0.x.y --target main --generate-notes --title "v0.x.y"
     ```
 
-4.  **Verification**:
-    *   Verify the GitHub Action "Release" workflow runs successfully.
-    *   Ensure artifacts are uploaded with standardized names (lowercase, no spaces):
-        *   `edgeview-launcher-Setup-x.y.z.exe` (Windows)
-        *   `edgeview-launcher-x.y.z-arm64.dmg` (macOS)
-        *   `edgeview-launcher-x.y.z-x64.AppImage` (Linux)
-    *   Verify `latest.yml` (and `latest-mac.yml`, `latest-linux.yml`) is present in the release assets.
+4.  **Verify** that the GitHub Action "Release" workflow succeeds and that the release has the installers (`EdgeView.Launcher_x.y.z_universal.dmg`, `EdgeView.Launcher_x.y.z_x64-setup.exe`, `EdgeView.Launcher_x.y.z_amd64.AppImage`) and `latest.json`, which the updater reads.

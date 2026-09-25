@@ -57,10 +57,6 @@ EdgeView Launcher is a **Tauri v2** desktop application with a Go backend that p
 
 ## Development Commands
 
-**IMPORTANT**: Check your current directory (`pwd`) before running commands.
-- If you are in `edgeViewLauncher/frontend/`, run `npm run build` / `npm test` directly.
-- **DO NOT** run `cd frontend && ...` if you are already in the frontend directory.
-
 ```bash
 # From frontend/ directory:
 npm run dev              # Start Vite dev server only (localhost:5173)
@@ -81,7 +77,7 @@ go build -o src-tauri/binaries/edgeview-backend-aarch64-apple-darwin ./cmd/edgev
 
 Tests use **Vitest** + **React Testing Library** with **jsdom** environment.
 
-- Test file: `src/App.test.jsx`
+- Test files: `src/**/*.test.{js,jsx}`, next to the code they cover
 - Config: `vitest.config.mts`
 
 ### Mocking Pattern

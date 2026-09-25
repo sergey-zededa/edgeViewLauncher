@@ -116,10 +116,9 @@ Defined in `cmd/edgeview-backend/http-server.go`:
 
 ## Release Process
 
-1. Bump version in both `package.json` (root) and `frontend/package.json`
-2. Update version in `src-tauri/tauri.conf.json`
-3. Commit from project root (`git add .`) and push to `main`
-4. Create a GitHub release with a `v*` tag pointing to the latest commit on `main`:
+1. Bump the version in `package.json` (root), `frontend/package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml` (then `cargo check` in `src-tauri/` to refresh `Cargo.lock`). CI's `scripts/check-versions.js` fails unless all four agree.
+2. Land the bump through a PR like any other change.
+3. After it merges, create a GitHub release with a `v*` tag pointing to the latest commit on `main`:
    ```bash
    gh release create v0.x.y --generate-notes --title "v0.x.y"
    ```
