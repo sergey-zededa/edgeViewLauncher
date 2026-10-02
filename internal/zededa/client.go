@@ -656,21 +656,23 @@ type EdgeViewScriptResponse struct {
 	ClientScript string `json:"client_script"`
 }
 
-// StartEdgeView enables EdgeView on the device
-func (c *Client) StartEdgeView(nodeID string) error {
-	url := fmt.Sprintf("%s/api/v1/devices/id/%s/edgeview/enable", c.BaseURL, nodeID)
+// putEdgeView sends PUT /devices/id/{id}/edgeview/{action}, shared by the
+// EdgeView control calls so auth and status handling live in one place.
+// payload may be nil. Any 2xx is success: e.g. a 204 from /disable still
+// means the session ended.
+func (c *Client) putEdgeView(nodeID, action string, payload any) error {
+	url := fmt.Sprintf("%s/api/v1/devices/id/%s/edgeview/%s", c.BaseURL, nodeID, action)
 
-	payload := EdgeViewConfig{
-		DebugKnob: true,
-		Expiry:    60, // 60 minutes
+	var body io.Reader
+	if payload != nil {
+		data, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		body = bytes.NewReader(data)
 	}
 
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-
-	req, err := http.NewRequest("PUT", url, bytes.NewBuffer(data))
+	req, err := http.NewRequest(http.MethodPut, url, body)
 	if err != nil {
 		return err
 	}
@@ -683,53 +685,31 @@ func (c *Client) StartEdgeView(nodeID string) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if resp.StatusCode == http.StatusUnauthorized {
 			return fmt.Errorf("%w", ErrUnauthorized)
 		}
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("failed to enable EdgeView (status %d): %s", resp.StatusCode, string(body))
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("edgeview %s failed (status %d): %s", action, resp.StatusCode, string(b))
 	}
-
 	return nil
+}
+
+// StartEdgeView enables EdgeView on the device
+func (c *Client) StartEdgeView(nodeID string) error {
+	return c.putEdgeView(nodeID, "enable", EdgeViewConfig{DebugKnob: true, Expiry: 60}) // 60 minutes
+}
+
+// DisableEdgeView ends the device's EdgeView session on the controller —
+// the same effect as disconnecting it in the ZEDEDA UI (the controller then
+// reports an empty token and expireSec "0").
+func (c *Client) DisableEdgeView(nodeID string) error {
+	return c.putEdgeView(nodeID, "disable", nil)
 }
 
 // StopEdgeView disables EdgeView on the device
 func (c *Client) StopEdgeView(nodeID string) error {
-	url := fmt.Sprintf("%s/api/v1/devices/id/%s/edgeview/enable", c.BaseURL, nodeID)
-
-	payload := EdgeViewConfig{
-		DebugKnob: false,
-		Expiry:    60,
-	}
-
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-
-	req, err := http.NewRequest("PUT", url, bytes.NewBuffer(data))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		if resp.StatusCode == http.StatusUnauthorized {
-			return fmt.Errorf("%w", ErrUnauthorized)
-		}
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("failed to disable EdgeView (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	return nil
+	return c.putEdgeView(nodeID, "enable", EdgeViewConfig{DebugKnob: false, Expiry: 60})
 }
 
 // GetEdgeViewScript retrieves the client script

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { ConnectToNode, CancelConnection, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, EnableExternalPolicy, ResetEdgeView, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, ProbeBaseUrl, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo, StartComposeDiagnostics, GetComposeDiagnosticsStatus, SaveComposeDiagnostics, CheckForUpdates, openTerminalWindow, openVncWindow, openExternalTerminal, getElectronAppInfo, startContainerShell, getSystemTimeFormat, openExternal, InjectSecureConfig, GetDeviceCache, RefreshDeviceCache, OnTunnelClosing, EmitTunnelsChanged } from './tauriAPI';
-import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, ChevronRight, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers, Shield, Moon, Sun, HelpCircle, Key } from 'lucide-react';
+import { ConnectToNode, CancelConnection, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, EnableExternalPolicy, ResetEdgeView, DisconnectEdgeView, StartEdgeViewSession, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, ProbeBaseUrl, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo, StartComposeDiagnostics, GetComposeDiagnosticsStatus, SaveComposeDiagnostics, CheckForUpdates, openTerminalWindow, openVncWindow, openExternalTerminal, getElectronAppInfo, startContainerShell, getSystemTimeFormat, openExternal, InjectSecureConfig, GetDeviceCache, RefreshDeviceCache, OnTunnelClosing, EmitTunnelsChanged } from './tauriAPI';
+import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, ChevronRight, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers, Shield, Moon, Sun, HelpCircle, Key, Plug, Unplug } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
 import Tooltip from './components/Tooltip';
 import About from './components/About';
@@ -470,6 +470,10 @@ function App() {
   const clusterDropdownRef = useRef(null);
   const clusterHeaderRef = useRef(null);
   const [selectedNode, setSelectedNode] = useState(null);
+  // Current device id for async handlers: after an await, compare against it
+  // so a slow response can't write one device's status while another is shown.
+  const selectedNodeIdRef = useRef(null);
+  useEffect(() => { selectedNodeIdRef.current = selectedNode?.id ?? null; }, [selectedNode]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [enterprise, setEnterprise] = useState(null);
   const [userInfo, setUserInfo] = useState(null);
@@ -542,6 +546,10 @@ function App() {
   const [expandedServiceId, setExpandedServiceId] = useState(null);
   const [expandedServiceContainers, setExpandedServiceContainers] = useState({});
   const [highlightTunnels, setHighlightTunnels] = useState(false);
+  const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
+  // A Connect or Disconnect request is in flight: the toggle is disabled so a
+  // second click can't fire a duplicate controller call.
+  const [edgeViewToggleBusy, setEdgeViewToggleBusy] = useState(false);
   const [activeTunnels, setActiveTunnels] = useState([]); // Track active tunnels across all devices
   const [showGlobalTunnels, setShowGlobalTunnels] = useState(false);
   const [tunnelConnected, setTunnelConnected] = useState(false);
@@ -1398,6 +1406,15 @@ function App() {
   // reached. The cached session still drives button gating (so a network blip
   // doesn't block an open tunnel), but the UI must not claim it as verified.
   const sessionUnverified = sshStatus?.status === 'unknown';
+  // Whether the controller itself reports a session. Drives the
+  // Connect/Disconnect toggle, which must follow the controller rather than
+  // the local cache. The backend classifies it as cloudSession: "live",
+  // "ended", or "indeterminate" (a token exists but its expiry is unreadable).
+  // Indeterminate still offers Disconnect: there is a session, and offering
+  // Connect would re-enable EdgeView on top of it.
+  const cloudSessionLive = !sessionUnverified && (sshStatus?.cloudSession
+    ? sshStatus.cloudSession !== 'ended'
+    : parseInt(sshStatus?.expiry, 10) * 1000 > Date.now());
   const isDeviceOnline = isInteractive(selectedNode?.status);
 
   // State for time format preference
@@ -2561,6 +2578,70 @@ Do you want to try connecting anyway?`)) {
         setGlobalStatus({ type: 'error', message: `Failed to reset EdgeView: ${errMsg}` });
       }
     }
+  };
+
+  // Connect / Disconnect toggle. Both are cloud-config actions (CLAUDE.md), so
+  // deliberately not gated on the device being online.
+
+  // Runs only after the user confirms in the Disconnect dialog.
+  const handleDisconnectEdgeView = async () => {
+    setShowDisconnectConfirm(false);
+    if (!selectedNode || edgeViewToggleBusy) return;
+    const nodeId = selectedNode.id;
+
+    setEdgeViewToggleBusy(true);
+    setGlobalStatus({ type: 'loading', message: 'Disconnecting EdgeView session...' });
+    addLog('Disconnecting EdgeView session...');
+    try {
+      await DisconnectEdgeView(nodeId);
+      setAuthError(false); // authenticated write succeeded → token is valid
+      setActiveTunnels(prev => prev.filter(t => t.nodeId !== nodeId));
+      addLog('EdgeView session disconnected', 'success');
+      if (selectedNodeIdRef.current === nodeId) await loadSSHStatus(nodeId, false);
+    } catch (err) {
+      console.error('DisconnectEdgeView failed:', err);
+      if (isAuthError(err)) {
+        handleAuthError();
+      } else {
+        const errMsg = err.message || String(err);
+        addLog(`Disconnect failed: ${errMsg}`, 'error');
+        setGlobalStatus({ type: 'error', message: `Failed to disconnect EdgeView: ${errMsg}` });
+        return;
+      }
+    } finally {
+      setEdgeViewToggleBusy(false);
+    }
+    setGlobalStatus(null);
+  };
+
+  // Starts an EdgeView session on the controller. Opening a terminal or tunnel
+  // stays a separate step, gated on isSessionConnected as before.
+  const handleConnectEdgeView = async () => {
+    if (!selectedNode || edgeViewToggleBusy) return;
+    const nodeId = selectedNode.id;
+
+    setEdgeViewToggleBusy(true);
+    setGlobalStatus({ type: 'loading', message: 'Starting EdgeView session...' });
+    addLog('Starting EdgeView session...');
+    try {
+      await StartEdgeViewSession(nodeId);
+      setAuthError(false); // authenticated write succeeded → token is valid
+      addLog('EdgeView session started on the controller', 'success');
+      if (selectedNodeIdRef.current === nodeId) await loadSSHStatus(nodeId, false);
+    } catch (err) {
+      console.error('StartEdgeViewSession failed:', err);
+      if (isAuthError(err)) {
+        handleAuthError();
+      } else {
+        const errMsg = err.message || String(err);
+        addLog(`Connect failed: ${errMsg}`, 'error');
+        setGlobalStatus({ type: 'error', message: `Failed to start EdgeView: ${errMsg}` });
+        return;
+      }
+    } finally {
+      setEdgeViewToggleBusy(false);
+    }
+    setGlobalStatus(null);
   };
 
   const handleEnableExternalPolicy = async () => {
@@ -4429,6 +4510,25 @@ Do you want to try connecting anyway?`)) {
                         </div>
                       )}
                     </div>
+                      {sshStatus && (
+                        <button
+                          className="connect-btn secondary"
+                          onClick={cloudSessionLive ? () => setShowDisconnectConfirm(true) : handleConnectEdgeView}
+                          disabled={sessionUnverified || edgeViewToggleBusy}
+                          title={sessionUnverified
+                            ? "Can't reach controller"
+                            : cloudSessionLive
+                              ? "Disconnect EdgeView session on the controller"
+                              : "Start an EdgeView session on the controller"}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', fontSize: '12px',
+                            ...(cloudSessionLive ? { color: 'var(--color-danger)', borderColor: 'var(--color-danger)' } : {})
+                          }}
+                        >
+                          {cloudSessionLive ? <Unplug size={16} /> : <Plug size={16} />}
+                          {cloudSessionLive ? 'Disconnect' : 'Connect'}
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -5652,6 +5752,36 @@ Do you want to try connecting anyway?`)) {
             )}
 
             {selectedNode && <ActivityLog logs={logs} />}
+
+            {
+              showDisconnectConfirm && selectedNode && (() => {
+                const tunnelCount = activeTunnels.filter(t => t.nodeId === selectedNode.id).length;
+                return (
+                  <Modal
+                    title="Disconnect EdgeView Session"
+                    isOpen={showDisconnectConfirm}
+                    onDismiss={() => setShowDisconnectConfirm(false)}
+                    size="small"
+                    footer={
+                      <>
+                        <Button variant="secondary" onClick={() => setShowDisconnectConfirm(false)}>
+                          Cancel
+                        </Button>
+                        <Button variant="danger" icon={<Unplug size={14} />} onClick={handleDisconnectEdgeView}>
+                          Disconnect
+                        </Button>
+                      </>
+                    }
+                  >
+                    <p style={{ margin: 0, fontSize: '13px', lineHeight: 1.5 }}>
+                      This ends the EdgeView session for <strong>{selectedNode.name}</strong> on the controller,
+                      for everyone using this device.
+                      {tunnelCount > 0 && <> It also closes {tunnelCount} open tunnel{tunnelCount === 1 ? '' : 's'}.</>}
+                    </p>
+                  </Modal>
+                );
+              })()
+            }
 
             {
               tcpTunnelConfig && (

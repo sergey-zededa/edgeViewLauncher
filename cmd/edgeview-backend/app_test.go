@@ -21,6 +21,7 @@ import (
 type fakeZededaClient struct {
 	initSessionScript string
 	initSessionErr    error
+	onInitSession     func() // runs inside InitSession, e.g. to simulate a concurrent Disconnect
 
 	parseCfg *zededa.SessionConfig
 	parseErr error
@@ -30,9 +31,16 @@ type fakeZededaClient struct {
 	// EdgeView status & control
 	edgeStatus    *zededa.EdgeViewStatus
 	edgeStatusErr error
-	disableErr    error
-	stopErr       error
-	startErr      error
+	// edgeStatusSeq, when set, is returned one entry per GetEdgeViewStatus
+	// call (the last entry repeats), e.g. to model a session minted late.
+	edgeStatusSeq   []*zededa.EdgeViewStatus
+	edgeStatusCalls int
+	disableErr      error
+	stopErr         error
+	disableEVErr    error
+	disableEVCalls  []string
+	startErr        error
+	startCalls      []string
 
 	// Cloud API for apps/services
 	deviceApps    []zededa.AppInstance
@@ -73,6 +81,9 @@ func (f *fakeZededaClient) SearchNodesWithTokenCtx(ctx context.Context, query st
 }
 func (f *fakeZededaClient) UpdateConfig(baseURL, token string) {}
 func (f *fakeZededaClient) InitSession(targetID string) (string, error) {
+	if f.onInitSession != nil {
+		f.onInitSession()
+	}
 	return f.initSessionScript, f.initSessionErr
 }
 func (f *fakeZededaClient) ParseEdgeViewScript(script string) (*zededa.SessionConfig, error) {
@@ -83,8 +94,16 @@ func (f *fakeZededaClient) ParseEdgeViewToken(token string) (*zededa.SessionConf
 }
 func (f *fakeZededaClient) AddSSHKeyToDevice(nodeID, pubKey string) error { return f.addSSHKeyErr }
 func (f *fakeZededaClient) GetEdgeViewStatus(nodeID string) (*zededa.EdgeViewStatus, error) {
+	f.edgeStatusCalls++
 	if f.edgeStatusErr != nil {
 		return nil, f.edgeStatusErr
+	}
+	if n := len(f.edgeStatusSeq); n > 0 {
+		st := f.edgeStatusSeq[0]
+		if n > 1 {
+			f.edgeStatusSeq = f.edgeStatusSeq[1:]
+		}
+		return st, nil
 	}
 	return f.edgeStatus, nil
 }
@@ -92,7 +111,12 @@ func (f *fakeZededaClient) DisableSSH(nodeID, ourKey string) error { return f.di
 func (f *fakeZededaClient) StopEdgeView(nodeID string) error {
 	return f.stopErr
 }
+func (f *fakeZededaClient) DisableEdgeView(nodeID string) error {
+	f.disableEVCalls = append(f.disableEVCalls, nodeID)
+	return f.disableEVErr
+}
 func (f *fakeZededaClient) StartEdgeView(nodeID string) error {
+	f.startCalls = append(f.startCalls, nodeID)
 	return f.startErr
 }
 func (f *fakeZededaClient) GetDeviceAppInstances(deviceID, deviceName string) ([]zededa.AppInstance, error) {
@@ -194,6 +218,7 @@ type fakeSessionManager struct {
 	launched bool
 
 	closedTunnels []string
+	onStartProxy  func() // runs inside StartProxy/StartProxyMulti before they succeed
 }
 
 func (m *fakeSessionManager) GetCachedSession(nodeID string) (*session.CachedSession, bool) {
@@ -220,12 +245,18 @@ func (m *fakeSessionManager) StoreCachedSession(nodeID string, cfg *zededa.Sessi
 }
 
 func (m *fakeSessionManager) StartProxy(ctx context.Context, cfg *zededa.SessionConfig, nodeID string, target string, protocol string, onProgress func(string)) (int, string, error) {
+	if m.onStartProxy != nil {
+		m.onStartProxy()
+	}
 	return m.startProxyPort, m.startProxyID, m.startProxyErr
 }
 
 func (m *fakeSessionManager) StartProxyMulti(ctx context.Context, cfg *zededa.SessionConfig, nodeID string, candidateIPs []string, targetPort int, protocol string, onProgress func(string)) (int, string, error) {
 	m.lastMultiCandidateIPs = append([]string(nil), candidateIPs...)
 	m.lastMultiTargetPort = targetPort
+	if m.onStartProxy != nil {
+		m.onStartProxy()
+	}
 	return m.startProxyPort, m.startProxyID, m.startProxyErr
 }
 
@@ -960,6 +991,136 @@ func TestGetSSHStatus_CloudActiveUsesControllerExpiry(t *testing.T) {
 	}
 }
 
+// TestDisconnectEdgeView ends the session on the controller, closes only
+// this device's tunnels, and drops the cached session.
+func TestDisconnectEdgeView(t *testing.T) {
+	fakeClient := &fakeZededaClient{}
+	fakeSess := &fakeSessionManager{
+		cached: map[string]*session.CachedSession{"node1": {ExpiresAt: time.Now().Add(time.Hour)}},
+		tunnels: map[string]*session.Tunnel{
+			"t-ssh":   {ID: "t-ssh", NodeID: "node1"},
+			"t-vnc":   {ID: "t-vnc", NodeID: "node1"},
+			"t-other": {ID: "t-other", NodeID: "node2"},
+		},
+	}
+	a := newTestApp(fakeClient, fakeSess)
+
+	if err := a.DisconnectEdgeView("node1"); err != nil {
+		t.Fatalf("DisconnectEdgeView: %v", err)
+	}
+	if len(fakeClient.disableEVCalls) != 1 || fakeClient.disableEVCalls[0] != "node1" {
+		t.Fatalf("expected one controller disable call for node1, got %v", fakeClient.disableEVCalls)
+	}
+	if _, ok := fakeSess.tunnels["t-other"]; !ok || len(fakeSess.tunnels) != 1 {
+		t.Fatalf("expected only node1 tunnels closed, remaining: %v", fakeSess.tunnels)
+	}
+	if _, ok := fakeSess.cached["node1"]; ok {
+		t.Fatalf("expected cached session to be invalidated")
+	}
+}
+
+// TestDisconnectEdgeView_CancelsInFlightConnect: a connect still running when
+// the user disconnects must be cancelled, or it can re-cache the revoked
+// session after Disconnect has cleared it.
+func TestDisconnectEdgeView_CancelsInFlightConnect(t *testing.T) {
+	a := newTestApp(&fakeZededaClient{}, &fakeSessionManager{})
+	ctx, release := a.beginConnection("node1")
+	defer release()
+
+	if err := a.DisconnectEdgeView("node1"); err != nil {
+		t.Fatalf("DisconnectEdgeView: %v", err)
+	}
+	if ctx.Err() == nil {
+		t.Fatalf("expected the in-flight connection to be cancelled")
+	}
+}
+
+// TestConnectToNode_CancelledAfterProxyDoesNotCache: a connect cancelled
+// (e.g. by Disconnect) just as its proxy came up must not cache the session,
+// and must close the tunnel it just opened.
+func TestConnectToNode_CancelledAfterProxyDoesNotCache(t *testing.T) {
+	fakeClient := &fakeZededaClient{
+		initSessionScript: "edgeview -token tok",
+		parseCfg:          &zededa.SessionConfig{URL: "wss://example", Token: "tok"},
+	}
+	fakeSess := &fakeSessionManager{startProxyPort: 9001, startProxyID: "tunnel-123"}
+	a := newTestApp(fakeClient, fakeSess)
+	fakeSess.onStartProxy = func() { a.CancelConnection("node2") }
+
+	if _, _, err := a.ConnectToNode("node2", false, ""); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if _, ok := fakeSess.cached["node2"]; ok {
+		t.Fatalf("expected no cached session after cancellation")
+	}
+	if len(fakeSess.closedTunnels) != 1 || fakeSess.closedTunnels[0] != "tunnel-123" {
+		t.Fatalf("expected the just-opened tunnel to be closed, got %v", fakeSess.closedTunnels)
+	}
+}
+
+// TestStartTunnel_CancelledBeforeCacheDoesNotCache: cancellation during
+// session setup must stop StartTunnel before it caches the session.
+func TestStartTunnel_CancelledBeforeCacheDoesNotCache(t *testing.T) {
+	fakeClient := &fakeZededaClient{
+		edgeStatusErr:     errors.New("no active session"),
+		initSessionScript: "edgeview -token tok",
+		parseCfg:          &zededa.SessionConfig{URL: "wss://example", Token: "tok"},
+	}
+	fakeSess := &fakeSessionManager{startProxyPort: 9002, startProxyID: "tunnel-456"}
+	a := newTestApp(fakeClient, fakeSess)
+	fakeClient.onInitSession = func() { a.CancelConnection("node3") }
+
+	if _, _, err := a.StartTunnel("node3", "10.0.0.1", 5900, ""); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if _, ok := fakeSess.cached["node3"]; ok {
+		t.Fatalf("expected no cached session after cancellation")
+	}
+}
+
+// TestStartEdgeViewSession enables EdgeView on the controller and surfaces
+// its errors (e.g. ErrUnauthorized for the "Update Token" prompt).
+func TestStartEdgeViewSession(t *testing.T) {
+	shortenStartPoll(t)
+	fakeClient := &fakeZededaClient{}
+	a := newTestApp(fakeClient, &fakeSessionManager{})
+
+	if err := a.StartEdgeViewSession("node1"); err != nil {
+		t.Fatalf("StartEdgeViewSession: %v", err)
+	}
+	if len(fakeClient.startCalls) != 1 || fakeClient.startCalls[0] != "node1" {
+		t.Fatalf("expected one StartEdgeView call for node1, got %v", fakeClient.startCalls)
+	}
+
+	fakeClient.startErr = zededa.ErrUnauthorized
+	if err := a.StartEdgeViewSession("node1"); !errors.Is(err, zededa.ErrUnauthorized) {
+		t.Fatalf("expected ErrUnauthorized to propagate, got %v", err)
+	}
+}
+
+// TestDisconnectEdgeView_ControllerErrorKeepsLocalState leaves tunnels and
+// cache untouched when the controller refuses, so nothing is torn down for a
+// session that is still running.
+func TestDisconnectEdgeView_ControllerErrorKeepsLocalState(t *testing.T) {
+	fakeClient := &fakeZededaClient{disableEVErr: zededa.ErrUnauthorized}
+	fakeSess := &fakeSessionManager{
+		cached:  map[string]*session.CachedSession{"node1": {ExpiresAt: time.Now().Add(time.Hour)}},
+		tunnels: map[string]*session.Tunnel{"t-ssh": {ID: "t-ssh", NodeID: "node1"}},
+	}
+	a := newTestApp(fakeClient, fakeSess)
+
+	err := a.DisconnectEdgeView("node1")
+	if !errors.Is(err, zededa.ErrUnauthorized) {
+		t.Fatalf("expected ErrUnauthorized to propagate, got %v", err)
+	}
+	if len(fakeSess.closedTunnels) != 0 {
+		t.Fatalf("expected no tunnels closed, got %v", fakeSess.closedTunnels)
+	}
+	if _, ok := fakeSess.cached["node1"]; !ok {
+		t.Fatalf("expected cached session to be kept")
+	}
+}
+
 // TestGetSSHStatus_EnabledOnKeyMatch ensures that if device SSH key matches one of the
 // local public keys, status is reported as enabled.
 func TestGetSSHStatus_EnabledOnKeyMatch(t *testing.T) {
@@ -1209,4 +1370,106 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// shortenStartPoll makes StartEdgeViewSession's wait for the controller
+// instant for the duration of a test.
+func shortenStartPoll(t *testing.T) {
+	t.Helper()
+	attempts, interval := edgeViewStartPollAttempts, edgeViewStartPollInterval
+	edgeViewStartPollAttempts, edgeViewStartPollInterval = 5, 0
+	t.Cleanup(func() { edgeViewStartPollAttempts, edgeViewStartPollInterval = attempts, interval })
+}
+
+// TestStartEdgeViewSession_WaitsUntilControllerReportsLive: the controller
+// mints the session a moment after accepting the enable. Connect must wait
+// for it, so the status refresh that follows shows the session live and the
+// toggle flips to Disconnect on the first click.
+func TestStartEdgeViewSession_WaitsUntilControllerReportsLive(t *testing.T) {
+	shortenStartPoll(t)
+	live := fmt.Sprintf("%d", time.Now().Add(time.Hour).Unix())
+	fakeClient := &fakeZededaClient{edgeStatusSeq: []*zededa.EdgeViewStatus{
+		{Token: "", Expiry: "0"},
+		{Token: "", Expiry: "0"},
+		{Token: "jwt", Expiry: live},
+	}}
+	a := newTestApp(fakeClient, &fakeSessionManager{})
+
+	if err := a.StartEdgeViewSession("node1"); err != nil {
+		t.Fatalf("StartEdgeViewSession: %v", err)
+	}
+	if fakeClient.edgeStatusCalls != 3 {
+		t.Fatalf("expected to poll until live (3 calls), got %d", fakeClient.edgeStatusCalls)
+	}
+}
+
+// TestStartEdgeViewSession_NotLiveInTimeIsNotAnError: the enable was
+// accepted; a session that isn't reported live within the wait is left to
+// the next status refresh rather than failing Connect.
+func TestStartEdgeViewSession_NotLiveInTimeIsNotAnError(t *testing.T) {
+	shortenStartPoll(t)
+	fakeClient := &fakeZededaClient{edgeStatus: &zededa.EdgeViewStatus{Token: "", Expiry: "0"}}
+	a := newTestApp(fakeClient, &fakeSessionManager{})
+
+	if err := a.StartEdgeViewSession("node1"); err != nil {
+		t.Fatalf("expected no error when the session is not live yet, got %v", err)
+	}
+	if fakeClient.edgeStatusCalls != edgeViewStartPollAttempts {
+		t.Fatalf("expected %d polls, got %d", edgeViewStartPollAttempts, fakeClient.edgeStatusCalls)
+	}
+}
+
+// TestGetSSHStatus_ReportsCloudSession pins the controller session state the
+// Connect/Disconnect toggle follows.
+func TestGetSSHStatus_ReportsCloudSession(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	live := fmt.Sprintf("%d", time.Now().Add(time.Hour).Unix())
+	past := fmt.Sprintf("%d", time.Now().Add(-time.Hour).Unix())
+	for _, tc := range []struct {
+		name string
+		st   zededa.EdgeViewStatus
+		want string
+	}{
+		{"live", zededa.EdgeViewStatus{Token: "jwt", Expiry: live}, "live"},
+		{"no token", zededa.EdgeViewStatus{Token: "", Expiry: "0"}, "ended"},
+		{"expired", zededa.EdgeViewStatus{Token: "jwt", Expiry: past}, "ended"},
+		{"unreadable expiry", zededa.EdgeViewStatus{Token: "jwt", Expiry: ""}, "indeterminate"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := tc.st
+			a := newTestApp(&fakeZededaClient{edgeStatus: &st}, session.NewManager())
+			if got := a.GetSSHStatus("node1").CloudSession; got != tc.want {
+				t.Fatalf("expected cloudSession %q, got %q", tc.want, got)
+			}
+		})
+	}
+}
+
+// TestGetSSHStatus_ResetInProgressKeepsTunnels: between ResetEdgeView's stop
+// and start the controller reports the session ended. A status refresh in
+// that window must not close the device's tunnels.
+func TestGetSSHStatus_ResetInProgressKeepsTunnels(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	fakeClient := &fakeZededaClient{edgeStatus: &zededa.EdgeViewStatus{Token: "", Expiry: "0"}}
+	fakeSess := &fakeSessionManager{
+		cached:  map[string]*session.CachedSession{"node1": {ExpiresAt: time.Now().Add(time.Hour)}},
+		tunnels: map[string]*session.Tunnel{"t-ssh": {ID: "t-ssh", NodeID: "node1"}},
+	}
+	a := newTestApp(fakeClient, fakeSess)
+	a.resettingNodes.Store("node1", struct{}{})
+
+	st := a.GetSSHStatus("node1")
+	if st.CloudSession != "ended" || st.Expiry != "0" {
+		t.Fatalf("expected the session still reported as ended, got %+v", st)
+	}
+	if len(fakeSess.closedTunnels) != 0 {
+		t.Fatalf("expected no tunnels closed during a reset, got %v", fakeSess.closedTunnels)
+	}
+
+	a.resettingNodes.Delete("node1")
+	a.GetSSHStatus("node1")
+	if len(fakeSess.closedTunnels) != 1 {
+		t.Fatalf("expected the tunnel closed once the reset is over, got %v", fakeSess.closedTunnels)
+	}
 }

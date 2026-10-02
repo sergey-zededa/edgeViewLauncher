@@ -18,6 +18,7 @@ vi.mock('./tauriAPI', () => ({
   SetUSBEnabled: vi.fn(),
   SetConsoleEnabled: vi.fn(),
   ResetEdgeView: vi.fn(),
+  DisconnectEdgeView: vi.fn(),
   VerifyTunnel: vi.fn(),
   GetUserInfo: vi.fn(),
   GetEnterprise: vi.fn(),

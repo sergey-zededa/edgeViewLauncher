@@ -6,7 +6,7 @@
 export PATH := $(HOME)/.cargo/bin:$(PATH)
 
 .DEFAULT_GOAL := help
-.PHONY: help deps rust-toolchain backend frontend dev run test test-go test-frontend test-rust vet check build build-mac build-windows build-linux
+.PHONY: help deps rust-toolchain no-running-app quit backend frontend dev run test test-go test-frontend test-rust vet check build build-mac build-windows build-linux
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -32,13 +32,32 @@ rust-toolchain:
 		echo "then open a new terminal (or run: source \$$HOME/.cargo/env)."; \
 		exit 1; }
 
+# The app is single-instance: if any copy is already running (e.g. the
+# installed one, often only visible as a tray icon), the dev build just
+# focuses it and exits. Fail early with a clear message instead.
+APP_PROCS := [e]dgeview-launcher$$|[e]dgeview-backend -port
+
+no-running-app:
+	@if pgrep -f '$(APP_PROCS)' >/dev/null; then \
+		echo "EdgeView Launcher is already running, so the dev build would exit immediately:"; \
+		pgrep -fl '$(APP_PROCS)' | sed 's/^/  /'; \
+		echo "Quit it with: make quit"; \
+		exit 1; fi
+
+quit: ## Quit any running EdgeView Launcher (installed or dev), incl. its backend
+	@osascript -e 'tell application "EdgeView Launcher" to quit' >/dev/null 2>&1 || true
+	@for i in 1 2 3 4 5; do pgrep -f '$(APP_PROCS)' >/dev/null || break; sleep 1; done
+	@if pgrep -f '$(APP_PROCS)' >/dev/null; then pkill -TERM -f '$(APP_PROCS)'; sleep 1; fi
+	@if pgrep -f '$(APP_PROCS)' >/dev/null; then echo "Still running:"; pgrep -fl '$(APP_PROCS)'; exit 1; \
+		else echo "EdgeView Launcher is not running."; fi
+
 backend: ## Build the Go backend sidecar (macOS ARM64)
 	npm run build:backend:mac
 
 frontend: frontend/node_modules/.package-lock.json ## Build the frontend only
 	npm run build:frontend
 
-dev: $(NODE_DEPS) rust-toolchain backend ## Rebuild the backend, then start Vite + Tauri in dev mode
+dev: no-running-app $(NODE_DEPS) rust-toolchain backend ## Rebuild the backend, then start Vite + Tauri in dev mode
 	npm run dev
 
 run: dev ## Alias for dev

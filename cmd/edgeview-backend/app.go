@@ -35,6 +35,7 @@ type zededaAPI interface {
 	GetEdgeViewStatus(nodeID string) (*zededa.EdgeViewStatus, error)
 	DisableSSH(nodeID, ourKey string) error
 	StopEdgeView(nodeID string) error
+	DisableEdgeView(nodeID string) error
 	StartEdgeView(nodeID string) error
 	SetVGAEnabled(nodeID string, enabled bool) error
 	SetUSBEnabled(nodeID string, enabled bool) error
@@ -109,6 +110,11 @@ type App struct {
 
 	// Device/project cache
 	deviceCache *cache.Manager
+
+	// Nodes with a ResetEdgeView in progress (nodeID -> struct{}). While a
+	// reset runs, the controller briefly reports the session as ended between
+	// its stop and start; GetSSHStatus must not tear down tunnels for that.
+	resettingNodes sync.Map
 }
 
 // NewApp creates a new App application struct
@@ -207,6 +213,18 @@ func (a *App) beginConnection(nodeID string) (context.Context, func()) {
 		cancel()
 	}
 	return ctx, cleanup
+}
+
+// connectionCancelled reports whether a connect attempt was cancelled (e.g. by
+// DisconnectEdgeView) and, if so, records it. Callers check it right before
+// caching a session, so a cancelled attempt can't re-cache a session that
+// Disconnect has just cleared.
+func (a *App) connectionCancelled(ctx context.Context, nodeID string) bool {
+	if ctx.Err() == nil {
+		return false
+	}
+	a.SetConnectionProgress(nodeID, "Cancelled")
+	return true
 }
 
 // sameFunc is a best-effort pointer comparison of two CancelFuncs. Since Go
@@ -601,6 +619,14 @@ func (a *App) ConnectToNode(nodeID string, useInAppTerminal bool, targetIP strin
 			return 0, "", fmt.Errorf("failed to start proxy on any candidate IP: %w", err)
 		}
 		fmt.Printf("Successfully connected via candidate set %v\n", candidateIPs)
+		if a.connectionCancelled(ctx, nodeID) {
+			// Cancelled as the proxy came up: don't keep a tunnel or cache
+			// entry for a session the user just asked to end.
+			if err := a.sessionManager.CloseTunnel(tunnelID); err != nil {
+				fmt.Printf("Warning: failed to close tunnel %s: %v\n", tunnelID, err)
+			}
+			return 0, "", ctx.Err()
+		}
 
 		// Cache the session config (always cache token/URL, cache port only for native terminal)
 		portToCache := 0
@@ -673,6 +699,9 @@ func (a *App) StartTunnel(nodeID, targetIP string, targetPort int, protocol stri
 				// But we need to use the existing cache's expiry if available, or set a new one?
 				// Since we are reusing an active session, let's refresh the expiry in our cache too.
 				newExpires := time.Now().Add(4*time.Hour + 50*time.Minute)
+				if a.connectionCancelled(ctx, nodeID) {
+					return 0, "", ctx.Err()
+				}
 
 				// Preserve port if reusing for same purpose (but here we are starting a new tunnel so port is dynamic)
 				// Actually, StartTunnel doesn't care about cached port unless it's reusing the whole session for the SAME tunnel.
@@ -702,6 +731,9 @@ func (a *App) StartTunnel(nodeID, targetIP string, targetPort int, protocol stri
 			}
 		}
 
+		if a.connectionCancelled(ctx, nodeID) {
+			return 0, "", ctx.Err()
+		}
 		expiresAt := time.Now().Add(4*time.Hour + 50*time.Minute)
 		a.sessionManager.StoreCachedSession(nodeID, sessionConfig, 0, "", expiresAt)
 		cached, _ = a.sessionManager.GetCachedSession(nodeID)
@@ -783,6 +815,9 @@ func (a *App) StartTunnel(nodeID, targetIP string, targetPort int, protocol stri
 					break
 				}
 
+				if a.connectionCancelled(ctx, nodeID) {
+					return 0, "", ctx.Err()
+				}
 				expiresAt := time.Now().Add(4*time.Hour + 50*time.Minute)
 				a.sessionManager.StoreCachedSession(nodeID, newConfig, 0, "", expiresAt)
 				cached = &session.CachedSession{Config: newConfig, ExpiresAt: expiresAt} // Update local var
@@ -1112,6 +1147,11 @@ type SSHStatus struct {
 	IsEncrypted    bool     `json:"isEncrypted"`
 	ExternalPolicy bool     `json:"externalPolicy"`
 	ManagementIPs  []string `json:"managementIPs"`
+	// CloudSession is the controller's view of the EdgeView session: "live",
+	// "ended", or "indeterminate" (a token is present but its expiry can't be
+	// read). Empty when the controller could not be reached (Status
+	// "unknown"). Drives the Connect/Disconnect toggle.
+	CloudSession string `json:"cloudSession,omitempty"`
 	// AuthorizedKeys is the parsed list of keys currently in
 	// debug.enable.ssh on the device. Used by the audit panel in the UI;
 	// the entry with IsLauncherKey=true is the one this launcher manages.
@@ -1225,14 +1265,21 @@ func (a *App) GetSSHStatus(nodeID string) *SSHStatus {
 		// ended even if expireSec lingers, and drop our tunnels and cache so
 		// neither keeps presenting the dead session as usable.
 		sshStatus.Expiry = "0"
-		a.dropDeviceSession(nodeID)
+		sshStatus.CloudSession = "ended"
+		// A reset in progress is between its stop and start: the session is
+		// about to come back, and the reset itself drops the cache after.
+		if _, resetting := a.resettingNodes.Load(nodeID); !resetting {
+			a.dropDeviceSession(nodeID)
+		}
 	case cloudSessionLive:
 		// Report the controller's expiry rather than our local estimate.
 		// A re-minted token means our cached config is stale: drop it.
+		sshStatus.CloudSession = "live"
 		a.sessionManager.AlignCachedSession(nodeID, evStatus.Token, cloudExpiry)
 	case cloudSessionUnknown:
 		// Token present but expiry unreadable: leave the cache alone rather
 		// than dropping a possibly working session on every status call.
+		sshStatus.CloudSession = "indeterminate"
 	}
 
 	return sshStatus
@@ -1304,6 +1351,9 @@ func (a *App) DisableSSH(nodeID string) error {
 
 // ResetEdgeView recycles the EdgeView session to clear stuck connections
 func (a *App) ResetEdgeView(nodeID string) error {
+	a.resettingNodes.Store(nodeID, struct{}{})
+	defer a.resettingNodes.Delete(nodeID)
+
 	// Attempt to stop EdgeView - ignore errors as it may already be inactive
 	if err := a.zededaClient.StopEdgeView(nodeID); err != nil {
 		fmt.Printf("Warning: Could not stop EdgeView (may already be inactive): %v\n", err)
@@ -1326,6 +1376,57 @@ func (a *App) ResetEdgeView(nodeID string) error {
 
 	return nil
 }
+
+// DisconnectEdgeView ends the EdgeView session on the controller (for every
+// client of that device, like disconnecting it in the ZEDEDA UI), then closes
+// this launcher's tunnels to the device and drops the cached session. Any
+// connect still in flight is cancelled first, so it unwinds during the
+// controller round trip instead of re-caching the revoked session afterwards.
+// If the controller refuses, tunnels and cache are left alone: the session
+// is still live.
+func (a *App) DisconnectEdgeView(nodeID string) error {
+	a.CancelConnection(nodeID)
+
+	if err := a.zededaClient.DisableEdgeView(nodeID); err != nil {
+		return fmt.Errorf("failed to disconnect EdgeView: %w", err)
+	}
+
+	a.dropDeviceSession(nodeID)
+	return nil
+}
+
+// StartEdgeViewSession enables EdgeView on the controller so the device has a
+// session to connect to (the Connect half of the Connect/Disconnect toggle).
+// Like Disconnect it is a cloud-config change, so it works while the device
+// is offline: the device picks it up when it reconnects.
+func (a *App) StartEdgeViewSession(nodeID string) error {
+	if err := a.zededaClient.StartEdgeView(nodeID); err != nil {
+		return fmt.Errorf("failed to start EdgeView: %w", err)
+	}
+
+	// The controller can take a moment to mint the session after accepting
+	// the enable. Wait (briefly) until it reports it live, so the status
+	// refresh that follows flips the toggle to Disconnect on the first click
+	// instead of still offering Connect. Not reaching live in time is not an
+	// error: the enable was accepted and the next status refresh will see it.
+	for i := 0; i < edgeViewStartPollAttempts; i++ {
+		if st, err := a.zededaClient.GetEdgeViewStatus(nodeID); err == nil && st != nil {
+			if _, state := cloudSessionState(st); state == cloudSessionLive {
+				return nil
+			}
+		}
+		time.Sleep(edgeViewStartPollInterval)
+	}
+	fmt.Printf("Warning: EdgeView for %s not reported live yet after enable\n", nodeID)
+	return nil
+}
+
+// How long StartEdgeViewSession waits for the controller to report the new
+// session live (vars so tests can shorten them).
+var (
+	edgeViewStartPollAttempts = 10
+	edgeViewStartPollInterval = 500 * time.Millisecond
+)
 
 func (a *App) GetDeviceServices(nodeID, deviceName string) (string, error) {
 	// Use Cloud API to fetch app instances (deviceName enables server-side filter)
