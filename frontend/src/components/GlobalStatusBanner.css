@@ -55,6 +55,11 @@
     flex: 1;
 }
 
+/* Optional bold lead-in before the message (e.g. "Permission denied"). */
+.status-title {
+    font-weight: 600;
+}
+
 .status-spinner {
     width: 14px;
     height: 14px;

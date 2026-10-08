@@ -26,6 +26,86 @@ import (
 // clear, actionable "update your token" message instead of a raw error blob.
 var ErrUnauthorized = errors.New("unauthorized: ZEDEDA API token is invalid or expired")
 
+// ErrForbidden signals that the ZEDEDA Cloud API rejected the request with
+// HTTP 403 — the token is valid, but the user's role does not grant the
+// permission the operation needs (e.g. a read-only role trying to start
+// EdgeView). Unlike ErrUnauthorized, re-pasting the token does not help; an
+// enterprise admin has to change the role. It is returned wrapped in a
+// *ForbiddenError, so match it with errors.Is.
+var ErrForbidden = errors.New("forbidden: ZEDEDA account lacks permission for this operation")
+
+// ForbiddenError is a 403 from the ZEDEDA Cloud API, carrying what the
+// controller reported about the missing permission.
+type ForbiddenError struct {
+	// Permission is the permission the controller said is missing (e.g.
+	// "PermissionAccessUpdate"); empty if the response didn't name one.
+	Permission string
+	// Message is the controller's own explanation (httpStatusMsg, else the
+	// error details), trimmed; empty if the body couldn't be parsed.
+	Message string
+}
+
+func (e *ForbiddenError) Error() string {
+	if e.Message != "" {
+		return "forbidden: " + e.Message
+	}
+	return ErrForbidden.Error()
+}
+
+func (e *ForbiddenError) Unwrap() error { return ErrForbidden }
+
+// permissionRe pulls the permission name out of the controller's 403 message,
+// e.g. "user x@y.com does not have permission PermissionAccessUpdate ".
+var permissionRe = regexp.MustCompile(`(?i)\bpermission\s+(Permission\w+)`)
+
+// cloudErrorEnvelope is the operation-response body the ZEDEDA Cloud API
+// returns with errors (see formatCloudError).
+type cloudErrorEnvelope struct {
+	HTTPStatusMsg string `json:"httpStatusMsg"`
+	Error         []struct {
+		Details string `json:"details"`
+		EC      string `json:"ec"`
+	} `json:"error"`
+}
+
+// parseForbidden builds a *ForbiddenError from a 403 response body.
+func parseForbidden(body []byte) *ForbiddenError {
+	fe := &ForbiddenError{}
+	var env cloudErrorEnvelope
+	if err := json.Unmarshal(body, &env); err != nil {
+		return fe
+	}
+	fe.Message = strings.TrimSpace(env.HTTPStatusMsg)
+	if fe.Message == "" {
+		var parts []string
+		for _, e := range env.Error {
+			if d := strings.TrimSpace(e.Details); d != "" {
+				parts = append(parts, d)
+			}
+		}
+		fe.Message = strings.Join(parts, "; ")
+	}
+	if m := permissionRe.FindStringSubmatch(fe.Message); m != nil {
+		fe.Permission = m[1]
+	}
+	return fe
+}
+
+// authStatusError maps the auth-related statuses of a ZEDEDA API response to
+// their sentinels: 401 → ErrUnauthorized, 403 → *ForbiddenError (consuming
+// the body). It returns nil for any other status, leaving the caller to build
+// its own error.
+func authStatusError(resp *http.Response) error {
+	switch resp.StatusCode {
+	case http.StatusUnauthorized:
+		return fmt.Errorf("%w", ErrUnauthorized)
+	case http.StatusForbidden:
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		return parseForbidden(body)
+	}
+	return nil
+}
+
 type Node struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
@@ -205,8 +285,8 @@ func (c *Client) SearchNodesWithTokenCtx(ctx context.Context, query string, limi
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		if resp.StatusCode == http.StatusUnauthorized {
-			return nil, fmt.Errorf("%w", ErrUnauthorized)
+		if err := authStatusError(resp); err != nil {
+			return nil, err
 		}
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("API request failed with status: %d, body: %s", resp.StatusCode, string(body))
@@ -296,8 +376,8 @@ func (c *Client) GetDeviceAppInstances(deviceId, deviceName string) ([]AppInstan
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		if resp.StatusCode == http.StatusUnauthorized {
-			return nil, fmt.Errorf("%w", ErrUnauthorized)
+		if err := authStatusError(resp); err != nil {
+			return nil, err
 		}
 		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
 	}
@@ -409,8 +489,8 @@ func (c *Client) GetAppInstanceDetails(appInstanceID string) (*AppInstanceDetail
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode == http.StatusUnauthorized {
-			return nil, fmt.Errorf("%w", ErrUnauthorized)
+		if err := authStatusError(resp); err != nil {
+			return nil, err
 		}
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("API failed with status %d: %s", resp.StatusCode, string(body))
@@ -456,8 +536,8 @@ func (c *Client) GetNetworkInstanceDetails(niID string) (*NetworkInstanceStatus,
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode == http.StatusUnauthorized {
-			return nil, fmt.Errorf("%w", ErrUnauthorized)
+		if err := authStatusError(resp); err != nil {
+			return nil, err
 		}
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("API failed with status %d: %s", resp.StatusCode, string(body))
@@ -493,8 +573,8 @@ func (c *Client) GetAppInstanceConfig(appInstanceID string) (*AppInstanceConfig,
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode == http.StatusUnauthorized {
-			return nil, fmt.Errorf("%w", ErrUnauthorized)
+		if err := authStatusError(resp); err != nil {
+			return nil, err
 		}
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("API failed with status %d: %s", resp.StatusCode, string(body))
@@ -540,8 +620,8 @@ func (c *Client) GetEnterprise() (*Enterprise, error) {
 			defer resp.Body.Close()
 
 			if resp.StatusCode != 200 {
-				if resp.StatusCode == http.StatusUnauthorized {
-					return nil, fmt.Errorf("%w", ErrUnauthorized)
+				if err := authStatusError(resp); err != nil {
+					return nil, err
 				}
 				return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
 			}
@@ -585,8 +665,8 @@ func (c *Client) GetProjectsCtx(ctx context.Context) ([]Project, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		if resp.StatusCode == http.StatusUnauthorized {
-			return nil, fmt.Errorf("%w", ErrUnauthorized)
+		if err := authStatusError(resp); err != nil {
+			return nil, err
 		}
 		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
 	}
@@ -631,8 +711,8 @@ func (c *Client) GetDeviceStatus(nodeID string) (*DeviceStatus, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode == http.StatusUnauthorized {
-			return nil, fmt.Errorf("%w", ErrUnauthorized)
+		if err := authStatusError(resp); err != nil {
+			return nil, err
 		}
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("API failed with status %d: %s", resp.StatusCode, string(body))
@@ -686,11 +766,11 @@ func (c *Client) putEdgeView(nodeID, action string, payload any) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		if resp.StatusCode == http.StatusUnauthorized {
-			return fmt.Errorf("%w", ErrUnauthorized)
+		if err := authStatusError(resp); err != nil {
+			return err
 		}
 		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("edgeview %s failed (status %d): %s", action, resp.StatusCode, string(b))
+		return fmt.Errorf("edgeview %s failed: %s", action, formatCloudError(resp.StatusCode, b))
 	}
 	return nil
 }
@@ -729,6 +809,9 @@ func (c *Client) GetEdgeViewScript(nodeID string) (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
+		if err := authStatusError(resp); err != nil {
+			return "", err
+		}
 		return "", fmt.Errorf("failed to get script (status %d)", resp.StatusCode)
 	}
 
@@ -941,8 +1024,8 @@ func (c *Client) GetDevice(nodeID string) (map[string]interface{}, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		if resp.StatusCode == http.StatusUnauthorized {
-			return nil, fmt.Errorf("%w", ErrUnauthorized)
+		if err := authStatusError(resp); err != nil {
+			return nil, err
 		}
 		return nil, fmt.Errorf("failed to get device (status %d)", resp.StatusCode)
 	}
@@ -977,6 +1060,9 @@ func (c *Client) UpdateDevice(nodeID string, device map[string]interface{}) erro
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
+		if err := authStatusError(resp); err != nil {
+			return err
+		}
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("%s", formatCloudError(resp.StatusCode, body))
 	}
@@ -999,12 +1085,7 @@ func (c *Client) UpdateDevice(nodeID string, device map[string]interface{}) erro
 // UI doesn't have to render a wall of JSON. Falls back to the raw body if
 // the response doesn't match this shape.
 func formatCloudError(status int, body []byte) string {
-	var env struct {
-		Error []struct {
-			Details string `json:"details"`
-			EC      string `json:"ec"`
-		} `json:"error"`
-	}
+	var env cloudErrorEnvelope
 	if err := json.Unmarshal(body, &env); err == nil && len(env.Error) > 0 {
 		parts := make([]string, 0, len(env.Error))
 		for _, e := range env.Error {

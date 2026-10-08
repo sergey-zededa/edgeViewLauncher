@@ -32,6 +32,79 @@ func TestUnauthorizedMapsToErrUnauthorized(t *testing.T) {
 	}
 }
 
+// TestForbiddenMapsToErrForbidden verifies that a 403 surfaces as a
+// *ForbiddenError (matching ErrForbidden) carrying the permission the
+// controller named, so the UI can say what is missing instead of dumping the
+// raw envelope. Covers the EdgeView control path and the device-update path,
+// which build their errors in different places.
+func TestForbiddenMapsToErrForbidden(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"operationType":"OPS_TYPE_UNSPECIFIED","httpStatusCode":403,` +
+			`"httpStatusMsg":"user someone@example.com does not have permission PermissionAccessUpdate ",` +
+			`"error":[{"ec":"Forbidden","location":"","details":"Operation forbidden"}]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "token")
+
+	for name, err := range map[string]error{
+		"StartEdgeView": c.StartEdgeView("dev-1"),
+		"UpdateDevice":  c.UpdateDevice("dev-1", map[string]interface{}{}),
+	} {
+		if !errors.Is(err, ErrForbidden) {
+			t.Fatalf("%s: expected ErrForbidden, got %v", name, err)
+		}
+		var fe *ForbiddenError
+		if !errors.As(err, &fe) {
+			t.Fatalf("%s: expected *ForbiddenError, got %T", name, err)
+		}
+		if fe.Permission != "PermissionAccessUpdate" {
+			t.Fatalf("%s: expected permission PermissionAccessUpdate, got %q", name, fe.Permission)
+		}
+		if fe.Message != "user someone@example.com does not have permission PermissionAccessUpdate" {
+			t.Fatalf("%s: unexpected message %q", name, fe.Message)
+		}
+	}
+}
+
+// TestParseForbidden_Fallbacks covers 403 bodies without httpStatusMsg (use
+// the error details) and non-JSON bodies (no permission, generic message).
+func TestParseForbidden_Fallbacks(t *testing.T) {
+	fe := parseForbidden([]byte(`{"error":[{"ec":"Forbidden","details":"Operation forbidden"}]}`))
+	if fe.Message != "Operation forbidden" || fe.Permission != "" {
+		t.Fatalf("details fallback: got %+v", fe)
+	}
+
+	fe = parseForbidden([]byte(`<html>403 Forbidden</html>`))
+	if fe.Message != "" || fe.Permission != "" {
+		t.Fatalf("non-JSON body: got %+v", fe)
+	}
+	if !errors.Is(fe, ErrForbidden) || fe.Error() != ErrForbidden.Error() {
+		t.Fatalf("non-JSON body: expected the generic ErrForbidden text, got %q", fe.Error())
+	}
+}
+
+// TestEdgeViewErrorIsReadable verifies a non-auth EdgeView failure reports the
+// envelope's details rather than the whole JSON body.
+func TestEdgeViewErrorIsReadable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"operationType":"OPS_TYPE_UNSPECIFIED","httpStatusCode":400,` +
+			`"error":[{"ec":"BadReqBody","details":"device is not edgeview capable"}]}`))
+	}))
+	defer srv.Close()
+
+	err := NewClient(srv.URL, "token").StartEdgeView("dev-1")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	want := "edgeview enable failed: ZEDEDA Cloud rejected the request (HTTP 400): device is not edgeview capable"
+	if err.Error() != want {
+		t.Fatalf("got %q, want %q", err.Error(), want)
+	}
+}
+
 // helper to build a minimal JWT with given claims
 func buildTestJWT(t *testing.T, claims map[string]interface{}) string {
 	t.Helper()

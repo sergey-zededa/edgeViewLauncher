@@ -34,6 +34,15 @@ describe('GlobalStatusBanner', () => {
         expect(banner).toHaveClass('error');
     });
 
+    it('renders an optional bold title before the message', () => {
+        const status = { type: 'error', title: 'Permission denied', message: "Couldn't start EdgeView." };
+        render(<GlobalStatusBanner status={status} />);
+
+        const title = screen.getByText('Permission denied');
+        expect(title.tagName).toBe('STRONG');
+        expect(title.closest('.global-status-banner')).toHaveTextContent("Permission denied Couldn't start EdgeView.");
+    });
+
     it('renders loading status correctly', () => {
         const status = { type: 'loading', message: 'Loading...' };
         const { container } = render(<GlobalStatusBanner status={status} />);

@@ -5,7 +5,7 @@ import './GlobalStatusBanner.css';
 function GlobalStatusBanner({ status, onDismiss, onCancel }) {
     if (!status) return null;
 
-    const { type, message, action } = status;
+    const { type, title, message, action } = status;
 
     const getIcon = () => {
         switch (type) {
@@ -39,7 +39,10 @@ function GlobalStatusBanner({ status, onDismiss, onCancel }) {
         <div className={`global-status-banner ${type || 'info'}`}>
             <div className="status-content">
                 {getIcon()}
-                <span>{message}</span>
+                <span>
+                    {title && <><strong className="status-title">{title}</strong>{' '}</>}
+                    {message}
+                </span>
             </div>
             <div className="status-actions">
                 {action && action.onClick && (

@@ -235,6 +235,61 @@ func TestSendError_UnauthorizedCode(t *testing.T) {
 	}
 }
 
+// TestSendError_ForbiddenCode verifies that a 403 from ZEDEDA is reported
+// with a stable "FORBIDDEN" code, a 403 status, the missing permission, and a
+// readable message — not the raw envelope, and not the UNAUTHORIZED path
+// (re-pasting the token would not fix a role that lacks the permission).
+func TestSendError_ForbiddenCode(t *testing.T) {
+	srv := newTestServer(t)
+
+	rr := httptest.NewRecorder()
+	fe := &zededa.ForbiddenError{
+		Permission: "PermissionAccessUpdate",
+		Message:    "user someone@example.com does not have permission PermissionAccessUpdate",
+	}
+	srv.sendError(rr, fmt.Errorf("failed to start EdgeView: edgeview enable failed: %w", fe))
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d", rr.Code)
+	}
+	var resp APIResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.Code != "FORBIDDEN" {
+		t.Fatalf("expected code FORBIDDEN, got %q", resp.Code)
+	}
+	if resp.Permission != "PermissionAccessUpdate" {
+		t.Fatalf("expected permission PermissionAccessUpdate, got %q", resp.Permission)
+	}
+	if !strings.Contains(resp.Error, "PermissionAccessUpdate") || !strings.Contains(resp.Error, "admin") {
+		t.Fatalf("expected a message naming the permission and who can fix it, got %q", resp.Error)
+	}
+	if strings.Contains(resp.Error, "failed to start EdgeView") || strings.Contains(resp.Error, "{") {
+		t.Fatalf("expected a clean message without the wrap chain or JSON, got %q", resp.Error)
+	}
+}
+
+// TestSendError_ForbiddenWithoutPermission covers a 403 whose body named no
+// permission: still FORBIDDEN, with a generic but actionable message.
+func TestSendError_ForbiddenWithoutPermission(t *testing.T) {
+	srv := newTestServer(t)
+
+	rr := httptest.NewRecorder()
+	srv.sendError(rr, fmt.Errorf("wrapped: %w", &zededa.ForbiddenError{}))
+
+	var resp APIResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if rr.Code != http.StatusForbidden || resp.Code != "FORBIDDEN" || resp.Permission != "" {
+		t.Fatalf("got status %d, code %q, permission %q", rr.Code, resp.Code, resp.Permission)
+	}
+	if !strings.Contains(resp.Error, "admin") {
+		t.Fatalf("expected an actionable message, got %q", resp.Error)
+	}
+}
+
 // TestSendError_GenericUnchanged verifies non-auth errors keep the existing
 // 500 + raw-message behavior (no UNAUTHORIZED code).
 func TestSendError_GenericUnchanged(t *testing.T) {

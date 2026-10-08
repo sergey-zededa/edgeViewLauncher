@@ -19,7 +19,11 @@ vi.mock('./components/UpdateBanner', () => ({
 
 vi.mock('./components/GlobalStatusBanner', () => ({
   __esModule: true,
-  default: ({ status }) => status ? <div data-testid="global-status-banner-mock">{status.message}</div> : null,
+  default: ({ status }) => status ? (
+    <div data-testid="global-status-banner-mock" data-type={status.type}>
+      {status.title && <strong>{status.title}</strong>}{status.title && ' '}{status.message}
+    </div>
+  ) : null,
 }));
 
 vi.mock('./tauriAPI', () => {
@@ -1688,6 +1692,33 @@ describe('EdgeView session controls', () => {
     await waitFor(() => expect(electronAPI.StartEdgeViewSession).toHaveBeenCalledWith('node-1'));
     await screen.findByText('Activated');
     expect(screen.getByTitle('Disconnect EdgeView session on the controller')).toHaveTextContent('Disconnect');
+  });
+
+  it('Connect without the needed ZEDEDA permission shows a Permission denied toast, not the raw 403 or the token banner', async () => {
+    const node = { id: 'node-1', name: 'EV-Test', status: 'online', project: 'proj-1' };
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([node]));
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'enabled', expiry: '0', cloudSession: 'ended' });
+    electronAPI.GetSessionStatus.mockResolvedValue({ active: false });
+
+    render(<App />);
+    fireEvent.click(await screen.findByText('EV-Test'));
+    const connect = await screen.findByTitle('Start an EdgeView session on the controller');
+
+    const reason = 'Your ZEDEDA account does not have the PermissionAccessUpdate permission needed for this action. Ask an enterprise admin to grant it to your role for this device\'s project.';
+    electronAPI.StartEdgeViewSession.mockRejectedValue(
+      Object.assign(new Error(reason), { code: 'FORBIDDEN', permission: 'PermissionAccessUpdate' }),
+    );
+    fireEvent.click(connect);
+
+    const title = await screen.findByText('Permission denied');
+    const banner = screen.getByTestId('global-status-banner-mock');
+    expect(banner).toContainElement(title);
+    expect(banner).toHaveAttribute('data-type', 'error');
+    expect(banner).toHaveTextContent(`Couldn't start EdgeView. ${reason}`);
+    // Not an expired token: the Update Token banner must not appear.
+    expect(screen.queryByText('Authentication failed')).not.toBeInTheDocument();
+    await waitFor(() => expect(connect).not.toBeDisabled());
   });
 
   it('Connect works on an offline device (cloud-config, not gated on online)', async () => {
