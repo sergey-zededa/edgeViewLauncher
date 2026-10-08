@@ -22,8 +22,10 @@ const apiCall = (endpoint, method = 'GET', body = undefined) =>
         if (r && r.success === false && r.error) {
             const e = new Error(r.error);
             // Preserve the backend's machine-readable classifier (e.g.
-            // "UNAUTHORIZED") so callers can branch without parsing the message.
+            // "UNAUTHORIZED", "FORBIDDEN") so callers can branch without parsing
+            // the message, plus the missing permission a FORBIDDEN names.
             if (r.code) e.code = r.code;
+            if (r.permission) e.permission = r.permission;
             throw e;
         }
         return r;

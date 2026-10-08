@@ -1542,6 +1542,20 @@ function App() {
     setAuthErrorDismissed(false);
   };
 
+  // --- Missing ZEDEDA permission (HTTP 403) -------------------------------
+  // The backend tags these with code "FORBIDDEN" and a readable message naming
+  // the missing permission. Unlike an expired token this is per-action (the
+  // role may allow reads but not changes), so it gets an error toast for the
+  // action that failed rather than the app-global auth banner.
+  const isPermissionError = (err) => err?.code === 'FORBIDDEN';
+
+  // action completes "Couldn't …", e.g. 'start EdgeView'.
+  const handlePermissionError = (err, action) => {
+    const reason = err?.message || 'Your ZEDEDA account does not have permission for this action.';
+    addLog(`Couldn't ${action}: ${reason}`, 'error');
+    setGlobalStatus({ type: 'error', title: 'Permission denied', message: `Couldn't ${action}. ${reason}` });
+  };
+
   // Whether an error came from the user clicking Cancel on a connection toast.
   // Those paths get a single "Connection attempts cancelled" log entry from
   // the onCancel handler — the per-flow catch blocks should suppress their
@@ -2399,6 +2413,8 @@ Do you want to try connecting anyway?`)) {
       setLoadingSSH(false);
       if (isAuthError(err)) {
         handleAuthError();
+      } else if (isPermissionError(err)) {
+        handlePermissionError(err, 'enable SSH');
       } else {
         addLog("Failed to setup SSH: " + err, 'error');
         setGlobalStatus(null);
@@ -2422,6 +2438,8 @@ Do you want to try connecting anyway?`)) {
       setLoadingSSH(false);
       if (isAuthError(err)) {
         handleAuthError();
+      } else if (isPermissionError(err)) {
+        handlePermissionError(err, 'disable SSH');
       } else {
         addLog("Failed to disable SSH: " + err, 'error');
         setGlobalStatus(null);
@@ -2443,6 +2461,8 @@ Do you want to try connecting anyway?`)) {
       setLoadingSSH(false);
       if (isAuthError(err)) {
         handleAuthError();
+      } else if (isPermissionError(err)) {
+        handlePermissionError(err, `${enabled ? 'enable' : 'disable'} VGA`);
       } else {
         addLog(`Failed to toggle VGA: ${err}`, 'error');
         setGlobalStatus(null);
@@ -2464,6 +2484,8 @@ Do you want to try connecting anyway?`)) {
       setLoadingSSH(false);
       if (isAuthError(err)) {
         handleAuthError();
+      } else if (isPermissionError(err)) {
+        handlePermissionError(err, `${enabled ? 'enable' : 'disable'} USB`);
       } else {
         addLog(`Failed to toggle USB: ${err}`, 'error');
         setGlobalStatus(null);
@@ -2513,6 +2535,8 @@ Do you want to try connecting anyway?`)) {
       setLoadingSSH(false);
       if (isAuthError(err)) {
         handleAuthError();
+      } else if (isPermissionError(err)) {
+        handlePermissionError(err, `${enabled ? 'enable' : 'disable'} Console`);
       } else {
         addLog(`Failed to toggle Console: ${err}`, 'error');
         setGlobalStatus(null);
@@ -2567,6 +2591,8 @@ Do you want to try connecting anyway?`)) {
       // of the raw ZEDEDA error envelope.
       if (isAuthError(err)) {
         handleAuthError();
+      } else if (isPermissionError(err)) {
+        handlePermissionError(err, 'reset EdgeView');
       } else if (errMsg.includes('500') || errMsg.includes('internal server error')) {
         addLog(`Reset failed: ZEDEDA server error - unable to enable EdgeView on device`, 'error');
         setGlobalStatus({
@@ -2602,6 +2628,9 @@ Do you want to try connecting anyway?`)) {
       console.error('DisconnectEdgeView failed:', err);
       if (isAuthError(err)) {
         handleAuthError();
+      } else if (isPermissionError(err)) {
+        handlePermissionError(err, 'disconnect EdgeView');
+        return;
       } else {
         const errMsg = err.message || String(err);
         addLog(`Disconnect failed: ${errMsg}`, 'error');
@@ -2632,6 +2661,9 @@ Do you want to try connecting anyway?`)) {
       console.error('StartEdgeViewSession failed:', err);
       if (isAuthError(err)) {
         handleAuthError();
+      } else if (isPermissionError(err)) {
+        handlePermissionError(err, 'start EdgeView');
+        return;
       } else {
         const errMsg = err.message || String(err);
         addLog(`Connect failed: ${errMsg}`, 'error');
@@ -2676,6 +2708,10 @@ Do you want to try connecting anyway?`)) {
       console.error(`Failed to ${action} external policy:`, err);
       if (isAuthError(err)) {
         handleAuthError();
+        return;
+      }
+      if (isPermissionError(err)) {
+        handlePermissionError(err, `${action} external policy`);
         return;
       }
       let errMsg = err.message || String(err);

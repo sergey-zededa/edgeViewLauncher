@@ -85,9 +85,13 @@ type APIResponse struct {
 	Data    interface{} `json:"data,omitempty"`
 	Error   string      `json:"error,omitempty"`
 	// Code is a stable, machine-readable classifier the frontend can branch on
-	// without parsing the free-form Error string. Currently only "UNAUTHORIZED"
-	// (expired/invalid API token) is emitted; empty for generic errors.
+	// without parsing the free-form Error string: "UNAUTHORIZED" (expired or
+	// invalid API token) or "FORBIDDEN" (the user's role lacks a permission);
+	// empty for generic errors.
 	Code string `json:"code,omitempty"`
+	// Permission is the ZEDEDA permission a FORBIDDEN request was missing
+	// (e.g. "PermissionAccessUpdate"), when the controller named one.
+	Permission string `json:"permission,omitempty"`
 }
 
 // ContainerShellRequest is the request body for /api/container-shell
@@ -519,6 +523,16 @@ func (s *HTTPServer) sendSuccess(w http.ResponseWriter, data interface{}) {
 	})
 }
 
+// forbiddenMessage is the user-facing text for a 403: what is missing and who
+// can fix it. The controller's raw message is left out — it only restates the
+// user and permission.
+func forbiddenMessage(fe *zededa.ForbiddenError) string {
+	if fe.Permission != "" {
+		return fmt.Sprintf("Your ZEDEDA account does not have the %s permission needed for this action. Ask an enterprise admin to grant it to your role for this device's project.", fe.Permission)
+	}
+	return "Your ZEDEDA account does not have permission for this action. Ask an enterprise admin to check your role for this device's project."
+}
+
 func (s *HTTPServer) sendError(w http.ResponseWriter, err error) {
 	w.Header().Set("Content-Type", "application/json")
 
@@ -531,6 +545,22 @@ func (s *HTTPServer) sendError(w http.ResponseWriter, err error) {
 			Success: false,
 			Code:    "UNAUTHORIZED",
 			Error:   "The ZEDEDA API token for this cluster is invalid or expired.",
+		})
+		return
+	}
+
+	// Valid token, but the user's ZEDEDA role lacks the permission. Same idea:
+	// a stable code plus a readable message naming what is missing, instead
+	// of the raw 403 envelope. Re-pasting the token would not help here.
+	if errors.Is(err, zededa.ErrForbidden) {
+		fe := &zededa.ForbiddenError{}
+		errors.As(err, &fe)
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(APIResponse{
+			Success:    false,
+			Code:       "FORBIDDEN",
+			Error:      forbiddenMessage(fe),
+			Permission: fe.Permission,
 		})
 		return
 	}
