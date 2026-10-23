@@ -988,6 +988,37 @@ describe('Search with local cache filtering', () => {
     expect(screen.queryByText('UNRELATED123')).not.toBeInTheDocument();
   });
 
+  it('switching cluster clears the search so the new cluster is not filtered by the old query', async () => {
+    const twoClusters = {
+      ...config,
+      clusters: [
+        { name: 'Prod', baseUrl: 'https://cluster.example', apiToken: validToken },
+        { name: 'Staging', baseUrl: 'https://staging.example', apiToken: validToken },
+      ],
+    };
+    electronAPI.GetSettings.mockResolvedValue(twoClusters);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(twoClusters);
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([
+      { id: 'n1', name: 'Prod-Device', status: 'online', project: 'p1' },
+    ]));
+
+    render(<App />);
+    await screen.findByText('Prod-Device');
+
+    const searchInput = screen.getByPlaceholderText('Search nodes, projects...');
+    fireEvent.change(searchInput, { target: { value: 'Prod-Dev' } });
+    expect(searchInput).toHaveValue('Prod-Dev');
+
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([
+      { id: 'n2', name: 'Staging-Device', status: 'online', project: 'p2' },
+    ]));
+    fireEvent.click(screen.getByTitle('Switch Cluster'));
+    fireEvent.click(await screen.findByText('Staging'));
+
+    expect(await screen.findByText('Staging-Device')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Search nodes, projects...')).toHaveValue('');
+  });
+
   it('shows all devices when search is empty', async () => {
     const devices = [
       { id: 'n1', name: 'Device-A', status: 'online', project: 'p1' },
