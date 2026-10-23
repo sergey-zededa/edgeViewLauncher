@@ -1213,6 +1213,180 @@ describe('Search with local cache filtering', () => {
   });
 });
 
+describe('Switch Cluster dropdown filter', () => {
+  const validKey = 'A'.repeat(171);
+  const validToken = `ENT1234:${validKey}`;
+  const mkCluster = (name, environment) => ({
+    name,
+    baseUrl: `https://${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.example`,
+    apiToken: validToken,
+    environment,
+  });
+  const config = {
+    baseUrl: 'https://production-zededa-demo.example',
+    apiToken: validToken,
+    clusters: [
+      mkCluster('Production - zededa-demo', 'prod'),
+      mkCluster('Maersk FbM - Prod', 'prod'),
+      mkCluster('Maersk FbM - Staging', 'staging'),
+      mkCluster('Sandbox', 'demo'),
+    ],
+    activeCluster: 'Production - zededa-demo',
+    recentDevices: [],
+  };
+  const devices = [
+    { id: 'n1', name: 'Device-A', status: 'online', project: 'p1' },
+    { id: 'n2', name: 'Device-B', status: 'online', project: 'p1' },
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    electronAPI.GetSettings.mockResolvedValue(config);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(config);
+    electronAPI.GetProjects.mockResolvedValue([]);
+    electronAPI.GetEnterprise.mockResolvedValue({ name: 'Test Enterprise' });
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache(devices));
+  });
+
+  const openDropdown = async () => {
+    render(<App />);
+    await screen.findByText('Device-A');
+    fireEvent.click(screen.getByTitle('Switch Cluster'));
+    const input = await screen.findByPlaceholderText('Filter clusters…');
+    return { input, list: screen.getByRole('listbox', { name: 'Clusters' }) };
+  };
+  const optionNames = (list) => within(list).queryAllByRole('option').map(o => o.textContent);
+
+  it('autofocuses the filter and narrows clusters by name and environment', async () => {
+    const { input, list } = await openDropdown();
+    expect(input).toHaveFocus();
+    expect(within(list).getAllByRole('option')).toHaveLength(4);
+
+    fireEvent.change(input, { target: { value: 'maersk' } });
+    expect(optionNames(list)).toEqual(['Maersk FbM - Prodprod', 'Maersk FbM - Stagingstaging']);
+
+    // Environment match ("staging" pill) — case-insensitive.
+    fireEvent.change(input, { target: { value: 'STAG' } });
+    expect(optionNames(list)).toEqual(['Maersk FbM - Stagingstaging']);
+
+    fireEvent.change(input, { target: { value: 'demo' } });
+    // "Production - zededa-demo" by name, "Sandbox" by its demo environment.
+    expect(optionNames(list)).toEqual(['Production - zededa-demoprod', 'Sandboxdemo']);
+
+    fireEvent.change(input, { target: { value: 'nothing-like-this' } });
+    expect(within(list).queryAllByRole('option')).toHaveLength(0);
+    expect(within(list).getByText('No clusters match')).toBeInTheDocument();
+  });
+
+  it('ArrowDown + Enter activates the highlighted cluster', async () => {
+    const { input, list } = await openDropdown();
+    fireEvent.change(input, { target: { value: 'maersk' } });
+    const options = within(list).getAllByRole('option');
+    expect(options[0]).toHaveAttribute('aria-selected', 'true');
+
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    expect(within(list).getAllByRole('option')[1]).toHaveAttribute('aria-selected', 'true');
+    // Wraps around past the end.
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    expect(within(list).getAllByRole('option')[0]).toHaveAttribute('aria-selected', 'true');
+    fireEvent.keyDown(input, { key: 'ArrowUp' });
+    expect(within(list).getAllByRole('option')[1]).toHaveAttribute('aria-selected', 'true');
+
+    const injectCallsBefore = electronAPI.InjectSecureConfig.mock.calls.length;
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => expect(electronAPI.SecureStorageSaveSettings).toHaveBeenCalledTimes(1));
+    expect(electronAPI.SecureStorageSaveSettings.mock.calls[0][0].activeCluster).toBe('Maersk FbM - Staging');
+    await waitFor(() => expect(electronAPI.InjectSecureConfig.mock.calls.length).toBeGreaterThan(injectCallsBefore));
+    expect(screen.queryByPlaceholderText('Filter clusters…')).not.toBeInTheDocument();
+  });
+
+  it('Enter with a single match activates it without arrowing', async () => {
+    const { input } = await openDropdown();
+    fireEvent.change(input, { target: { value: 'sandbox' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(electronAPI.SecureStorageSaveSettings).toHaveBeenCalledTimes(1));
+    expect(electronAPI.SecureStorageSaveSettings.mock.calls[0][0].activeCluster).toBe('Sandbox');
+  });
+
+  it('Enter on the already-active cluster just closes', async () => {
+    const { input } = await openDropdown();
+    // InjectSecureConfig also runs at startup; only calls after Enter count.
+    const injectCallsBefore = electronAPI.InjectSecureConfig.mock.calls.length;
+    fireEvent.change(input, { target: { value: 'zededa-demo' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(screen.queryByPlaceholderText('Filter clusters…')).not.toBeInTheDocument());
+    expect(electronAPI.SecureStorageSaveSettings).not.toHaveBeenCalled();
+    expect(electronAPI.InjectSecureConfig).toHaveBeenCalledTimes(injectCallsBefore);
+  });
+
+  it('opens with the active cluster highlighted, so an immediate Enter does not switch', async () => {
+    const midActive = { ...config, activeCluster: 'Maersk FbM - Staging' };
+    electronAPI.GetSettings.mockResolvedValue(midActive);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(midActive);
+    const { input, list } = await openDropdown();
+    expect(within(list).getAllByRole('option')[2]).toHaveAttribute('aria-selected', 'true');
+
+    // Typing then clearing the filter returns the highlight to the active cluster.
+    fireEvent.change(input, { target: { value: 'sand' } });
+    fireEvent.change(input, { target: { value: '' } });
+    expect(within(list).getAllByRole('option')[2]).toHaveAttribute('aria-selected', 'true');
+
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(screen.queryByPlaceholderText('Filter clusters…')).not.toBeInTheDocument());
+    expect(electronAPI.SecureStorageSaveSettings).not.toHaveBeenCalled();
+  });
+
+  it('keys typed in the filter do not navigate or connect devices', async () => {
+    const { input } = await openDropdown();
+    const deviceSearch = screen.getByPlaceholderText('Search nodes, projects...');
+    const firstRow = screen.getByText('Device-A').closest('.result-item');
+    expect(firstRow).toHaveClass('selected');
+
+    fireEvent.change(input, { target: { value: 'no-such-cluster' } });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'ArrowUp' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    fireEvent.keyDown(input, { key: 'a' });
+
+    // Device list selection unchanged, nothing opened, device search untouched.
+    expect(screen.getByText('Device-A').closest('.result-item')).toHaveClass('selected');
+    expect(electronAPI.AddRecentDevice).not.toHaveBeenCalled();
+    expect(electronAPI.SecureStorageSaveSettings).not.toHaveBeenCalled();
+    expect(deviceSearch).toHaveValue('');
+    expect(screen.getByPlaceholderText('Filter clusters…')).toBeInTheDocument();
+
+    // Escape closes the popover.
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(screen.queryByPlaceholderText('Filter clusters…')).not.toBeInTheDocument();
+    expect(electronAPI.AddRecentDevice).not.toHaveBeenCalled();
+  });
+
+  it('resets the query and highlight after closing and reopening', async () => {
+    const { input } = await openDropdown();
+    fireEvent.change(input, { target: { value: 'maersk' } });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(screen.queryByPlaceholderText('Filter clusters…')).not.toBeInTheDocument();
+
+    // Reopen: filter empty, full list, first row highlighted.
+    fireEvent.click(screen.getByTitle('Switch Cluster'));
+    const reopened = await screen.findByPlaceholderText('Filter clusters…');
+    expect(reopened).toHaveValue('');
+    const options = within(screen.getByRole('listbox', { name: 'Clusters' })).getAllByRole('option');
+    expect(options).toHaveLength(4);
+    expect(options[0]).toHaveAttribute('aria-selected', 'true');
+
+    // Outside click also resets.
+    fireEvent.change(reopened, { target: { value: 'sand' } });
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByPlaceholderText('Filter clusters…')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTitle('Switch Cluster'));
+    expect(await screen.findByPlaceholderText('Filter clusters…')).toHaveValue('');
+  });
+});
+
 describe('Status bar and global tunnels', () => {
   const validKey = 'A'.repeat(171);
   const validToken = `ENT1234:${validKey}`;

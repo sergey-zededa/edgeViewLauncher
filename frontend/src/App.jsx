@@ -469,6 +469,14 @@ function App() {
   const [showClusterDropdown, setShowClusterDropdown] = useState(null); // null | 'header' | 'icon'
   const clusterDropdownRef = useRef(null);
   const clusterHeaderRef = useRef(null);
+  // Type-to-filter state for the Switch Cluster popover. The highlight indexes
+  // into the *filtered* list and is shared by keyboard (arrows) and mouse
+  // (hover) so the two never show competing highlights.
+  const [clusterSwitchQuery, setClusterSwitchQuery] = useState('');
+  const [clusterSwitchHighlight, setClusterSwitchHighlight] = useState(0);
+  const clusterSwitchListRef = useRef(null);
+  const clusterSwitchKeyNavRef = useRef(false);
+  const deviceSearchInputRef = useRef(null);
   const [selectedNode, setSelectedNode] = useState(null);
   // Current device id for async handlers: after an await, compare against it
   // so a slow response can't write one device's status while another is shown.
@@ -526,6 +534,43 @@ function App() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showClusterDropdown]);
+
+  // Every way of closing the cluster popover (Escape, outside click, picking a
+  // cluster, toggling the trigger) funnels through showClusterDropdown → null,
+  // so reset the filter here rather than at each call site.
+  const clusterDropdownWasOpenRef = useRef(false);
+  useEffect(() => {
+    if (showClusterDropdown) {
+      clusterDropdownWasOpenRef.current = true;
+      // Start on the active cluster so Enter right after opening is a no-op
+      // rather than a switch to whichever cluster happens to be listed first.
+      const activeIdx = config.clusters
+        .filter(c => c.baseUrl && c.apiToken)
+        .findIndex(c => c.name === config.activeCluster);
+      setClusterSwitchHighlight(Math.max(activeIdx, 0));
+      return;
+    }
+    setClusterSwitchQuery('');
+    setClusterSwitchHighlight(0);
+    // The filter input had focus and just unmounted; hand focus back to the
+    // device search box so keyboard navigation keeps working after closing.
+    if (clusterDropdownWasOpenRef.current) {
+      clusterDropdownWasOpenRef.current = false;
+      if (!document.activeElement || document.activeElement === document.body) {
+        deviceSearchInputRef.current?.focus();
+      }
+    }
+  }, [showClusterDropdown]);
+
+  // Keep the keyboard-highlighted cluster visible in the scrolling list. Only
+  // for arrow-key moves: scrolling on hover would nudge a half-visible row out
+  // from under the pointer.
+  useEffect(() => {
+    if (!showClusterDropdown || !clusterSwitchKeyNavRef.current) return;
+    clusterSwitchKeyNavRef.current = false;
+    const el = clusterSwitchListRef.current?.querySelector(`[data-cluster-index="${clusterSwitchHighlight}"]`);
+    if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest' });
+  }, [clusterSwitchHighlight, showClusterDropdown]);
 
 
   const toggleTheme = () => {
@@ -3059,6 +3104,10 @@ Do you want to try connecting anyway?`)) {
       return;
     }
     if (showSettings || selectedNode) return;
+    // The cluster popover's filter input owns arrows/Enter (and stops
+    // propagation); this guards against them leaking into device navigation
+    // or a connect if focus has wandered elsewhere while it is open.
+    if (showClusterDropdown && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter')) return;
     if (e.key === 'ArrowDown') {
       setSelectedIndex(prev => Math.min(prev + 1, displayNodes.length - 1));
     } else if (e.key === 'ArrowUp') {
@@ -3468,6 +3517,7 @@ Do you want to try connecting anyway?`)) {
           </div>
         ) : (
           <input
+            ref={deviceSearchInputRef}
             autoFocus={!showSettings}
             type="text"
             autoComplete="off"
@@ -3504,6 +3554,37 @@ Do you want to try connecting anyway?`)) {
                   top: 'calc(100% + 8px)',
                   right: 0,
                 };
+                const q = clusterSwitchQuery.trim().toLowerCase();
+                const switchable = config.clusters
+                  .filter(c => c.baseUrl && c.apiToken)
+                  .filter(c => !q
+                    || (c.name || '').toLowerCase().includes(q)
+                    || (c.environment || '').toLowerCase().includes(q));
+                // Clamp in case the list shrank under a stale highlight.
+                const highlight = Math.min(clusterSwitchHighlight, Math.max(switchable.length - 1, 0));
+                const pickCluster = (cluster) => {
+                  setShowClusterDropdown(null);
+                  if (cluster.name !== config.activeCluster) activateCluster(cluster.name);
+                };
+                const handleFilterKeyDown = (e) => {
+                  // Keep every key typed here away from the app-level
+                  // handleKeyDown (device navigation / Enter-to-connect).
+                  e.stopPropagation();
+                  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    if (switchable.length === 0) return;
+                    const step = e.key === 'ArrowDown' ? 1 : -1;
+                    clusterSwitchKeyNavRef.current = true;
+                    setClusterSwitchHighlight((highlight + step + switchable.length) % switchable.length);
+                  } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const cluster = switchable[highlight];
+                    if (cluster) pickCluster(cluster);
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    setShowClusterDropdown(null);
+                  }
+                };
                 return (
                 <div style={{
                   ...dropdownStyle,
@@ -3514,59 +3595,96 @@ Do you want to try connecting anyway?`)) {
                   minWidth: '220px',
                   maxWidth: '280px',
                   maxHeight: '320px',
-                  overflowY: 'auto',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  overflow: 'hidden',
                   zIndex: 1000,
                   animation: 'slideIn 0.15s ease-out',
                 }}>
-                  <div style={{
-                    padding: '8px 12px',
-                    fontSize: '11px',
-                    fontWeight: 600,
-                    color: 'var(--text-secondary)',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.5px',
-                    borderBottom: '1px solid var(--border-color)',
-                  }}>
-                    Switch Cluster
-                  </div>
-                  {config.clusters.filter(c => c.baseUrl && c.apiToken).map((cluster) => {
-                    const isActive = cluster.name === config.activeCluster;
-                    return (
-                      <div
-                        key={cluster.name}
-                        onClick={() => {
-                          if (!isActive) {
-                            setShowClusterDropdown(null);
-                            activateCluster(cluster.name);
-                          } else {
-                            setShowClusterDropdown(null);
-                          }
-                        }}
-                        style={{
-                          padding: '8px 12px',
-                          fontSize: '13px',
-                          cursor: isActive ? 'default' : 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '8px',
-                          color: isActive ? 'var(--color-accent, var(--accent-color))' : 'var(--text-primary)',
-                          fontWeight: isActive ? 500 : 400,
-                          transition: 'background 0.1s',
-                          whiteSpace: 'nowrap',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                        }}
-                        onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = 'var(--bg-hover)'; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                      >
-                        <Check size={14} style={{ flexShrink: 0, visibility: isActive ? 'visible' : 'hidden' }} />
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, minWidth: 0 }}>{cluster.name}</span>
-                        {cluster.environment && (
-                          <span className={`env-pill env-${cluster.environment}`}>{cluster.environment}</span>
-                        )}
+                  {/* Header + filter stay put; only the list below scrolls. */}
+                  <div style={{ flexShrink: 0, background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border-color)' }}>
+                    <div style={{
+                      padding: '8px 12px 6px',
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      color: 'var(--text-secondary)',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.5px',
+                    }}>
+                      Switch Cluster
+                    </div>
+                    <div style={{ padding: '0 8px 8px' }}>
+                      <div className="cluster-search-input-wrap">
+                        <Search size={12} className="cluster-search-icon" />
+                        <input
+                          autoFocus
+                          type="text"
+                          autoComplete="off"
+                          autoCorrect="off"
+                          autoCapitalize="off"
+                          spellCheck={false}
+                          className="cluster-search-input"
+                          placeholder="Filter clusters…"
+                          aria-label="Filter clusters"
+                          value={clusterSwitchQuery}
+                          onChange={(e) => {
+                            setClusterSwitchQuery(e.target.value);
+                            // A cleared filter goes back to the active cluster,
+                            // same as when the popover opens.
+                            const activeIdx = e.target.value.trim()
+                              ? -1
+                              : config.clusters
+                                .filter(c => c.baseUrl && c.apiToken)
+                                .findIndex(c => c.name === config.activeCluster);
+                            setClusterSwitchHighlight(Math.max(activeIdx, 0));
+                          }}
+                          onKeyDown={handleFilterKeyDown}
+                        />
                       </div>
-                    );
-                  })}
+                    </div>
+                  </div>
+                  <div ref={clusterSwitchListRef} role="listbox" aria-label="Clusters" style={{ overflowY: 'auto', flex: '1 1 auto', minHeight: 0 }}>
+                    {switchable.length === 0 && (
+                      <div style={{ padding: '10px 12px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                        No clusters match
+                      </div>
+                    )}
+                    {switchable.map((cluster, idx) => {
+                      const isActive = cluster.name === config.activeCluster;
+                      const isHighlighted = idx === highlight;
+                      return (
+                        <div
+                          key={cluster.name}
+                          role="option"
+                          aria-selected={isHighlighted}
+                          data-cluster-index={idx}
+                          onClick={() => pickCluster(cluster)}
+                          onMouseEnter={() => setClusterSwitchHighlight(idx)}
+                          style={{
+                            padding: '8px 12px',
+                            fontSize: '13px',
+                            cursor: isActive ? 'default' : 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            color: isActive ? 'var(--color-accent, var(--accent-color))' : 'var(--text-primary)',
+                            fontWeight: isActive ? 500 : 400,
+                            background: isHighlighted ? 'var(--bg-hover)' : 'transparent',
+                            transition: 'background 0.1s',
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}
+                        >
+                          <Check size={14} style={{ flexShrink: 0, visibility: isActive ? 'visible' : 'hidden' }} />
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, minWidth: 0 }}>{cluster.name}</span>
+                          {cluster.environment && (
+                            <span className={`env-pill env-${cluster.environment}`}>{cluster.environment}</span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               );})()}
             </div>
