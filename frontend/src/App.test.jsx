@@ -22,6 +22,9 @@ vi.mock('./components/GlobalStatusBanner', () => ({
   default: ({ status }) => status ? (
     <div data-testid="global-status-banner-mock" data-type={status.type}>
       {status.title && <strong>{status.title}</strong>}{status.title && ' '}{status.message}
+      {status.action && status.action.onClick && (
+        <button onClick={() => status.action.onClick()}>{status.action.label}</button>
+      )}
     </div>
   ) : null,
 }));
@@ -1906,6 +1909,173 @@ describe('EdgeView session controls', () => {
     fireEvent.click(await screen.findByText('Use External Terminal'));
 
     expect(await screen.findByText(/Connection failed:/)).toBeInTheDocument();
+  });
+});
+
+// A tunnel to a non-internal IP is refused by the device while its External
+// Connection Policy is off. The backend tags this "EXT_POLICY_DENIED"; the UI
+// must offer a one-click fix that always *enables* the policy and flag the
+// Ext. Policy chip until the policy is on.
+describe('External Connection Policy denial', () => {
+  const validKey = 'A'.repeat(171);
+  const validToken = `ENT1234:${validKey}`;
+  const configWithToken = {
+    baseUrl: 'https://cluster.example',
+    apiToken: validToken,
+    clusters: [{ name: 'Prod', baseUrl: 'https://cluster.example', apiToken: validToken }],
+    activeCluster: 'Prod',
+    recentDevices: [],
+  };
+  const node = { id: 'node-1', name: 'Policy-Dev', status: 'online', project: 'proj-1' };
+  const DENIED_MSG = "The target IP is not recognized as an internal EVE-OS address and the device's External Connection Policy is disabled. Enable it using the \"Enable Ext. Policy\" button in Device Configuration below, or in the device's EdgeView settings on ZEDEDA Cloud.";
+  const deniedError = (withCode = true) => {
+    const e = new Error(DENIED_MSG);
+    if (withCode) e.code = 'EXT_POLICY_DENIED';
+    return e;
+  };
+  const sshStatus = (externalPolicy) => ({
+    status: 'enabled',
+    expiry: Math.floor(Date.now() / 1000) + 3600,
+    externalPolicy,
+  });
+  const extPolicyChip = () => screen.getByText(/^(Enable Ext\. Policy|Ext\. Policy Enabled)$/, { selector: '.config-chip' });
+  const toast = () => screen.getByTestId('global-status-banner-mock');
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    electronAPI.GetSettings.mockReset();
+    electronAPI.SecureStorageGetSettings.mockReset();
+    electronAPI.GetSettings.mockResolvedValue(configWithToken);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(configWithToken);
+    electronAPI.GetDeviceCache.mockReset();
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([node]));
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([
+      { name: 'App 1', vncPort: 5900, ips: ['10.0.0.1'], pid: 1234, status: 'RUN_STATE_ONLINE' },
+    ]));
+    electronAPI.GetSessionStatus.mockResolvedValue({ active: true, expiresAt: new Date(Date.now() + 3600000).toISOString() });
+    electronAPI.GetSSHStatus.mockResolvedValue(sshStatus(false));
+  });
+
+  afterEach(() => {
+    electronAPI.StartTunnel.mockReset();
+    electronAPI.StartTunnel.mockResolvedValue({ port: 6000, tunnelId: 'tunnel-1' });
+    electronAPI.GetSSHStatus.mockReset();
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'disabled' });
+    electronAPI.GetSessionStatus.mockResolvedValue({ active: false });
+  });
+
+  const openDevice = async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByText('Policy-Dev'));
+    await screen.findByText('Running Applications');
+    await waitFor(() => expect(extPolicyChip()).toBeInTheDocument());
+  };
+
+  const startVncTunnel = async () => {
+    const appRow = screen.getByText('App 1').closest('.service-item');
+    fireEvent.click(within(appRow).getByRole('button', { name: /\bconnect\b/i }));
+    fireEvent.click((await screen.findByText('Launch VNC')).closest('.option-btn'));
+    fireEvent.click(await screen.findByText('Open in Built-in Viewer'));
+  };
+
+  it('shows an actionable toast that enables the policy with one click', async () => {
+    electronAPI.StartTunnel.mockRejectedValue(deniedError());
+    await openDevice();
+    await startVncTunnel();
+
+    const actionBtn = await screen.findByRole('button', { name: 'Enable Ext. Policy' });
+    expect(toast()).toHaveAttribute('data-type', 'error');
+    expect(toast()).toHaveTextContent('External Connection Policy is off');
+    expect(toast()).toHaveTextContent(/isn't on the device's local network/);
+
+    // Later status refreshes report the policy on.
+    electronAPI.GetSSHStatus.mockResolvedValue(sshStatus(true));
+    fireEvent.click(actionBtn);
+
+    await waitFor(() => expect(electronAPI.EnableExternalPolicy).toHaveBeenCalledWith('node-1', true));
+    expect(electronAPI.EnableExternalPolicy).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText(/retry the connection/)).toBeInTheDocument();
+  });
+
+  it('the toast action enables even when a toggle would disable (never sends false)', async () => {
+    // Policy reads as enabled when the tunnel starts, so a toggle captured in
+    // that render would send false.
+    electronAPI.GetSSHStatus.mockResolvedValue(sshStatus(true));
+    let rejectTunnel;
+    electronAPI.StartTunnel.mockImplementation(() => new Promise((_, reject) => { rejectTunnel = reject; }));
+    await openDevice();
+    await screen.findByText('Ext. Policy Enabled');
+    await startVncTunnel();
+    await waitFor(() => expect(rejectTunnel).toBeDefined());
+
+    // While the tunnel is in flight the controller now reports it off.
+    electronAPI.GetSSHStatus.mockResolvedValue(sshStatus(false));
+    fireEvent.click(screen.getByTitle('Refresh device status'));
+    await waitFor(() => expect(extPolicyChip()).toHaveTextContent('Enable Ext. Policy'));
+
+    await act(async () => { rejectTunnel(deniedError()); });
+    fireEvent.click(await screen.findByRole('button', { name: 'Enable Ext. Policy' }));
+
+    await waitFor(() => expect(electronAPI.EnableExternalPolicy).toHaveBeenCalled());
+    expect(electronAPI.EnableExternalPolicy).toHaveBeenCalledWith('node-1', true);
+    expect(electronAPI.EnableExternalPolicy).not.toHaveBeenCalledWith('node-1', false);
+  });
+
+  it('does not re-send when the controller already reports the policy enabled', async () => {
+    electronAPI.GetSSHStatus.mockResolvedValue(sshStatus(true));
+    electronAPI.StartTunnel.mockRejectedValue(deniedError());
+    await openDevice();
+    await screen.findByText('Ext. Policy Enabled');
+    await startVncTunnel();
+
+    // The chip already reads "enabled" — it is not flagged.
+    expect(extPolicyChip()).not.toHaveClass('needs-attention');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Enable Ext. Policy' }));
+
+    expect(await screen.findByText(/already enabled on ZEDEDA Cloud/)).toBeInTheDocument();
+    expect(toast()).toHaveAttribute('data-type', 'info');
+    expect(toast()).toHaveTextContent(/next config sync/);
+    expect(electronAPI.EnableExternalPolicy).not.toHaveBeenCalled();
+  });
+
+  it('flags the Ext. Policy chip on denial and clears it once the policy is enabled', async () => {
+    electronAPI.StartTunnel.mockRejectedValue(deniedError());
+    await openDevice();
+    expect(extPolicyChip()).not.toHaveClass('needs-attention');
+
+    await startVncTunnel();
+    await screen.findByRole('button', { name: 'Enable Ext. Policy' });
+    await waitFor(() => expect(extPolicyChip()).toHaveClass('needs-attention'));
+
+    // Status refresh reports the policy on (e.g. enabled on ZEDEDA Cloud).
+    electronAPI.GetSSHStatus.mockResolvedValue(sshStatus(true));
+    fireEvent.click(screen.getByTitle('Refresh device status'));
+
+    await waitFor(() => expect(extPolicyChip()).toHaveTextContent('Ext. Policy Enabled'));
+    expect(extPolicyChip()).not.toHaveClass('needs-attention');
+  });
+
+  it('clicking the flagged chip clears the attention state', async () => {
+    electronAPI.StartTunnel.mockRejectedValue(deniedError());
+    await openDevice();
+    await startVncTunnel();
+    await waitFor(() => expect(extPolicyChip()).toHaveClass('needs-attention'));
+
+    fireEvent.click(extPolicyChip());
+
+    await waitFor(() => expect(electronAPI.EnableExternalPolicy).toHaveBeenCalledWith('node-1', true));
+    expect(extPolicyChip()).not.toHaveClass('needs-attention');
+  });
+
+  it('falls back to the message text when the error has no code', async () => {
+    electronAPI.StartTunnel.mockRejectedValue(deniedError(false));
+    await openDevice();
+    await startVncTunnel();
+
+    expect(await screen.findByRole('button', { name: 'Enable Ext. Policy' })).toBeInTheDocument();
+    expect(toast()).toHaveTextContent('External Connection Policy is off');
+    await waitFor(() => expect(extPolicyChip()).toHaveClass('needs-attention'));
   });
 });
 
