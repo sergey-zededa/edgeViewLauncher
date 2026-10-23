@@ -290,6 +290,39 @@ func TestSendError_ForbiddenWithoutPermission(t *testing.T) {
 	}
 }
 
+// TestSendError_ExtPolicyDeniedCode verifies that a (possibly wrapped)
+// session.ErrExternalPolicyDenied is reported with a stable
+// "EXT_POLICY_DENIED" code so the frontend can offer a one-click
+// "Enable Ext. Policy" fix instead of substring-matching the message.
+func TestSendError_ExtPolicyDeniedCode(t *testing.T) {
+	srv := newTestServer(t)
+
+	rr := httptest.NewRecorder()
+	srv.sendError(rr, fmt.Errorf("start tunnel: %w", session.ErrExternalPolicyDenied))
+
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("expected status 409, got %d", rr.Code)
+	}
+	var resp APIResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.Success {
+		t.Fatalf("expected success=false")
+	}
+	if resp.Code != "EXT_POLICY_DENIED" {
+		t.Fatalf("expected code EXT_POLICY_DENIED, got %q", resp.Code)
+	}
+	if resp.Error != session.ErrExternalPolicyDenied.Error() {
+		t.Fatalf("expected the sentinel's message without the wrap chain, got %q", resp.Error)
+	}
+	// The message text is also the frontend's fallback detector for older
+	// backends; keep the phrase it matches on.
+	if !strings.Contains(resp.Error, "External Connection Policy is disabled") {
+		t.Fatalf("expected message to keep the fallback phrase, got %q", resp.Error)
+	}
+}
+
 // TestSendError_GenericUnchanged verifies non-auth errors keep the existing
 // 500 + raw-message behavior (no UNAUTHORIZED code).
 func TestSendError_GenericUnchanged(t *testing.T) {

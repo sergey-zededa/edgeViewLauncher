@@ -469,6 +469,14 @@ function App() {
   const [showClusterDropdown, setShowClusterDropdown] = useState(null); // null | 'header' | 'icon'
   const clusterDropdownRef = useRef(null);
   const clusterHeaderRef = useRef(null);
+  // Type-to-filter state for the Switch Cluster popover. The highlight indexes
+  // into the *filtered* list and is shared by keyboard (arrows) and mouse
+  // (hover) so the two never show competing highlights.
+  const [clusterSwitchQuery, setClusterSwitchQuery] = useState('');
+  const [clusterSwitchHighlight, setClusterSwitchHighlight] = useState(0);
+  const clusterSwitchListRef = useRef(null);
+  const clusterSwitchKeyNavRef = useRef(false);
+  const deviceSearchInputRef = useRef(null);
   const [selectedNode, setSelectedNode] = useState(null);
   // Current device id for async handlers: after an await, compare against it
   // so a slow response can't write one device's status while another is shown.
@@ -527,6 +535,43 @@ function App() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showClusterDropdown]);
 
+  // Every way of closing the cluster popover (Escape, outside click, picking a
+  // cluster, toggling the trigger) funnels through showClusterDropdown → null,
+  // so reset the filter here rather than at each call site.
+  const clusterDropdownWasOpenRef = useRef(false);
+  useEffect(() => {
+    if (showClusterDropdown) {
+      clusterDropdownWasOpenRef.current = true;
+      // Start on the active cluster so Enter right after opening is a no-op
+      // rather than a switch to whichever cluster happens to be listed first.
+      const activeIdx = config.clusters
+        .filter(c => c.baseUrl && c.apiToken)
+        .findIndex(c => c.name === config.activeCluster);
+      setClusterSwitchHighlight(Math.max(activeIdx, 0));
+      return;
+    }
+    setClusterSwitchQuery('');
+    setClusterSwitchHighlight(0);
+    // The filter input had focus and just unmounted; hand focus back to the
+    // device search box so keyboard navigation keeps working after closing.
+    if (clusterDropdownWasOpenRef.current) {
+      clusterDropdownWasOpenRef.current = false;
+      if (!document.activeElement || document.activeElement === document.body) {
+        deviceSearchInputRef.current?.focus();
+      }
+    }
+  }, [showClusterDropdown]);
+
+  // Keep the keyboard-highlighted cluster visible in the scrolling list. Only
+  // for arrow-key moves: scrolling on hover would nudge a half-visible row out
+  // from under the pointer.
+  useEffect(() => {
+    if (!showClusterDropdown || !clusterSwitchKeyNavRef.current) return;
+    clusterSwitchKeyNavRef.current = false;
+    const el = clusterSwitchListRef.current?.querySelector(`[data-cluster-index="${clusterSwitchHighlight}"]`);
+    if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest' });
+  }, [clusterSwitchHighlight, showClusterDropdown]);
+
 
   const toggleTheme = () => {
     // Cycle: dark -> light -> auto -> dark
@@ -541,6 +586,26 @@ function App() {
   const [services, setServices] = useState(null);
   const [loadingServices, setLoadingServices] = useState(false);
   const [sshStatus, setSshStatus] = useState(null);
+  // Latest sshStatus for async handlers (e.g. a toast action created by a
+  // tunnel flow that started several renders ago) — avoids stale closures.
+  const sshStatusRef = useRef(null);
+  useEffect(() => { sshStatusRef.current = sshStatus; }, [sshStatus]);
+  // Ext. Policy chip attention after a tunnel was denied because the device's
+  // External Connection Policy is off. 0 = none; each denial bumps it, which
+  // remounts the chip (via key) so the finite pulse replays. Cleared when the
+  // chip is clicked, the policy becomes enabled, or the selected node changes.
+  const [extPolicyAttention, setExtPolicyAttention] = useState(0);
+  const extPolicyChipRef = useRef(null);
+  useEffect(() => { if (sshStatus?.externalPolicy) setExtPolicyAttention(0); }, [sshStatus?.externalPolicy]);
+  useEffect(() => { setExtPolicyAttention(0); }, [selectedNode?.id]);
+  useEffect(() => {
+    if (!extPolicyAttention) return;
+    const el = extPolicyChipRef.current;
+    if (!el || typeof el.scrollIntoView !== 'function') return; // jsdom lacks it
+    const reduceMotion = typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    el.scrollIntoView({ block: 'nearest', behavior: reduceMotion ? 'auto' : 'smooth' });
+  }, [extPolicyAttention]);
   const [sessionStatus, setSessionStatus] = useState(null);
   const [loadingSSH, setLoadingSSH] = useState(false);
   const [expandedServiceId, setExpandedServiceId] = useState(null);
@@ -1675,7 +1740,7 @@ function App() {
     } catch (err) {
       if (pollInterval) clearInterval(pollInterval);
       console.error(err);
-      handleTunnelError(err);
+      handleTunnelError(err, selectedNode.id);
       const msg = err.message || String(err);
       setTcpError(msg);
       if (!isCancelError(err)) {
@@ -1727,7 +1792,7 @@ function App() {
     } catch (err) {
       if (pollInterval) clearInterval(pollInterval);
       console.error(err);
-      handleTunnelError(err);
+      handleTunnelError(err, selectedNode.id);
       if (!isCancelError(err)) {
         addLog(`Failed to start TCP tunnel: ${err.message || err}`, 'error');
       }
@@ -1783,7 +1848,7 @@ function App() {
     } catch (err) {
       if (pollInterval) clearInterval(pollInterval);
       console.error(err);
-      handleTunnelError(err);
+      handleTunnelError(err, selectedNode.id);
       if (!isCancelError(err)) {
         addLog(`Failed to start VNC: ${err.message || err}`, 'error');
       }
@@ -1845,7 +1910,7 @@ function App() {
     } catch (err) {
       if (pollInterval) clearInterval(pollInterval);
       console.error(err);
-      handleTunnelError(err);
+      handleTunnelError(err, selectedNode.id);
       if (!isCancelError(err)) {
         addLog(`Failed to start SSH: ${err.message || err}`, 'error');
       }
@@ -1937,7 +2002,7 @@ function App() {
     } catch (err) {
       if (pollInterval) clearInterval(pollInterval);
       console.error(err);
-      handleTunnelError(err);
+      handleTunnelError(err, selectedNode.id);
       setSshError(err.message);
       if (!isCancelError(err)) {
         addLog(`Failed to start SSH tunnel: ${err.message}`, 'error');
@@ -1989,8 +2054,38 @@ function App() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Helper to detect if error is session-related and update status
-  const handleTunnelError = (err) => {
+  // The device refused a tunnel to a non-internal IP because its External
+  // Connection Policy is off. The backend tags this "EXT_POLICY_DENIED"; the
+  // message match is a fallback for errors that arrive without the code.
+  const isExtPolicyDenied = (err) =>
+    err?.code === 'EXT_POLICY_DENIED' ||
+    (err?.message || String(err ?? '')).includes('External Connection Policy is disabled');
+
+  // Helper to detect if error is session-related and update status.
+  // nodeId is the device the failed tunnel was started for; callers run in
+  // async flows, so compare it with selectedNodeIdRef rather than trusting
+  // their (possibly stale) closure.
+  const handleTunnelError = (err, nodeId = selectedNodeIdRef.current) => {
+    if (isExtPolicyDenied(err)) {
+      // Only offer the fix (and flag the chip) while that device is still the
+      // one on screen — otherwise the chip and action would target another.
+      if (!nodeId || selectedNodeIdRef.current !== nodeId) {
+        setGlobalStatus({ type: 'error', message: err?.message || String(err) });
+        return;
+      }
+      setGlobalStatus({
+        type: 'error',
+        title: 'External Connection Policy is off',
+        message: "The target IP isn't on the device's local network. EdgeView must be allowed to reach external IPs.",
+        action: { label: 'Enable Ext. Policy', onClick: () => enableExternalPolicyFromToast(nodeId) },
+      });
+      // If the controller already says enabled (device not reconciled yet),
+      // the chip reads "Ext. Policy Enabled" — don't flag it.
+      if (!sshStatusRef.current?.externalPolicy) {
+        setExtPolicyAttention(n => n + 1);
+      }
+      return;
+    }
     const errorMsg = err.message || String(err);
     // Detect session-related errors
     if (errorMsg.includes('no active session') ||
@@ -1999,10 +2094,6 @@ function App() {
       errorMsg.includes('session expired')) {
       setTunnelConnected(false);
       addLog('EdgeView session is not active. Click the reset button to restart the session.', 'error');
-    }
-    // Detect external policy denial — show persistent banner
-    if (errorMsg.includes('External Connection Policy is disabled')) {
-      setGlobalStatus({ type: 'error', message: errorMsg });
     }
   };
 
@@ -2756,34 +2847,40 @@ Do you want to try connecting anyway?`)) {
     setGlobalStatus(null);
   };
 
-  const handleEnableExternalPolicy = async () => {
-    if (!selectedNode || !sshStatus) {
-      setGlobalStatus({ type: 'error', message: "No node selected or status unknown." });
-      return;
-    }
+  // Explicitly set (never toggle) the device's External Connection Policy on
+  // ZEDEDA Cloud. A cloud-config PUT the device reconciles on its next sync,
+  // so it is deliberately NOT gated on the device being online. Shared by the
+  // Ext. Policy chip (toggle) and the "Enable Ext. Policy" toast action.
+  const setExternalPolicy = async (nodeId, enable) => {
+    const action = enable ? "enable" : "disable";
 
-    const currentStatus = sshStatus.externalPolicy;
-    const action = currentStatus ? "disable" : "enable";
-    const newState = !currentStatus;
-
-    setGlobalStatus({ type: 'loading', message: `${action === "enable" ? "Enabling" : "Disabling"} external policy...` });
+    setGlobalStatus({ type: 'loading', message: `${enable ? "Enabling" : "Disabling"} external policy...` });
 
     try {
-      await EnableExternalPolicy(selectedNode.id, newState);
+      await EnableExternalPolicy(nodeId, enable);
       setAuthError(false); // authenticated write succeeded → token is valid
       addLog(`External policy ${action}d successfully`, 'success');
 
-      // Update local state immediately for better UX, though reloadSSHStatus will also catch it
-      setSshStatus(prev => ({ ...prev, externalPolicy: newState }));
+      if (selectedNodeIdRef.current === nodeId) {
+        // Update local state immediately for better UX, though loadSSHStatus will also catch it
+        setSshStatus(prev => (prev ? { ...prev, externalPolicy: enable } : prev));
+      }
 
-      setGlobalStatus({
+      // Enabling re-mints the EdgeView token: the device reconnects EdgeView
+      // with the new policy, so a denied tunnel needs a fresh attempt after.
+      const successStatus = {
         type: 'success',
-        message: `External policy ${action}d. Device configuration updated.`
-      });
+        message: enable
+          ? "External policy enabled. EdgeView reconnects with the new policy — retry the connection in a few seconds."
+          : "External policy disabled. Device configuration updated.",
+      };
+      setGlobalStatus(successStatus);
 
-      // Refresh status to be sure
-      setTimeout(() => loadSSHStatus(selectedNode.id), 1000);
-      setTimeout(() => setGlobalStatus(null), 5000);
+      // Refresh status to be sure (only while the same device is shown)
+      setTimeout(() => {
+        if (selectedNodeIdRef.current === nodeId) loadSSHStatus(nodeId);
+      }, 1000);
+      setTimeout(() => setGlobalStatus(prev => (prev === successStatus ? null : prev)), 5000);
     } catch (err) {
       console.error(`Failed to ${action} external policy:`, err);
       if (isAuthError(err)) {
@@ -2807,6 +2904,38 @@ Do you want to try connecting anyway?`)) {
       addLog(`Failed to ${action} external policy: ${errMsg}`, 'error');
       setGlobalStatus({ type: 'error', message: `Failed to ${action} external policy: ${errMsg}` });
     }
+  };
+
+  // Ext. Policy chip: toggles the current state.
+  const handleEnableExternalPolicy = async () => {
+    setExtPolicyAttention(0);
+    if (!selectedNode || !sshStatus) {
+      setGlobalStatus({ type: 'error', message: "No node selected or status unknown." });
+      return;
+    }
+    await setExternalPolicy(selectedNode.id, !sshStatus.externalPolicy);
+  };
+
+  // "Enable Ext. Policy" action on the tunnel-denied toast. Always enables,
+  // never toggles. The toast is created by an async tunnel flow, so this reads
+  // the selected node and policy state through refs, not render closures.
+  const enableExternalPolicyFromToast = async (nodeId) => {
+    if (!nodeId || selectedNodeIdRef.current !== nodeId) {
+      // The device on screen changed since the denial; don't touch another one.
+      setGlobalStatus(null);
+      return;
+    }
+    if (sshStatusRef.current?.externalPolicy) {
+      // Already enabled on the controller; the device just hasn't applied it
+      // yet. Another PUT would change nothing.
+      setExtPolicyAttention(0);
+      setGlobalStatus({
+        type: 'info',
+        message: "External Connection Policy is already enabled on ZEDEDA Cloud. The device applies it on its next config sync — retry the connection shortly.",
+      });
+      return;
+    }
+    await setExternalPolicy(nodeId, true);
   };
 
 
@@ -3139,6 +3268,10 @@ Do you want to try connecting anyway?`)) {
       return;
     }
     if (showSettings || selectedNode) return;
+    // The cluster popover's filter input owns arrows/Enter (and stops
+    // propagation); this guards against them leaking into device navigation
+    // or a connect if focus has wandered elsewhere while it is open.
+    if (showClusterDropdown && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter')) return;
     if (e.key === 'ArrowDown') {
       setSelectedIndex(prev => Math.min(prev + 1, displayNodes.length - 1));
     } else if (e.key === 'ArrowUp') {
@@ -3209,6 +3342,10 @@ Do you want to try connecting anyway?`)) {
       setDeviceCache(null);
       setCacheLoaded(false);
       setLoading(true); // Show skeletons while new cluster cache loads
+      // The search text names devices/projects of the old cluster; carried over
+      // it would filter the new cluster's list down to nothing.
+      setQuery('');
+      setSelectedIndex(0);
 
       // 2. Save config to storage (but DON'T update React config yet —
       //    updating config.activeCluster triggers the polling effect, which
@@ -3544,6 +3681,7 @@ Do you want to try connecting anyway?`)) {
           </div>
         ) : (
           <input
+            ref={deviceSearchInputRef}
             autoFocus={!showSettings}
             type="text"
             autoComplete="off"
@@ -3580,6 +3718,37 @@ Do you want to try connecting anyway?`)) {
                   top: 'calc(100% + 8px)',
                   right: 0,
                 };
+                const q = clusterSwitchQuery.trim().toLowerCase();
+                const switchable = config.clusters
+                  .filter(c => c.baseUrl && c.apiToken)
+                  .filter(c => !q
+                    || (c.name || '').toLowerCase().includes(q)
+                    || (c.environment || '').toLowerCase().includes(q));
+                // Clamp in case the list shrank under a stale highlight.
+                const highlight = Math.min(clusterSwitchHighlight, Math.max(switchable.length - 1, 0));
+                const pickCluster = (cluster) => {
+                  setShowClusterDropdown(null);
+                  if (cluster.name !== config.activeCluster) activateCluster(cluster.name);
+                };
+                const handleFilterKeyDown = (e) => {
+                  // Keep every key typed here away from the app-level
+                  // handleKeyDown (device navigation / Enter-to-connect).
+                  e.stopPropagation();
+                  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    if (switchable.length === 0) return;
+                    const step = e.key === 'ArrowDown' ? 1 : -1;
+                    clusterSwitchKeyNavRef.current = true;
+                    setClusterSwitchHighlight((highlight + step + switchable.length) % switchable.length);
+                  } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const cluster = switchable[highlight];
+                    if (cluster) pickCluster(cluster);
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    setShowClusterDropdown(null);
+                  }
+                };
                 return (
                 <div style={{
                   ...dropdownStyle,
@@ -3590,59 +3759,96 @@ Do you want to try connecting anyway?`)) {
                   minWidth: '220px',
                   maxWidth: '280px',
                   maxHeight: '320px',
-                  overflowY: 'auto',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  overflow: 'hidden',
                   zIndex: 1000,
                   animation: 'slideIn 0.15s ease-out',
                 }}>
-                  <div style={{
-                    padding: '8px 12px',
-                    fontSize: '11px',
-                    fontWeight: 600,
-                    color: 'var(--text-secondary)',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.5px',
-                    borderBottom: '1px solid var(--border-color)',
-                  }}>
-                    Switch Cluster
-                  </div>
-                  {config.clusters.filter(c => c.baseUrl && c.apiToken).map((cluster) => {
-                    const isActive = cluster.name === config.activeCluster;
-                    return (
-                      <div
-                        key={cluster.name}
-                        onClick={() => {
-                          if (!isActive) {
-                            setShowClusterDropdown(null);
-                            activateCluster(cluster.name);
-                          } else {
-                            setShowClusterDropdown(null);
-                          }
-                        }}
-                        style={{
-                          padding: '8px 12px',
-                          fontSize: '13px',
-                          cursor: isActive ? 'default' : 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '8px',
-                          color: isActive ? 'var(--color-accent, var(--accent-color))' : 'var(--text-primary)',
-                          fontWeight: isActive ? 500 : 400,
-                          transition: 'background 0.1s',
-                          whiteSpace: 'nowrap',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                        }}
-                        onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = 'var(--bg-hover)'; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                      >
-                        <Check size={14} style={{ flexShrink: 0, visibility: isActive ? 'visible' : 'hidden' }} />
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, minWidth: 0 }}>{cluster.name}</span>
-                        {cluster.environment && (
-                          <span className={`env-pill env-${cluster.environment}`}>{cluster.environment}</span>
-                        )}
+                  {/* Header + filter stay put; only the list below scrolls. */}
+                  <div style={{ flexShrink: 0, background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border-color)' }}>
+                    <div style={{
+                      padding: '8px 12px 6px',
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      color: 'var(--text-secondary)',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.5px',
+                    }}>
+                      Switch Cluster
+                    </div>
+                    <div style={{ padding: '0 8px 8px' }}>
+                      <div className="cluster-search-input-wrap">
+                        <Search size={12} className="cluster-search-icon" />
+                        <input
+                          autoFocus
+                          type="text"
+                          autoComplete="off"
+                          autoCorrect="off"
+                          autoCapitalize="off"
+                          spellCheck={false}
+                          className="cluster-search-input"
+                          placeholder="Filter clusters…"
+                          aria-label="Filter clusters"
+                          value={clusterSwitchQuery}
+                          onChange={(e) => {
+                            setClusterSwitchQuery(e.target.value);
+                            // A cleared filter goes back to the active cluster,
+                            // same as when the popover opens.
+                            const activeIdx = e.target.value.trim()
+                              ? -1
+                              : config.clusters
+                                .filter(c => c.baseUrl && c.apiToken)
+                                .findIndex(c => c.name === config.activeCluster);
+                            setClusterSwitchHighlight(Math.max(activeIdx, 0));
+                          }}
+                          onKeyDown={handleFilterKeyDown}
+                        />
                       </div>
-                    );
-                  })}
+                    </div>
+                  </div>
+                  <div ref={clusterSwitchListRef} role="listbox" aria-label="Clusters" style={{ overflowY: 'auto', flex: '1 1 auto', minHeight: 0 }}>
+                    {switchable.length === 0 && (
+                      <div style={{ padding: '10px 12px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                        No clusters match
+                      </div>
+                    )}
+                    {switchable.map((cluster, idx) => {
+                      const isActive = cluster.name === config.activeCluster;
+                      const isHighlighted = idx === highlight;
+                      return (
+                        <div
+                          key={cluster.name}
+                          role="option"
+                          aria-selected={isHighlighted}
+                          data-cluster-index={idx}
+                          onClick={() => pickCluster(cluster)}
+                          onMouseEnter={() => setClusterSwitchHighlight(idx)}
+                          style={{
+                            padding: '8px 12px',
+                            fontSize: '13px',
+                            cursor: isActive ? 'default' : 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            color: isActive ? 'var(--color-accent, var(--accent-color))' : 'var(--text-primary)',
+                            fontWeight: isActive ? 500 : 400,
+                            background: isHighlighted ? 'var(--bg-hover)' : 'transparent',
+                            transition: 'background 0.1s',
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}
+                        >
+                          <Check size={14} style={{ flexShrink: 0, visibility: isActive ? 'visible' : 'hidden' }} />
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, minWidth: 0 }}>{cluster.name}</span>
+                          {cluster.environment && (
+                            <span className={`env-pill env-${cluster.environment}`}>{cluster.environment}</span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               );})()}
             </div>
@@ -4888,7 +5094,12 @@ Do you want to try connecting anyway?`)) {
                             {/* External Policy Control */}
                             <Tooltip text="Allow EdgeView to route traffic to external IPs beyond the device's local network." helpUrl="https://lf-edge.atlassian.net/wiki/spaces/EVE/pages/14584954/EdgeView+Commands#Access-TCP-Services-of-External-Hosts" simple>
                             <div
-                              className={`config-chip ${sshStatus.externalPolicy ? 'enabled' : 'disabled'}`}
+                              // Remount on each denial so the finite pulse replays.
+                              key={`ext-policy-chip-${extPolicyAttention}`}
+                              ref={extPolicyChipRef}
+                              // The externalPolicy check keeps the ring off an "Enabled" chip in
+                              // the render before the effect resets extPolicyAttention.
+                              className={`config-chip ${sshStatus.externalPolicy ? 'enabled' : 'disabled'}${extPolicyAttention && !sshStatus.externalPolicy ? ' needs-attention' : ''}`}
                               onClick={handleEnableExternalPolicy}
                               title={!isDeviceOnline
                                 ? (sshStatus.externalPolicy ? "External Policy Enabled - Click to Disable (applies when device reconnects)" : "External Policy Disabled - Click to Enable (applies when device reconnects)")
@@ -5760,7 +5971,7 @@ Do you want to try connecting anyway?`)) {
                                                 setExpandedServiceId(null);
                                               } catch (err) {
                                                 console.error(err);
-                                                handleTunnelError(err);
+                                                handleTunnelError(err, selectedNode.id);
                                                 if (!isCancelError(err)) {
                                                   addLog(`Failed to start VNC tunnel: ${err.message}`, 'error');
                                                 }
@@ -5807,7 +6018,7 @@ Do you want to try connecting anyway?`)) {
                                                 setExpandedServiceId(null);
                                               } catch (err) {
                                                 console.error(err);
-                                                handleTunnelError(err);
+                                                handleTunnelError(err, selectedNode.id);
                                                 if (!isCancelError(err)) {
                                                   addLog(`Failed to start VNC tunnel: ${err.message}`, 'error');
                                                 }

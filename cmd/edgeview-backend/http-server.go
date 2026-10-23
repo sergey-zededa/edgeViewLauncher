@@ -602,6 +602,19 @@ func (s *HTTPServer) sendError(w http.ResponseWriter, err error) {
 		return
 	}
 
+	// The device refused a tunnel to a non-internal IP because its External
+	// Connection Policy is off. A stable code lets the frontend offer a
+	// one-click "Enable Ext. Policy" fix instead of matching the message text.
+	if errors.Is(err, session.ErrExternalPolicyDenied) {
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(APIResponse{
+			Success: false,
+			Code:    "EXT_POLICY_DENIED",
+			Error:   session.ErrExternalPolicyDenied.Error(),
+		})
+		return
+	}
+
 	w.WriteHeader(http.StatusInternalServerError)
 	json.NewEncoder(w).Encode(APIResponse{
 		Success: false,

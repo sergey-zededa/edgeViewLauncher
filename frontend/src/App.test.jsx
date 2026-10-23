@@ -22,6 +22,9 @@ vi.mock('./components/GlobalStatusBanner', () => ({
   default: ({ status }) => status ? (
     <div data-testid="global-status-banner-mock" data-type={status.type}>
       {status.title && <strong>{status.title}</strong>}{status.title && ' '}{status.message}
+      {status.action && status.action.onClick && (
+        <button onClick={() => status.action.onClick()}>{status.action.label}</button>
+      )}
     </div>
   ) : null,
 }));
@@ -989,6 +992,37 @@ describe('Search with local cache filtering', () => {
     expect(screen.queryByText('UNRELATED123')).not.toBeInTheDocument();
   });
 
+  it('switching cluster clears the search so the new cluster is not filtered by the old query', async () => {
+    const twoClusters = {
+      ...config,
+      clusters: [
+        { name: 'Prod', baseUrl: 'https://cluster.example', apiToken: validToken },
+        { name: 'Staging', baseUrl: 'https://staging.example', apiToken: validToken },
+      ],
+    };
+    electronAPI.GetSettings.mockResolvedValue(twoClusters);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(twoClusters);
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([
+      { id: 'n1', name: 'Prod-Device', status: 'online', project: 'p1' },
+    ]));
+
+    render(<App />);
+    await screen.findByText('Prod-Device');
+
+    const searchInput = screen.getByPlaceholderText('Search nodes, projects...');
+    fireEvent.change(searchInput, { target: { value: 'Prod-Dev' } });
+    expect(searchInput).toHaveValue('Prod-Dev');
+
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([
+      { id: 'n2', name: 'Staging-Device', status: 'online', project: 'p2' },
+    ]));
+    fireEvent.click(screen.getByTitle('Switch Cluster'));
+    fireEvent.click(await screen.findByText('Staging'));
+
+    expect(await screen.findByText('Staging-Device')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Search nodes, projects...')).toHaveValue('');
+  });
+
   it('shows all devices when search is empty', async () => {
     const devices = [
       { id: 'n1', name: 'Device-A', status: 'online', project: 'p1' },
@@ -1180,6 +1214,180 @@ describe('Search with local cache filtering', () => {
     await waitFor(() => {
       expect(electronAPI.RefreshDeviceCache).toHaveBeenCalled();
     });
+  });
+});
+
+describe('Switch Cluster dropdown filter', () => {
+  const validKey = 'A'.repeat(171);
+  const validToken = `ENT1234:${validKey}`;
+  const mkCluster = (name, environment) => ({
+    name,
+    baseUrl: `https://${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.example`,
+    apiToken: validToken,
+    environment,
+  });
+  const config = {
+    baseUrl: 'https://production-zededa-demo.example',
+    apiToken: validToken,
+    clusters: [
+      mkCluster('Production - zededa-demo', 'prod'),
+      mkCluster('Maersk FbM - Prod', 'prod'),
+      mkCluster('Maersk FbM - Staging', 'staging'),
+      mkCluster('Sandbox', 'demo'),
+    ],
+    activeCluster: 'Production - zededa-demo',
+    recentDevices: [],
+  };
+  const devices = [
+    { id: 'n1', name: 'Device-A', status: 'online', project: 'p1' },
+    { id: 'n2', name: 'Device-B', status: 'online', project: 'p1' },
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    electronAPI.GetSettings.mockResolvedValue(config);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(config);
+    electronAPI.GetProjects.mockResolvedValue([]);
+    electronAPI.GetEnterprise.mockResolvedValue({ name: 'Test Enterprise' });
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache(devices));
+  });
+
+  const openDropdown = async () => {
+    render(<App />);
+    await screen.findByText('Device-A');
+    fireEvent.click(screen.getByTitle('Switch Cluster'));
+    const input = await screen.findByPlaceholderText('Filter clusters…');
+    return { input, list: screen.getByRole('listbox', { name: 'Clusters' }) };
+  };
+  const optionNames = (list) => within(list).queryAllByRole('option').map(o => o.textContent);
+
+  it('autofocuses the filter and narrows clusters by name and environment', async () => {
+    const { input, list } = await openDropdown();
+    expect(input).toHaveFocus();
+    expect(within(list).getAllByRole('option')).toHaveLength(4);
+
+    fireEvent.change(input, { target: { value: 'maersk' } });
+    expect(optionNames(list)).toEqual(['Maersk FbM - Prodprod', 'Maersk FbM - Stagingstaging']);
+
+    // Environment match ("staging" pill) — case-insensitive.
+    fireEvent.change(input, { target: { value: 'STAG' } });
+    expect(optionNames(list)).toEqual(['Maersk FbM - Stagingstaging']);
+
+    fireEvent.change(input, { target: { value: 'demo' } });
+    // "Production - zededa-demo" by name, "Sandbox" by its demo environment.
+    expect(optionNames(list)).toEqual(['Production - zededa-demoprod', 'Sandboxdemo']);
+
+    fireEvent.change(input, { target: { value: 'nothing-like-this' } });
+    expect(within(list).queryAllByRole('option')).toHaveLength(0);
+    expect(within(list).getByText('No clusters match')).toBeInTheDocument();
+  });
+
+  it('ArrowDown + Enter activates the highlighted cluster', async () => {
+    const { input, list } = await openDropdown();
+    fireEvent.change(input, { target: { value: 'maersk' } });
+    const options = within(list).getAllByRole('option');
+    expect(options[0]).toHaveAttribute('aria-selected', 'true');
+
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    expect(within(list).getAllByRole('option')[1]).toHaveAttribute('aria-selected', 'true');
+    // Wraps around past the end.
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    expect(within(list).getAllByRole('option')[0]).toHaveAttribute('aria-selected', 'true');
+    fireEvent.keyDown(input, { key: 'ArrowUp' });
+    expect(within(list).getAllByRole('option')[1]).toHaveAttribute('aria-selected', 'true');
+
+    const injectCallsBefore = electronAPI.InjectSecureConfig.mock.calls.length;
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => expect(electronAPI.SecureStorageSaveSettings).toHaveBeenCalledTimes(1));
+    expect(electronAPI.SecureStorageSaveSettings.mock.calls[0][0].activeCluster).toBe('Maersk FbM - Staging');
+    await waitFor(() => expect(electronAPI.InjectSecureConfig.mock.calls.length).toBeGreaterThan(injectCallsBefore));
+    expect(screen.queryByPlaceholderText('Filter clusters…')).not.toBeInTheDocument();
+  });
+
+  it('Enter with a single match activates it without arrowing', async () => {
+    const { input } = await openDropdown();
+    fireEvent.change(input, { target: { value: 'sandbox' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(electronAPI.SecureStorageSaveSettings).toHaveBeenCalledTimes(1));
+    expect(electronAPI.SecureStorageSaveSettings.mock.calls[0][0].activeCluster).toBe('Sandbox');
+  });
+
+  it('Enter on the already-active cluster just closes', async () => {
+    const { input } = await openDropdown();
+    // InjectSecureConfig also runs at startup; only calls after Enter count.
+    const injectCallsBefore = electronAPI.InjectSecureConfig.mock.calls.length;
+    fireEvent.change(input, { target: { value: 'zededa-demo' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(screen.queryByPlaceholderText('Filter clusters…')).not.toBeInTheDocument());
+    expect(electronAPI.SecureStorageSaveSettings).not.toHaveBeenCalled();
+    expect(electronAPI.InjectSecureConfig).toHaveBeenCalledTimes(injectCallsBefore);
+  });
+
+  it('opens with the active cluster highlighted, so an immediate Enter does not switch', async () => {
+    const midActive = { ...config, activeCluster: 'Maersk FbM - Staging' };
+    electronAPI.GetSettings.mockResolvedValue(midActive);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(midActive);
+    const { input, list } = await openDropdown();
+    expect(within(list).getAllByRole('option')[2]).toHaveAttribute('aria-selected', 'true');
+
+    // Typing then clearing the filter returns the highlight to the active cluster.
+    fireEvent.change(input, { target: { value: 'sand' } });
+    fireEvent.change(input, { target: { value: '' } });
+    expect(within(list).getAllByRole('option')[2]).toHaveAttribute('aria-selected', 'true');
+
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(screen.queryByPlaceholderText('Filter clusters…')).not.toBeInTheDocument());
+    expect(electronAPI.SecureStorageSaveSettings).not.toHaveBeenCalled();
+  });
+
+  it('keys typed in the filter do not navigate or connect devices', async () => {
+    const { input } = await openDropdown();
+    const deviceSearch = screen.getByPlaceholderText('Search nodes, projects...');
+    const firstRow = screen.getByText('Device-A').closest('.result-item');
+    expect(firstRow).toHaveClass('selected');
+
+    fireEvent.change(input, { target: { value: 'no-such-cluster' } });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'ArrowUp' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    fireEvent.keyDown(input, { key: 'a' });
+
+    // Device list selection unchanged, nothing opened, device search untouched.
+    expect(screen.getByText('Device-A').closest('.result-item')).toHaveClass('selected');
+    expect(electronAPI.AddRecentDevice).not.toHaveBeenCalled();
+    expect(electronAPI.SecureStorageSaveSettings).not.toHaveBeenCalled();
+    expect(deviceSearch).toHaveValue('');
+    expect(screen.getByPlaceholderText('Filter clusters…')).toBeInTheDocument();
+
+    // Escape closes the popover.
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(screen.queryByPlaceholderText('Filter clusters…')).not.toBeInTheDocument();
+    expect(electronAPI.AddRecentDevice).not.toHaveBeenCalled();
+  });
+
+  it('resets the query and highlight after closing and reopening', async () => {
+    const { input } = await openDropdown();
+    fireEvent.change(input, { target: { value: 'maersk' } });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(screen.queryByPlaceholderText('Filter clusters…')).not.toBeInTheDocument();
+
+    // Reopen: filter empty, full list, first row highlighted.
+    fireEvent.click(screen.getByTitle('Switch Cluster'));
+    const reopened = await screen.findByPlaceholderText('Filter clusters…');
+    expect(reopened).toHaveValue('');
+    const options = within(screen.getByRole('listbox', { name: 'Clusters' })).getAllByRole('option');
+    expect(options).toHaveLength(4);
+    expect(options[0]).toHaveAttribute('aria-selected', 'true');
+
+    // Outside click also resets.
+    fireEvent.change(reopened, { target: { value: 'sand' } });
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByPlaceholderText('Filter clusters…')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTitle('Switch Cluster'));
+    expect(await screen.findByPlaceholderText('Filter clusters…')).toHaveValue('');
   });
 });
 
@@ -1907,6 +2115,173 @@ describe('EdgeView session controls', () => {
     fireEvent.click(await screen.findByText('Use External Terminal'));
 
     expect(await screen.findByText(/Connection failed:/)).toBeInTheDocument();
+  });
+});
+
+// A tunnel to a non-internal IP is refused by the device while its External
+// Connection Policy is off. The backend tags this "EXT_POLICY_DENIED"; the UI
+// must offer a one-click fix that always *enables* the policy and flag the
+// Ext. Policy chip until the policy is on.
+describe('External Connection Policy denial', () => {
+  const validKey = 'A'.repeat(171);
+  const validToken = `ENT1234:${validKey}`;
+  const configWithToken = {
+    baseUrl: 'https://cluster.example',
+    apiToken: validToken,
+    clusters: [{ name: 'Prod', baseUrl: 'https://cluster.example', apiToken: validToken }],
+    activeCluster: 'Prod',
+    recentDevices: [],
+  };
+  const node = { id: 'node-1', name: 'Policy-Dev', status: 'online', project: 'proj-1' };
+  const DENIED_MSG = "The target IP is not recognized as an internal EVE-OS address and the device's External Connection Policy is disabled. Enable it using the \"Enable Ext. Policy\" button in Device Configuration below, or in the device's EdgeView settings on ZEDEDA Cloud.";
+  const deniedError = (withCode = true) => {
+    const e = new Error(DENIED_MSG);
+    if (withCode) e.code = 'EXT_POLICY_DENIED';
+    return e;
+  };
+  const sshStatus = (externalPolicy) => ({
+    status: 'enabled',
+    expiry: Math.floor(Date.now() / 1000) + 3600,
+    externalPolicy,
+  });
+  const extPolicyChip = () => screen.getByText(/^(Enable Ext\. Policy|Ext\. Policy Enabled)$/, { selector: '.config-chip' });
+  const toast = () => screen.getByTestId('global-status-banner-mock');
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    electronAPI.GetSettings.mockReset();
+    electronAPI.SecureStorageGetSettings.mockReset();
+    electronAPI.GetSettings.mockResolvedValue(configWithToken);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(configWithToken);
+    electronAPI.GetDeviceCache.mockReset();
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([node]));
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([
+      { name: 'App 1', vncPort: 5900, ips: ['10.0.0.1'], pid: 1234, status: 'RUN_STATE_ONLINE' },
+    ]));
+    electronAPI.GetSessionStatus.mockResolvedValue({ active: true, expiresAt: new Date(Date.now() + 3600000).toISOString() });
+    electronAPI.GetSSHStatus.mockResolvedValue(sshStatus(false));
+  });
+
+  afterEach(() => {
+    electronAPI.StartTunnel.mockReset();
+    electronAPI.StartTunnel.mockResolvedValue({ port: 6000, tunnelId: 'tunnel-1' });
+    electronAPI.GetSSHStatus.mockReset();
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'disabled' });
+    electronAPI.GetSessionStatus.mockResolvedValue({ active: false });
+  });
+
+  const openDevice = async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByText('Policy-Dev'));
+    await screen.findByText('Running Applications');
+    await waitFor(() => expect(extPolicyChip()).toBeInTheDocument());
+  };
+
+  const startVncTunnel = async () => {
+    const appRow = screen.getByText('App 1').closest('.service-item');
+    fireEvent.click(within(appRow).getByRole('button', { name: /\bconnect\b/i }));
+    fireEvent.click((await screen.findByText('Launch VNC')).closest('.option-btn'));
+    fireEvent.click(await screen.findByText('Open in Built-in Viewer'));
+  };
+
+  it('shows an actionable toast that enables the policy with one click', async () => {
+    electronAPI.StartTunnel.mockRejectedValue(deniedError());
+    await openDevice();
+    await startVncTunnel();
+
+    const actionBtn = await screen.findByRole('button', { name: 'Enable Ext. Policy' });
+    expect(toast()).toHaveAttribute('data-type', 'error');
+    expect(toast()).toHaveTextContent('External Connection Policy is off');
+    expect(toast()).toHaveTextContent(/isn't on the device's local network/);
+
+    // Later status refreshes report the policy on.
+    electronAPI.GetSSHStatus.mockResolvedValue(sshStatus(true));
+    fireEvent.click(actionBtn);
+
+    await waitFor(() => expect(electronAPI.EnableExternalPolicy).toHaveBeenCalledWith('node-1', true));
+    expect(electronAPI.EnableExternalPolicy).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText(/retry the connection/)).toBeInTheDocument();
+  });
+
+  it('the toast action enables even when a toggle would disable (never sends false)', async () => {
+    // Policy reads as enabled when the tunnel starts, so a toggle captured in
+    // that render would send false.
+    electronAPI.GetSSHStatus.mockResolvedValue(sshStatus(true));
+    let rejectTunnel;
+    electronAPI.StartTunnel.mockImplementation(() => new Promise((_, reject) => { rejectTunnel = reject; }));
+    await openDevice();
+    await screen.findByText('Ext. Policy Enabled');
+    await startVncTunnel();
+    await waitFor(() => expect(rejectTunnel).toBeDefined());
+
+    // While the tunnel is in flight the controller now reports it off.
+    electronAPI.GetSSHStatus.mockResolvedValue(sshStatus(false));
+    fireEvent.click(screen.getByTitle('Refresh device status'));
+    await waitFor(() => expect(extPolicyChip()).toHaveTextContent('Enable Ext. Policy'));
+
+    await act(async () => { rejectTunnel(deniedError()); });
+    fireEvent.click(await screen.findByRole('button', { name: 'Enable Ext. Policy' }));
+
+    await waitFor(() => expect(electronAPI.EnableExternalPolicy).toHaveBeenCalled());
+    expect(electronAPI.EnableExternalPolicy).toHaveBeenCalledWith('node-1', true);
+    expect(electronAPI.EnableExternalPolicy).not.toHaveBeenCalledWith('node-1', false);
+  });
+
+  it('does not re-send when the controller already reports the policy enabled', async () => {
+    electronAPI.GetSSHStatus.mockResolvedValue(sshStatus(true));
+    electronAPI.StartTunnel.mockRejectedValue(deniedError());
+    await openDevice();
+    await screen.findByText('Ext. Policy Enabled');
+    await startVncTunnel();
+
+    // The chip already reads "enabled" — it is not flagged.
+    expect(extPolicyChip()).not.toHaveClass('needs-attention');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Enable Ext. Policy' }));
+
+    expect(await screen.findByText(/already enabled on ZEDEDA Cloud/)).toBeInTheDocument();
+    expect(toast()).toHaveAttribute('data-type', 'info');
+    expect(toast()).toHaveTextContent(/next config sync/);
+    expect(electronAPI.EnableExternalPolicy).not.toHaveBeenCalled();
+  });
+
+  it('flags the Ext. Policy chip on denial and clears it once the policy is enabled', async () => {
+    electronAPI.StartTunnel.mockRejectedValue(deniedError());
+    await openDevice();
+    expect(extPolicyChip()).not.toHaveClass('needs-attention');
+
+    await startVncTunnel();
+    await screen.findByRole('button', { name: 'Enable Ext. Policy' });
+    await waitFor(() => expect(extPolicyChip()).toHaveClass('needs-attention'));
+
+    // Status refresh reports the policy on (e.g. enabled on ZEDEDA Cloud).
+    electronAPI.GetSSHStatus.mockResolvedValue(sshStatus(true));
+    fireEvent.click(screen.getByTitle('Refresh device status'));
+
+    await waitFor(() => expect(extPolicyChip()).toHaveTextContent('Ext. Policy Enabled'));
+    expect(extPolicyChip()).not.toHaveClass('needs-attention');
+  });
+
+  it('clicking the flagged chip clears the attention state', async () => {
+    electronAPI.StartTunnel.mockRejectedValue(deniedError());
+    await openDevice();
+    await startVncTunnel();
+    await waitFor(() => expect(extPolicyChip()).toHaveClass('needs-attention'));
+
+    fireEvent.click(extPolicyChip());
+
+    await waitFor(() => expect(electronAPI.EnableExternalPolicy).toHaveBeenCalledWith('node-1', true));
+    expect(extPolicyChip()).not.toHaveClass('needs-attention');
+  });
+
+  it('falls back to the message text when the error has no code', async () => {
+    electronAPI.StartTunnel.mockRejectedValue(deniedError(false));
+    await openDevice();
+    await startVncTunnel();
+
+    expect(await screen.findByRole('button', { name: 'Enable Ext. Policy' })).toBeInTheDocument();
+    expect(toast()).toHaveTextContent('External Connection Policy is off');
+    await waitFor(() => expect(extPolicyChip()).toHaveClass('needs-attention'));
   });
 });
 
