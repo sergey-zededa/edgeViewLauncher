@@ -4895,7 +4895,9 @@ Do you want to try connecting anyway?`)) {
                               // Remount on each denial so the finite pulse replays.
                               key={`ext-policy-chip-${extPolicyAttention}`}
                               ref={extPolicyChipRef}
-                              className={`config-chip ${sshStatus.externalPolicy ? 'enabled' : 'disabled'}${extPolicyAttention ? ' needs-attention' : ''}`}
+                              // The externalPolicy check keeps the ring off an "Enabled" chip in
+                              // the render before the effect resets extPolicyAttention.
+                              className={`config-chip ${sshStatus.externalPolicy ? 'enabled' : 'disabled'}${extPolicyAttention && !sshStatus.externalPolicy ? ' needs-attention' : ''}`}
                               onClick={handleEnableExternalPolicy}
                               title={!isDeviceOnline
                                 ? (sshStatus.externalPolicy ? "External Policy Enabled - Click to Disable (applies when device reconnects)" : "External Policy Disabled - Click to Enable (applies when device reconnects)")
