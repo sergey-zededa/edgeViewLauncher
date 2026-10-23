@@ -78,6 +78,16 @@ export const GetSSHStatus = (nodeId) =>
 export const DisableSSH = (nodeId) =>
     apiCall('/api/disable-ssh', 'POST', { nodeId }).then(r => r?.data);
 
+// Remove one authorized SSH key from the device: pass { fingerprint } for a
+// valid key or { raw } (exact line text) for an unparseable line. Resolves to
+// { removed, remaining }; removed=false means it was already gone.
+export const RemoveSSHKey = (nodeId, { fingerprint, raw } = {}) =>
+    apiCall('/api/remove-ssh-key', 'POST', {
+        nodeId,
+        ...(fingerprint ? { fingerprint } : {}),
+        ...(raw ? { raw } : {}),
+    }).then(r => r?.data);
+
 export const ResetEdgeView = (nodeId) =>
     apiCall('/api/reset-edgeview', 'POST', { nodeId }).then(r => r?.data);
 

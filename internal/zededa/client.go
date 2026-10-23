@@ -1519,14 +1519,57 @@ func (c *Client) GetEdgeViewStatus(nodeID string) (*EdgeViewStatus, error) {
 // renaming the laptop the key was generated on won't strand our key on
 // the device.
 func (c *Client) DisableSSH(nodeID, ourKey string) error {
+	_, _, err := c.rewriteSSHKeys(nodeID, func(existing string) (string, bool) {
+		updated := RemoveKey(existing, ourKey)
+		return updated, updated != existing
+	})
+	return err
+}
+
+// RemoveSSHKey removes one entry from the device's debug.enable.ssh value:
+// every valid key with the given SHA256 fingerprint, or — when fingerprint
+// is empty — every line whose trimmed text equals raw (used for lines that
+// don't parse as a key). Exactly one of fingerprint/raw must be set.
+//
+// The device config is always re-read here, so the removal applies to the
+// controller's current value rather than whatever list the caller last saw.
+// removed=false means the entry was already gone (no PUT is sent); remaining
+// is the number of entries left afterwards. Removing the last entry drops
+// the config item, which disables SSH on the device.
+func (c *Client) RemoveSSHKey(nodeID, fingerprint, raw string) (removed bool, remaining int, err error) {
+	fingerprint = strings.TrimSpace(fingerprint)
+	raw = strings.TrimSpace(raw)
+	if (fingerprint == "") == (raw == "") {
+		return false, 0, ErrInvalidKeySelector
+	}
+	return c.rewriteSSHKeys(nodeID, func(existing string) (string, bool) {
+		if fingerprint != "" {
+			return RemoveKeyByFingerprint(existing, fingerprint)
+		}
+		return RemoveRawLine(existing, raw)
+	})
+}
+
+// ErrInvalidKeySelector is returned by RemoveSSHKey when the caller does not
+// name exactly one of fingerprint or raw.
+var ErrInvalidKeySelector = errors.New("exactly one of fingerprint or raw is required")
+
+// rewriteSSHKeys is the shared GET → mutate → PUT cycle for the device's
+// debug.enable.ssh config item. mutate receives the current value and
+// returns the new one plus whether it changed; when it reports no change,
+// or the item is absent, no PUT is sent. When the new value is empty the
+// config item is dropped entirely so EVE-OS treats SSH as disabled;
+// otherwise only its stringValue is rewritten. remaining is the number of
+// parsed entries left in the value.
+func (c *Client) rewriteSSHKeys(nodeID string, mutate func(existing string) (string, bool)) (changed bool, remaining int, err error) {
 	device, err := c.GetDevice(nodeID)
 	if err != nil {
-		return fmt.Errorf("failed to get device: %w", err)
+		return false, 0, fmt.Errorf("failed to get device: %w", err)
 	}
 
 	configItems, ok := device["configItem"].([]interface{})
 	if !ok {
-		return nil // Already disabled (no config items at all)
+		return false, 0, nil // Already disabled (no config items at all)
 	}
 
 	itemIdx := -1
@@ -1543,16 +1586,16 @@ func (c *Client) DisableSSH(nodeID, ourKey string) error {
 		}
 	}
 	if itemIdx < 0 {
-		return nil // No SSH config item — nothing to do
+		return false, 0, nil // No SSH config item — nothing to do
 	}
 
-	remaining := RemoveKey(existingValue, ourKey)
-	if remaining == existingValue {
-		// Our key wasn't there to begin with — no PUT needed.
-		return nil
+	updated, changed := mutate(existingValue)
+	if !changed {
+		// Nothing to remove — no PUT needed.
+		return false, len(ParseAuthorizedKeys(existingValue)), nil
 	}
 
-	if remaining == "" {
+	if updated == "" {
 		// No keys left — drop the configItem entirely so EVE-OS treats
 		// SSH as fully disabled.
 		newConfigItems := make([]interface{}, 0, len(configItems)-1)
@@ -1567,15 +1610,22 @@ func (c *Client) DisableSSH(nodeID, ourKey string) error {
 		// Other admins' keys remain — keep the configItem and just
 		// rewrite stringValue.
 		if cfg, ok := configItems[itemIdx].(map[string]interface{}); ok {
-			cfg["stringValue"] = remaining
+			cfg["stringValue"] = updated
 			configItems[itemIdx] = cfg
 		}
 		device["configItem"] = configItems
 	}
 
-	cleanBooleanConfigItems(configItems)
+	// Clean the slice actually being sent: when the SSH item was dropped,
+	// device["configItem"] is a new slice, not configItems.
+	if items, ok := device["configItem"].([]interface{}); ok {
+		cleanBooleanConfigItems(items)
+	}
 
-	return c.UpdateDevice(nodeID, device)
+	if err := c.UpdateDevice(nodeID, device); err != nil {
+		return false, 0, err
+	}
+	return true, len(ParseAuthorizedKeys(updated)), nil
 }
 
 // TokenInfo contains information about a session token

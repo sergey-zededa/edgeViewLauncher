@@ -250,6 +250,43 @@ func (s *HTTPServer) handleDisableSSH(w http.ResponseWriter, r *http.Request) {
 	s.sendSuccess(w, map[string]bool{"disabled": true})
 }
 
+// RemoveSSHKeyRequest names one authorized-key entry to remove: a valid key
+// by Fingerprint, or an unparseable line by its exact Raw text. Exactly one
+// must be set.
+type RemoveSSHKeyRequest struct {
+	NodeID      string `json:"nodeId"`
+	Fingerprint string `json:"fingerprint,omitempty"`
+	Raw         string `json:"raw,omitempty"`
+}
+
+func (s *HTTPServer) handleRemoveSSHKey(w http.ResponseWriter, r *http.Request) {
+	var req RemoveSSHKeyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, err)
+		return
+	}
+
+	hasFP := strings.TrimSpace(req.Fingerprint) != ""
+	hasRaw := strings.TrimSpace(req.Raw) != ""
+	if req.NodeID == "" || hasFP == hasRaw {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(APIResponse{
+			Success: false,
+			Error:   "nodeId and exactly one of fingerprint or raw are required",
+		})
+		return
+	}
+
+	result, err := s.app.RemoveSSHKey(req.NodeID, req.Fingerprint, req.Raw)
+	if err != nil {
+		s.sendError(w, err)
+		return
+	}
+
+	s.sendSuccess(w, result)
+}
+
 func (s *HTTPServer) handleSetVGAEnabled(w http.ResponseWriter, r *http.Request) {
 	var req SetVGAEnabledRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -641,6 +678,7 @@ func (s *HTTPServer) Start() {
 	router.HandleFunc("/api/setup-ssh", s.handleSetupSSH)
 	router.HandleFunc("/api/ssh-status", s.handleGetSSHStatus)
 	router.HandleFunc("/api/disable-ssh", s.handleDisableSSH)
+	router.HandleFunc("/api/remove-ssh-key", s.handleRemoveSSHKey)
 	router.HandleFunc("/api/reset-edgeview", s.handleResetEdgeView)
 	router.HandleFunc("/api/disconnect-edgeview", s.handleDisconnectEdgeView)
 	router.HandleFunc("/api/start-edgeview", s.handleStartEdgeView)

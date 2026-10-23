@@ -173,3 +173,95 @@ func TestContainsKey(t *testing.T) {
 		t.Errorf("expected ContainsKey=false for unrelated key")
 	}
 }
+
+// fingerprintOf returns the SHA256 fingerprint of a single key line,
+// failing the test if the fixture doesn't produce one.
+func fingerprintOf(t *testing.T, line string) string {
+	t.Helper()
+	got := ParseAuthorizedKeys(line)
+	if len(got) != 1 || got[0].Fingerprint == "" {
+		t.Fatalf("fixture %q has no fingerprint", line)
+	}
+	return got[0].Fingerprint
+}
+
+func TestRemoveKeyByFingerprint_KeepsOtherLinesVerbatim(t *testing.T) {
+	// The options-prefixed line must survive untouched.
+	value := strings.Join([]string{launcherKey, withOptionsKey, adminKey}, "\n")
+	out, changed := RemoveKeyByFingerprint(value, fingerprintOf(t, launcherKey))
+	if !changed {
+		t.Fatalf("expected a removal")
+	}
+	if want := withOptionsKey + "\n" + adminKey; out != want {
+		t.Fatalf("got %q want %q", out, want)
+	}
+}
+
+func TestRemoveKeyByFingerprint_RemovesAllLinesWithSameKey(t *testing.T) {
+	// Same blob, different comments: OpenSSH treats them as one key, so
+	// removing it by fingerprint removes both lines.
+	value := strings.Join([]string{launcherKey, otherEdKey, launcherSameBlob}, "\n")
+	out, changed := RemoveKeyByFingerprint(value, fingerprintOf(t, launcherKey))
+	if !changed || out != otherEdKey {
+		t.Fatalf("got (%q, %v) want (%q, true)", out, changed, otherEdKey)
+	}
+}
+
+func TestRemoveKeyByFingerprint_LastKeyReturnsEmpty(t *testing.T) {
+	out, changed := RemoveKeyByFingerprint(launcherKey+"\n", fingerprintOf(t, launcherKey))
+	if !changed || out != "" {
+		t.Fatalf("got (%q, %v) want (\"\", true)", out, changed)
+	}
+}
+
+func TestRemoveKeyByFingerprint_NotFoundIsUnchanged(t *testing.T) {
+	// With nothing to remove the value must come back byte-for-byte (comment
+	// line and CRLF included), not re-serialized.
+	value := "# keep me\r\n" + launcherKey + "\r\n" + invalidKey
+	for _, fp := range []string{"SHA256:notOnTheDevice", "", "   "} {
+		out, changed := RemoveKeyByFingerprint(value, fp)
+		if changed || out != value {
+			t.Fatalf("fp %q: got (%q, %v) want unchanged", fp, out, changed)
+		}
+	}
+	if out, changed := RemoveKeyByFingerprint("", fingerprintOf(t, launcherKey)); changed || out != "" {
+		t.Fatalf("empty value: got (%q, %v)", out, changed)
+	}
+}
+
+func TestRemoveRawLine_InvalidLine(t *testing.T) {
+	value := strings.Join([]string{launcherKey, "  " + invalidKey + "  ", adminKey}, "\n")
+	// The UI sends the trimmed text; surrounding whitespace in the stored
+	// line must not prevent the match.
+	out, changed := RemoveRawLine(value, invalidKey)
+	if !changed {
+		t.Fatalf("expected a removal")
+	}
+	if want := launcherKey + "\n" + adminKey; out != want {
+		t.Fatalf("got %q want %q", out, want)
+	}
+	// The only line left was the invalid one: result is "".
+	if out, changed := RemoveRawLine(invalidKey, " "+invalidKey); !changed || out != "" {
+		t.Fatalf("last line: got (%q, %v)", out, changed)
+	}
+}
+
+func TestRemoveRawLine_NotFoundOrEmpty(t *testing.T) {
+	value := launcherKey + "\n" + invalidKey
+	for _, raw := range []string{"something else", "", "  ", "this is not"} {
+		if out, changed := RemoveRawLine(value, raw); changed || out != value {
+			t.Fatalf("raw %q: got (%q, %v) want unchanged", raw, out, changed)
+		}
+	}
+}
+
+// Raw matching is purely textual. An exact copy of a valid key line removes
+// that one line only; it does not widen to other lines carrying the same key
+// under a different comment (removal by fingerprint does that).
+func TestRemoveRawLine_ValidLineIsExactTextOnly(t *testing.T) {
+	value := launcherKey + "\n" + launcherSameBlob
+	out, changed := RemoveRawLine(value, launcherKey)
+	if !changed || out != launcherSameBlob {
+		t.Fatalf("got (%q, %v) want (%q, true)", out, changed, launcherSameBlob)
+	}
+}

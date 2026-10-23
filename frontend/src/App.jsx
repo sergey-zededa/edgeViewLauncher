@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { ConnectToNode, CancelConnection, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, EnableExternalPolicy, ResetEdgeView, DisconnectEdgeView, StartEdgeViewSession, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, ProbeBaseUrl, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo, StartComposeDiagnostics, GetComposeDiagnosticsStatus, SaveComposeDiagnostics, CheckForUpdates, openTerminalWindow, openVncWindow, openExternalTerminal, getElectronAppInfo, startContainerShell, getSystemTimeFormat, openExternal, InjectSecureConfig, GetDeviceCache, RefreshDeviceCache, OnTunnelClosing, EmitTunnelsChanged } from './tauriAPI';
+import { ConnectToNode, CancelConnection, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, RemoveSSHKey, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, EnableExternalPolicy, ResetEdgeView, DisconnectEdgeView, StartEdgeViewSession, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, ProbeBaseUrl, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo, StartComposeDiagnostics, GetComposeDiagnosticsStatus, SaveComposeDiagnostics, CheckForUpdates, openTerminalWindow, openVncWindow, openExternalTerminal, getElectronAppInfo, startContainerShell, getSystemTimeFormat, openExternal, InjectSecureConfig, GetDeviceCache, RefreshDeviceCache, OnTunnelClosing, EmitTunnelsChanged } from './tauriAPI';
 import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, ChevronRight, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers, Shield, Moon, Sun, HelpCircle, Key, Plug, Unplug } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
 import Tooltip from './components/Tooltip';
@@ -2422,9 +2422,15 @@ Do you want to try connecting anyway?`)) {
     }
   };
 
-  const handleDisableSSH = async () => {
+  // confirmMessage lets the Authorized SSH Keys panel reuse this flow for the
+  // launcher's own key with its own wording; as an onClick handler it gets the
+  // click event, so anything that isn't a string falls back to the default.
+  const handleDisableSSH = async (confirmMessage) => {
     if (!selectedNode) return;
-    if (!confirm("Are you sure you want to disable SSH access? This will remove the public key from the device.")) return;
+    const message = typeof confirmMessage === 'string'
+      ? confirmMessage
+      : "Are you sure you want to disable SSH access? This will remove the public key from the device.";
+    if (!confirm(message)) return;
     setLoadingSSH(true);
     setGlobalStatus({ type: 'loading', message: "Disabling SSH access..." });
     addLog("Disabling SSH access...", 'info');
@@ -2443,6 +2449,80 @@ Do you want to try connecting anyway?`)) {
       } else {
         addLog("Failed to disable SSH: " + err, 'error');
         setGlobalStatus(null);
+      }
+    }
+  };
+
+  // Remove one entry from the device's authorized SSH keys (debug.enable.ssh).
+  // A cloud-config change: works while the device is offline and applies when
+  // it reconnects, so it is not gated on online/session state. Valid keys are
+  // named by fingerprint, unparseable lines by their exact text; the backend
+  // re-reads the device config rather than trusting this list.
+  const handleRemoveAuthorizedKey = async (key) => {
+    if (!selectedNode || !key) return;
+    const keys = sshStatus?.authorizedKeys || [];
+    const isLast = keys.length <= 1;
+    const lastWarning = isLast
+      ? "\n\nThis is the only authorized key, so SSH will be disabled on the device."
+      : '';
+
+    // The launcher's own key goes through the existing Disable SSH flow so the
+    // SSH status semantics stay identical to the SSH chip.
+    if (key.isLauncherKey) {
+      handleDisableSSH(
+        "This is this launcher's own SSH key. Removing it disables SSH access from this app " +
+        "(you can re-enable it with Enable SSH)." + lastWarning
+      );
+      return;
+    }
+
+    const truncate = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+    const label = key.fingerprint
+      ? `${key.type} ${key.fingerprint}${key.comment ? ` (${key.comment})` : ''}`
+      : `"${truncate(key.raw || '', 80)}"`;
+    const selector = key.fingerprint ? { fingerprint: key.fingerprint } : { raw: key.raw };
+    if (!selector.fingerprint && !selector.raw) {
+      addLog('Cannot remove this SSH key entry: it has no fingerprint or text to identify it.', 'error');
+      return;
+    }
+    const what = key.fingerprint ? 'key' : 'unparseable line';
+    if (!confirm(`Remove ${what} ${label} from the device?${lastWarning}`)) return;
+
+    const nodeId = selectedNode.id;
+    setLoadingSSH(true);
+    setGlobalStatus({ type: 'loading', message: 'Removing SSH key...' });
+    addLog(`Removing SSH ${what} ${label}...`, 'info');
+    try {
+      const result = await RemoveSSHKey(nodeId, selector);
+      setAuthError(false); // authenticated call succeeded → token is valid
+      const alreadyGone = result && result.removed === false;
+      if (alreadyGone) {
+        addLog(`SSH ${what} ${label} was already removed from the device`, 'info');
+      } else {
+        addLog(
+          result?.remaining === 0
+            ? `SSH ${what} ${label} removed — no keys remain, SSH is now disabled on the device`
+            : `SSH ${what} ${label} removed from the device`,
+          'success'
+        );
+      }
+      // Reload first: loadSSHStatus drives its own loading toast and clears
+      // it when done, which would otherwise swallow the result toast.
+      await loadSSHStatus(nodeId);
+      setGlobalStatus(alreadyGone
+        ? { type: 'info', message: 'That SSH key was already removed from the device.' }
+        : { type: 'success', message: 'SSH key removed from the device.' });
+      setTimeout(() => setGlobalStatus(null), 3000);
+    } catch (err) {
+      console.error(err);
+      setLoadingSSH(false);
+      if (isAuthError(err)) {
+        handleAuthError();
+      } else if (isPermissionError(err)) {
+        handlePermissionError(err, 'remove SSH key');
+      } else {
+        addLog(`Failed to remove SSH key: ${err?.message || err}`, 'error');
+        setGlobalStatus({ type: 'error', message: `Failed to remove SSH key: ${err?.message || err}` });
       }
     }
   };
@@ -4905,6 +4985,25 @@ Do you want to try connecting anyway?`)) {
                                         {k.comment && (
                                           <span style={{ color: 'var(--text-tertiary)' }}>{k.comment}</span>
                                         )}
+                                        {/* Cloud-config change: not gated on device
+                                            online/session — it applies on reconnect. */}
+                                        <button
+                                          type="button"
+                                          className="authorized-key-remove-btn"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleRemoveAuthorizedKey(k);
+                                          }}
+                                          disabled={loadingSSH}
+                                          aria-label={k.isLauncherKey
+                                            ? "Remove this launcher's key from the device (disables SSH for this app)"
+                                            : 'Remove this key from the device'}
+                                          title={k.isLauncherKey
+                                            ? "Remove this launcher's key from the device (disables SSH for this app)"
+                                            : 'Remove this key from the device'}
+                                        >
+                                          <Trash2 size={13} />
+                                        </button>
                                       </div>
                                       {k.fingerprint && (
                                         <div style={{
@@ -4912,6 +5011,18 @@ Do you want to try connecting anyway?`)) {
                                           color: 'var(--text-tertiary)', marginTop: '2px',
                                         }}>
                                           {k.fingerprint}
+                                        </div>
+                                      )}
+                                      {!k.fingerprint && k.raw && (
+                                        <div
+                                          title={k.raw}
+                                          style={{
+                                            fontFamily: 'Menlo, monospace', fontSize: '11px',
+                                            color: 'var(--text-tertiary)', marginTop: '2px',
+                                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                          }}
+                                        >
+                                          {k.raw}
                                         </div>
                                       )}
                                     </div>
