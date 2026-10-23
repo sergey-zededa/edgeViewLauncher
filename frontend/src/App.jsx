@@ -3129,6 +3129,10 @@ Do you want to try connecting anyway?`)) {
       setDeviceCache(null);
       setCacheLoaded(false);
       setLoading(true); // Show skeletons while new cluster cache loads
+      // The search text names devices/projects of the old cluster; carried over
+      // it would filter the new cluster's list down to nothing.
+      setQuery('');
+      setSelectedIndex(0);
 
       // 2. Save config to storage (but DON'T update React config yet —
       //    updating config.activeCluster triggers the polling effect, which
