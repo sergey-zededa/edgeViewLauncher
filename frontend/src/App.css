@@ -1890,6 +1890,37 @@ body {
     }
 }
 
+/* Ext. Policy config chip flagged after a tunnel was denied because the
+   device's External Connection Policy is off: pulse a few times, then keep a
+   static warning ring until the chip is clicked, the policy is enabled, or
+   another device is selected. box-shadow (not border/outline) because the
+   chip sets border inline and outlines don't follow its pill radius
+   everywhere. --color-warning is defined for both dark and light themes. */
+.config-chip.needs-attention {
+    box-shadow: 0 0 0 2px var(--color-warning);
+    animation: pulse-warning 1.2s ease-out 3;
+}
+
+@keyframes pulse-warning {
+    0% {
+        box-shadow: 0 0 0 2px var(--color-warning), 0 0 0 0 var(--color-warning);
+    }
+
+    70% {
+        box-shadow: 0 0 0 2px var(--color-warning), 0 0 0 10px transparent;
+    }
+
+    100% {
+        box-shadow: 0 0 0 2px var(--color-warning), 0 0 0 10px transparent;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .config-chip.needs-attention {
+        animation: none;
+    }
+}
+
 .stats-text {
     font-size: 11px;
     font-family: monospace;
