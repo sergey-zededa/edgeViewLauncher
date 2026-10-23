@@ -42,6 +42,12 @@ type fakeZededaClient struct {
 	startErr        error
 	startCalls      []string
 
+	// RemoveSSHKey: recorded calls and canned result.
+	removeKeyCalls     [][3]string
+	removeKeyRemoved   bool
+	removeKeyRemaining int
+	removeKeyErr       error
+
 	// Cloud API for apps/services
 	deviceApps    []zededa.AppInstance
 	deviceErr     error
@@ -108,6 +114,10 @@ func (f *fakeZededaClient) GetEdgeViewStatus(nodeID string) (*zededa.EdgeViewSta
 	return f.edgeStatus, nil
 }
 func (f *fakeZededaClient) DisableSSH(nodeID, ourKey string) error { return f.disableErr }
+func (f *fakeZededaClient) RemoveSSHKey(nodeID, fingerprint, raw string) (bool, int, error) {
+	f.removeKeyCalls = append(f.removeKeyCalls, [3]string{nodeID, fingerprint, raw})
+	return f.removeKeyRemoved, f.removeKeyRemaining, f.removeKeyErr
+}
 func (f *fakeZededaClient) StopEdgeView(nodeID string) error {
 	return f.stopErr
 }
@@ -1167,6 +1177,48 @@ func TestDisableSSH_PropagatesError(t *testing.T) {
 
 	if err := a.DisableSSH("node1"); err == nil || !strings.Contains(err.Error(), "failed to disable ssh") {
 		t.Fatalf("expected wrapped disable error, got: %v", err)
+	}
+}
+
+// TestRemoveSSHKey passes the selector through and reports the outcome;
+// client errors are wrapped without hiding auth sentinels.
+func TestRemoveSSHKey(t *testing.T) {
+	fakeClient := &fakeZededaClient{removeKeyRemoved: true, removeKeyRemaining: 2}
+	a := newTestApp(fakeClient, nil)
+
+	res, err := a.RemoveSSHKey("node1", "SHA256:abc", "")
+	if err != nil || res == nil || !res.Removed || res.Remaining != 2 {
+		t.Fatalf("got (%+v, %v)", res, err)
+	}
+	if want := [3]string{"node1", "SHA256:abc", ""}; len(fakeClient.removeKeyCalls) != 1 || fakeClient.removeKeyCalls[0] != want {
+		t.Fatalf("unexpected client calls: %v", fakeClient.removeKeyCalls)
+	}
+
+	fakeClient.removeKeyErr = fmt.Errorf("put: %w", zededa.ErrForbidden)
+	if _, err := a.RemoveSSHKey("node1", "", "junk line"); !errors.Is(err, zededa.ErrForbidden) {
+		t.Fatalf("expected ErrForbidden to propagate, got %v", err)
+	}
+}
+
+// TestGetSSHStatus_RawOnlyForUnfingerprintedLines checks that the audit list
+// carries a line's text only when it has no fingerprint to be removed by.
+func TestGetSSHStatus_RawOnlyForUnfingerprintedLines(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	validKey := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGfhdd+6fcQQbTwPQP9FbLf7r3bzxl/T7axQjIKLgPoy ops@host"
+	fakeClient := &fakeZededaClient{
+		edgeStatus: &zededa.EdgeViewStatus{SSHKey: validKey + "\n   not a key at all  "},
+	}
+	a := newTestApp(fakeClient, &fakeSessionManager{})
+
+	keys := a.GetSSHStatus("node1").AuthorizedKeys
+	if len(keys) != 2 {
+		t.Fatalf("expected 2 entries, got %+v", keys)
+	}
+	if keys[0].Fingerprint == "" || keys[0].Raw != "" {
+		t.Fatalf("valid key should carry a fingerprint and no raw: %+v", keys[0])
+	}
+	if keys[1].Valid || keys[1].Raw != "not a key at all" {
+		t.Fatalf("invalid line should carry its trimmed text: %+v", keys[1])
 	}
 }
 

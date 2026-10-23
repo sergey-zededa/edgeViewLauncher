@@ -263,3 +263,190 @@ func TestEdgeViewControlRequests(t *testing.T) {
 		})
 	}
 }
+
+// fakeDeviceServer serves GET /api/v1/devices/id/dev-1 with a device whose
+// debug.enable.ssh value is sshValue (plus an unrelated config item), and
+// records the device body of any PUT. puts counts PUT requests.
+func fakeDeviceServer(t *testing.T, sshValue string) (srv *httptest.Server, put *map[string]interface{}, puts *int) {
+	t.Helper()
+	var gotPut map[string]interface{}
+	var nPuts int
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/devices/id/dev-1" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"id": "dev-1",
+				"configItem": []interface{}{
+					map[string]interface{}{"key": "timer.config.interval", "uint32Value": 60},
+					map[string]interface{}{"key": "debug.enable.ssh", "stringValue": sshValue},
+				},
+			})
+		case http.MethodPut:
+			nPuts++
+			if err := json.NewDecoder(r.Body).Decode(&gotPut); err != nil {
+				t.Errorf("decode PUT body: %v", err)
+			}
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &gotPut, &nPuts
+}
+
+// sshItem returns the debug.enable.ssh config item from a PUT device body,
+// or nil when it was dropped.
+func sshItem(t *testing.T, device map[string]interface{}) map[string]interface{} {
+	t.Helper()
+	items, ok := device["configItem"].([]interface{})
+	if !ok {
+		t.Fatalf("PUT body has no configItem list: %v", device)
+	}
+	if len(items) == 0 {
+		t.Fatalf("PUT dropped unrelated config items: %v", items)
+	}
+	for _, it := range items {
+		if cfg, ok := it.(map[string]interface{}); ok && cfg["key"] == "debug.enable.ssh" {
+			return cfg
+		}
+	}
+	return nil
+}
+
+// Removing the last entry drops the debug.enable.ssh config item entirely,
+// which EVE-OS reads as SSH disabled; other config items are kept.
+func TestRemoveSSHKey_LastKeyDropsConfigItem(t *testing.T) {
+	srv, put, puts := fakeDeviceServer(t, launcherKey)
+	c := NewClient(srv.URL, "tok")
+
+	removed, remaining, err := c.RemoveSSHKey("dev-1", fingerprintOf(t, launcherKey), "")
+	if err != nil || !removed || remaining != 0 {
+		t.Fatalf("got (%v, %d, %v) want (true, 0, nil)", removed, remaining, err)
+	}
+	if *puts != 1 {
+		t.Fatalf("expected 1 PUT, got %d", *puts)
+	}
+	if item := sshItem(t, *put); item != nil {
+		t.Fatalf("expected debug.enable.ssh to be dropped, got %v", item)
+	}
+}
+
+// When the last key is removed the PUT carries a rebuilt configItem slice;
+// boolean items (VGA/USB/Console) in it must still be cleaned of the
+// extraneous fields older versions wrote.
+func TestRemoveSSHKey_LastKeyCleansBooleanItems(t *testing.T) {
+	var gotPut map[string]interface{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"id": "dev-1",
+				"configItem": []interface{}{
+					map[string]interface{}{"key": "debug.enable.vga", "stringValue": "true", "boolValue": true},
+					map[string]interface{}{"key": "debug.enable.ssh", "stringValue": launcherKey},
+				},
+			})
+		case http.MethodPut:
+			if err := json.NewDecoder(r.Body).Decode(&gotPut); err != nil {
+				t.Errorf("decode PUT body: %v", err)
+			}
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := NewClient(srv.URL, "tok")
+
+	if _, _, err := c.RemoveSSHKey("dev-1", fingerprintOf(t, launcherKey), ""); err != nil {
+		t.Fatalf("RemoveSSHKey: %v", err)
+	}
+	items, _ := gotPut["configItem"].([]interface{})
+	if len(items) != 1 {
+		t.Fatalf("expected only the VGA item to remain, got %v", items)
+	}
+	vga, _ := items[0].(map[string]interface{})
+	if _, extra := vga["boolValue"]; extra || vga["stringValue"] != "true" {
+		t.Fatalf("expected cleaned VGA item {key, stringValue:true}, got %v", vga)
+	}
+}
+
+// Removing one of several entries rewrites only the stringValue; an
+// unparseable line is removed by its text.
+func TestRemoveSSHKey_RewritesRemainingKeys(t *testing.T) {
+	srv, put, _ := fakeDeviceServer(t, launcherKey+"\n"+invalidKey+"\n"+adminKey)
+	c := NewClient(srv.URL, "tok")
+
+	removed, remaining, err := c.RemoveSSHKey("dev-1", "", invalidKey)
+	if err != nil || !removed || remaining != 2 {
+		t.Fatalf("got (%v, %d, %v) want (true, 2, nil)", removed, remaining, err)
+	}
+	item := sshItem(t, *put)
+	if item == nil || item["stringValue"] != launcherKey+"\n"+adminKey {
+		t.Fatalf("unexpected ssh item after removal: %v", item)
+	}
+}
+
+// An entry that is already gone (someone else removed it) is not an error and
+// sends no PUT.
+func TestRemoveSSHKey_AlreadyGone(t *testing.T) {
+	srv, _, puts := fakeDeviceServer(t, adminKey+"\n"+invalidKey)
+	c := NewClient(srv.URL, "tok")
+
+	removed, remaining, err := c.RemoveSSHKey("dev-1", fingerprintOf(t, launcherKey), "")
+	if err != nil || removed || remaining != 2 {
+		t.Fatalf("got (%v, %d, %v) want (false, 2, nil)", removed, remaining, err)
+	}
+	if *puts != 0 {
+		t.Fatalf("expected no PUT, got %d", *puts)
+	}
+}
+
+// Exactly one of fingerprint/raw must be given; anything else is rejected
+// before talking to the controller.
+func TestRemoveSSHKey_RequiresExactlyOneSelector(t *testing.T) {
+	c := NewClient("http://127.0.0.1:1", "tok")
+	for _, sel := range [][2]string{{"", ""}, {"  ", " "}, {"SHA256:x", "line"}} {
+		if _, _, err := c.RemoveSSHKey("dev-1", sel[0], sel[1]); !errors.Is(err, ErrInvalidKeySelector) {
+			t.Fatalf("selector %q: expected ErrInvalidKeySelector, got %v", sel, err)
+		}
+	}
+}
+
+// The shared GET/PUT helper must leave DisableSSH's behaviour unchanged:
+// only our key (by type+blob, any comment) goes; other lines stay.
+func TestDisableSSH_RemovesOnlyOurKey(t *testing.T) {
+	srv, put, _ := fakeDeviceServer(t, launcherSameBlob+"\n"+adminKey)
+	c := NewClient(srv.URL, "tok")
+
+	if err := c.DisableSSH("dev-1", launcherKey); err != nil {
+		t.Fatalf("DisableSSH: %v", err)
+	}
+	item := sshItem(t, *put)
+	if item == nil || item["stringValue"] != adminKey {
+		t.Fatalf("unexpected ssh item after DisableSSH: %v", item)
+	}
+}
+
+// A 403 on the PUT surfaces as ErrForbidden so the UI can show its
+// "Permission denied" toast.
+func TestRemoveSSHKey_ForbiddenOnUpdate(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"configItem": []interface{}{
+					map[string]interface{}{"key": "debug.enable.ssh", "stringValue": launcherKey},
+				},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"httpStatusMsg":"user x does not have permission PermissionDeviceUpdate "}`))
+	}))
+	defer srv.Close()
+
+	_, _, err := NewClient(srv.URL, "tok").RemoveSSHKey("dev-1", fingerprintOf(t, launcherKey), "")
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("expected ErrForbidden, got %v", err)
+	}
+}

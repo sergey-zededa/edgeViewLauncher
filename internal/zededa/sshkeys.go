@@ -208,3 +208,59 @@ func ContainsKey(value, target string) bool {
 	}
 	return false
 }
+
+// RemoveKeyByFingerprint returns a new authorized_keys string with every
+// valid line whose SHA256 fingerprint equals fp removed, plus whether
+// anything was removed. Lines sharing a blob (same key, different
+// comments) share a fingerprint and are all removed — matching OpenSSH,
+// which treats them as the same key. Other lines keep their original raw
+// text. Returns "" when no lines remain (caller can then drop the
+// configItem to fully disable SSH on the device). An empty fp never
+// matches, so a line whose blob failed to decode can't be hit by accident.
+func RemoveKeyByFingerprint(value, fp string) (string, bool) {
+	fp = strings.TrimSpace(fp)
+	if fp == "" {
+		return value, false
+	}
+	return removeLines(value, func(k AuthorizedKey) bool {
+		return k.Valid && k.Fingerprint != "" && k.Fingerprint == fp
+	})
+}
+
+// RemoveRawLine returns a new authorized_keys string with every line whose
+// trimmed text equals the trimmed raw removed, plus whether anything was
+// removed. It exists for lines the parser could not recognize (no
+// fingerprint to identify them by), but matching is purely textual and does
+// not care about validity: an exact copy of a valid key line removes that
+// line only — not other lines carrying the same key under a different
+// comment, which is what RemoveKeyByFingerprint is for.
+func RemoveRawLine(value, raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return value, false
+	}
+	return removeLines(value, func(k AuthorizedKey) bool {
+		return strings.TrimSpace(k.Raw) == raw
+	})
+}
+
+// removeLines drops every parsed entry for which match returns true and
+// re-joins the rest using their original raw text, mirroring RemoveKey.
+// When nothing matches, value is returned untouched (not re-serialized) so
+// callers can skip the PUT.
+func removeLines(value string, match func(AuthorizedKey) bool) (string, bool) {
+	existing := ParseAuthorizedKeys(value)
+	lines := make([]string, 0, len(existing))
+	removed := false
+	for _, k := range existing {
+		if match(k) {
+			removed = true
+			continue
+		}
+		lines = append(lines, strings.TrimRight(k.Raw, " \t"))
+	}
+	if !removed {
+		return value, false
+	}
+	return strings.Join(lines, "\n"), true
+}

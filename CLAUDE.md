@@ -105,6 +105,7 @@ Defined in `cmd/edgeview-backend/http-server.go`:
 - `POST /api/connect` — initialize EdgeView session, start SSH proxy
 - `POST /api/start-tunnel` — create TCP tunnel to device IP:port
 - `DELETE /api/tunnel/{id}` — close a tunnel
+- `POST /api/remove-ssh-key` — remove one authorized SSH key from the device (`{nodeId, fingerprint}` for a key, `{nodeId, raw}` for an unparseable line); cloud-config, works offline
 - `GET /api/ssh/term?port=<port>` — WebSocket endpoint for SSH terminal
 - `GET/POST /api/settings` — cluster configuration CRUD
 

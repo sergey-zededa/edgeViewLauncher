@@ -1350,6 +1350,33 @@ body {
     opacity: 1;
 }
 
+/* Per-row remove button in the device's Authorized SSH Keys panel. */
+.authorized-key-remove-btn {
+    margin-left: auto;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    opacity: 0.6;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 4px;
+    transition: opacity 0.15s, color 0.15s;
+}
+
+.authorized-key-remove-btn:hover:not(:disabled),
+.authorized-key-remove-btn:focus-visible {
+    opacity: 1;
+    color: var(--color-danger);
+}
+
+.authorized-key-remove-btn:disabled {
+    opacity: 0.3;
+    cursor: default;
+}
+
 .cluster-item .switch-cluster-btn {
     position: absolute;
     top: 8px;

@@ -345,3 +345,48 @@ func TestSendError_GenericUnchanged(t *testing.T) {
 		t.Fatalf("expected raw error message, got %q", resp.Error)
 	}
 }
+
+// TestHandleRemoveSSHKey checks the request contract: exactly one of
+// fingerprint/raw (else 400, with no controller call), and the
+// {removed, remaining} result on success.
+func TestHandleRemoveSSHKey(t *testing.T) {
+	srv := newTestServer(t)
+	fake := &fakeZededaClient{removeKeyRemoved: false, removeKeyRemaining: 3}
+	srv.app.zededaClient = fake
+
+	post := func(body string) (*httptest.ResponseRecorder, APIResponse) {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/remove-ssh-key", strings.NewReader(body))
+		srv.handleRemoveSSHKey(rr, req)
+		var resp APIResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal response %q: %v", rr.Body.String(), err)
+		}
+		return rr, resp
+	}
+
+	for _, body := range []string{
+		`{"nodeId":"n1"}`,
+		`{"nodeId":"n1","fingerprint":"SHA256:a","raw":"x"}`,
+		`{"fingerprint":"SHA256:a"}`,
+	} {
+		if rr, resp := post(body); rr.Code != http.StatusBadRequest || resp.Success {
+			t.Fatalf("%s: expected 400, got %d %+v", body, rr.Code, resp)
+		}
+	}
+	if len(fake.removeKeyCalls) != 0 {
+		t.Fatalf("invalid requests reached the client: %v", fake.removeKeyCalls)
+	}
+
+	rr, resp := post(`{"nodeId":"n1","raw":"junk"}`)
+	if rr.Code != http.StatusOK || !resp.Success {
+		t.Fatalf("expected success, got %d %+v", rr.Code, resp)
+	}
+	data, _ := resp.Data.(map[string]interface{})
+	if data["removed"] != false || data["remaining"] != float64(3) {
+		t.Fatalf("unexpected data: %v", resp.Data)
+	}
+	if want := [3]string{"n1", "", "junk"}; len(fake.removeKeyCalls) != 1 || fake.removeKeyCalls[0] != want {
+		t.Fatalf("unexpected client calls: %v", fake.removeKeyCalls)
+	}
+}

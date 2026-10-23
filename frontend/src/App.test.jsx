@@ -41,6 +41,7 @@ vi.mock('./tauriAPI', () => {
     SetupSSH: vi.fn(fn),
     GetSSHStatus: vi.fn().mockResolvedValue({ status: 'disabled' }),
     DisableSSH: vi.fn(fn),
+    RemoveSSHKey: vi.fn().mockResolvedValue({ removed: true, remaining: 1 }),
     SetVGAEnabled: vi.fn(fn),
     SetUSBEnabled: vi.fn(fn),
     SetConsoleEnabled: vi.fn(fn),
@@ -2281,6 +2282,149 @@ describe('External Connection Policy denial', () => {
     expect(await screen.findByRole('button', { name: 'Enable Ext. Policy' })).toBeInTheDocument();
     expect(toast()).toHaveTextContent('External Connection Policy is off');
     await waitFor(() => expect(extPolicyChip()).toHaveClass('needs-attention'));
+  });
+});
+
+// Per-row removal in the Authorized SSH Keys audit panel. Removing a key is a
+// cloud-config change (ZEDEDA PUT), so it must work on offline devices too.
+describe('Authorized SSH Keys removal', () => {
+  const validKey = 'A'.repeat(171);
+  const validToken = `ENT1234:${validKey}`;
+  const configWithToken = {
+    baseUrl: 'https://cluster.example',
+    apiToken: validToken,
+    clusters: [{ name: 'Prod', baseUrl: 'https://cluster.example', apiToken: validToken }],
+    activeCluster: 'Prod',
+    recentDevices: [],
+  };
+
+  const launcherKey = { type: 'ssh-ed25519', fingerprint: 'SHA256:launcher', comment: 'me@laptop', isLauncherKey: true, valid: true };
+  const adminKey = { type: 'ssh-rsa', fingerprint: 'SHA256:admin', comment: 'admin@ops', isLauncherKey: false, valid: true };
+  const junkLine = { type: '', fingerprint: '', comment: '', isLauncherKey: false, valid: false, raw: 'this is not a key' };
+  const REMOVE = 'Remove this key from the device';
+  const REMOVE_OURS = "Remove this launcher's key from the device (disables SSH for this app)";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    electronAPI.GetSettings.mockReset();
+    electronAPI.SecureStorageGetSettings.mockReset();
+    electronAPI.GetDeviceCache.mockReset();
+    electronAPI.RemoveSSHKey.mockReset();
+    electronAPI.RemoveSSHKey.mockResolvedValue({ removed: true, remaining: 2 });
+    Object.defineProperty(window, 'electronAPI', { value: undefined, writable: true });
+    electronAPI.GetSettings.mockResolvedValue(configWithToken);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(configWithToken);
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
+    electronAPI.GetSessionStatus.mockResolvedValue({ active: false });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // Opens the device and expands the keys panel.
+  const openKeysPanel = async (keys, { status = 'online' } = {}) => {
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([{ id: 'n1', name: 'Key-Dev', status, project: 'p1' }]));
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'enabled', authorizedKeys: keys });
+    render(<App />);
+    fireEvent.click(await screen.findByText('Key-Dev'));
+    fireEvent.click(await screen.findByText(`Authorized SSH Keys (${keys.length})`));
+  };
+
+  it('removes a key by fingerprint, reloads SSH status and keeps the panel open', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await openKeysPanel([launcherKey, adminKey, junkLine]);
+    const statusCalls = electronAPI.GetSSHStatus.mock.calls.length;
+
+    fireEvent.click(screen.getAllByRole('button', { name: REMOVE })[0]);
+
+    await waitFor(() => expect(electronAPI.RemoveSSHKey).toHaveBeenCalledWith('n1', { fingerprint: 'SHA256:admin' }));
+    expect(confirmSpy.mock.calls[0][0]).toContain('ssh-rsa SHA256:admin (admin@ops)');
+    expect(confirmSpy.mock.calls[0][0]).not.toMatch(/SSH will be disabled/);
+    await waitFor(() => expect(electronAPI.GetSSHStatus.mock.calls.length).toBeGreaterThan(statusCalls));
+    expect(electronAPI.DisableSSH).not.toHaveBeenCalled();
+    // Clicking the trash must not collapse the panel.
+    expect(screen.getByText('SHA256:admin')).toBeInTheDocument();
+  });
+
+  it('removes an unparseable line by its raw text', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await openKeysPanel([launcherKey, adminKey, junkLine]);
+
+    fireEvent.click(screen.getAllByRole('button', { name: REMOVE })[1]);
+
+    await waitFor(() => expect(electronAPI.RemoveSSHKey).toHaveBeenCalledWith('n1', { raw: 'this is not a key' }));
+  });
+
+  it("routes the launcher's own key through DisableSSH", async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await openKeysPanel([launcherKey, adminKey]);
+
+    fireEvent.click(screen.getByRole('button', { name: REMOVE_OURS }));
+
+    await waitFor(() => expect(electronAPI.DisableSSH).toHaveBeenCalledWith('n1'));
+    expect(confirmSpy.mock.calls[0][0]).toMatch(/launcher's own SSH key/);
+    expect(electronAPI.RemoveSSHKey).not.toHaveBeenCalled();
+  });
+
+  it('works on an offline device', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await openKeysPanel([launcherKey, adminKey], { status: 'offline' });
+
+    const btn = screen.getByRole('button', { name: REMOVE });
+    expect(btn).not.toBeDisabled();
+    fireEvent.click(btn);
+
+    await waitFor(() => expect(electronAPI.RemoveSSHKey).toHaveBeenCalledWith('n1', { fingerprint: 'SHA256:admin' }));
+  });
+
+  it('does nothing when the confirm is cancelled', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    await openKeysPanel([launcherKey, adminKey]);
+
+    fireEvent.click(screen.getByRole('button', { name: REMOVE }));
+    fireEvent.click(screen.getByRole('button', { name: REMOVE_OURS }));
+
+    expect(electronAPI.RemoveSSHKey).not.toHaveBeenCalled();
+    expect(electronAPI.DisableSSH).not.toHaveBeenCalled();
+  });
+
+  it('warns that SSH will be disabled when removing the last key', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    electronAPI.RemoveSSHKey.mockResolvedValue({ removed: true, remaining: 0 });
+    await openKeysPanel([adminKey]);
+
+    fireEvent.click(screen.getByRole('button', { name: REMOVE }));
+
+    await waitFor(() => expect(electronAPI.RemoveSSHKey).toHaveBeenCalled());
+    expect(confirmSpy.mock.calls[0][0]).toMatch(/SSH will be disabled on the device/);
+  });
+
+  it('reports an already-removed key as info, not an error', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    electronAPI.RemoveSSHKey.mockResolvedValue({ removed: false, remaining: 1 });
+    await openKeysPanel([launcherKey, adminKey]);
+
+    fireEvent.click(screen.getByRole('button', { name: REMOVE }));
+
+    const banner = await screen.findByText(/already removed from the device/, { selector: '[data-testid="global-status-banner-mock"]' });
+    expect(banner).toHaveAttribute('data-type', 'info');
+  });
+
+  it('shows a Permission denied toast on 403', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    electronAPI.RemoveSSHKey.mockRejectedValue(Object.assign(
+      new Error('Your ZEDEDA account does not have the PermissionDeviceUpdate permission needed for this action.'),
+      { code: 'FORBIDDEN', permission: 'PermissionDeviceUpdate' },
+    ));
+    await openKeysPanel([launcherKey, adminKey]);
+
+    fireEvent.click(screen.getByRole('button', { name: REMOVE }));
+
+    const banner = await screen.findByTestId('global-status-banner-mock');
+    await waitFor(() => expect(banner).toHaveTextContent(/Permission denied/));
+    expect(banner).toHaveTextContent(/remove SSH key/);
+    expect(banner).toHaveAttribute('data-type', 'error');
   });
 });
 

@@ -34,6 +34,7 @@ type zededaAPI interface {
 	AddSSHKeyToDevice(nodeID, pubKey string) error
 	GetEdgeViewStatus(nodeID string) (*zededa.EdgeViewStatus, error)
 	DisableSSH(nodeID, ourKey string) error
+	RemoveSSHKey(nodeID, fingerprint, raw string) (removed bool, remaining int, err error)
 	StopEdgeView(nodeID string) error
 	DisableEdgeView(nodeID string) error
 	StartEdgeView(nodeID string) error
@@ -1168,6 +1169,11 @@ type AuthorizedKeyInfo struct {
 	Comment       string `json:"comment"`
 	IsLauncherKey bool   `json:"isLauncherKey"`
 	Valid         bool   `json:"valid"`
+	// Raw is the trimmed line text, set only for entries without a
+	// fingerprint (lines that didn't parse as a key). It is how the UI names
+	// such a line when asking the backend to remove it; valid keys are
+	// removed by Fingerprint instead.
+	Raw string `json:"raw,omitempty"`
 }
 
 // GetSSHStatus returns the current SSH status of the node
@@ -1222,6 +1228,12 @@ func (a *App) GetSSHStatus(nodeID string) *SSHStatus {
 		}
 		if launcherID != "" && k.Valid && k.Identity() == launcherID {
 			info.IsLauncherKey = true
+		}
+		if !k.Valid || k.Fingerprint == "" {
+			// No fingerprint to identify the line by (unparseable, or a
+			// blob that isn't valid base64): expose its text so it can
+			// still be removed individually.
+			info.Raw = strings.TrimSpace(k.Raw)
 		}
 		authorizedKeys = append(authorizedKeys, info)
 	}
@@ -1347,6 +1359,28 @@ func (a *App) DisableSSH(nodeID string) error {
 		return fmt.Errorf("failed to disable ssh: %w", err)
 	}
 	return nil
+}
+
+// RemoveSSHKeyResult reports the outcome of removing one authorized key.
+// Removed=false means the entry was already gone from the device config
+// (e.g. another operator removed it first) — not an error.
+type RemoveSSHKeyResult struct {
+	Removed   bool `json:"removed"`
+	Remaining int  `json:"remaining"`
+}
+
+// RemoveSSHKey removes a single entry from the device's authorized keys:
+// a valid key by its SHA256 fingerprint, or an unparseable line by its exact
+// (trimmed) text. Exactly one of fingerprint/raw must be given. This is a
+// cloud-config change, so it works while the device is offline; the
+// controller's current value is re-read rather than trusting the caller's
+// list. Removing the last entry disables SSH on the device.
+func (a *App) RemoveSSHKey(nodeID, fingerprint, raw string) (*RemoveSSHKeyResult, error) {
+	removed, remaining, err := a.zededaClient.RemoveSSHKey(nodeID, fingerprint, raw)
+	if err != nil {
+		return nil, fmt.Errorf("failed to remove ssh key: %w", err)
+	}
+	return &RemoveSSHKeyResult{Removed: removed, Remaining: remaining}, nil
 }
 
 // ResetEdgeView recycles the EdgeView session to clear stuck connections
