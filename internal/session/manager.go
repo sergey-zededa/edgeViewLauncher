@@ -9,7 +9,6 @@ import (
 	"crypto/md5"
 	"crypto/sha256"
 	"crypto/tls"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -106,6 +105,11 @@ type Manager struct {
 	// roundBackoffOverride replaces the default exponential backoff between
 	// StartProxyMulti rounds (nil = default 1<<round seconds).
 	roundBackoffOverride func(round int) time.Duration
+	// hashForms remembers whether each token's device registered the full or
+	// truncated token hash with the dispatcher (see tokenhash.go).
+	hashForms hashFormCache
+	// probeClient sends dispatcher probes; nil uses defaultProbeClient.
+	probeClient *http.Client
 }
 
 func NewManager() *Manager {
@@ -1166,14 +1170,7 @@ func (m *Manager) ExecuteCommand(nodeID string, command string) (string, error) 
 		// fmt.Printf("DEBUG: ExecuteCommand (attempt %d/%d) using InstID %d (MaxInst: %d)\n", attempt+1, maxRetries, currentInstID, config.MaxInst)
 
 		// 1. Compute token hash for the current instance
-		tokenToHash := config.Token
-		if currentInstID > 0 {
-			tokenToHash = fmt.Sprintf("%s.%d", config.Token, currentInstID)
-		}
-		h := sha256.New()
-		h.Write([]byte(tokenToHash))
-		hash16 := h.Sum(nil)[:16]
-		tokenHash := base64.RawURLEncoding.EncodeToString(hash16)
+		tokenHash := m.sessionTokenHash(context.Background(), config, currentInstID)
 
 		// 2. Construct hostname (with instance if needed)
 		hostname, _ := os.Hostname()
@@ -1316,15 +1313,7 @@ func (m *Manager) QueryDevice(ctx context.Context, config *zededa.SessionConfig,
 	// Retry loop for Instance ID (in case of "can't have more than 2 peers" error)
 	for {
 		// 1. Compute Token Hash
-		tokenToHash := config.Token
-		if config.InstID > 0 {
-			tokenToHash = fmt.Sprintf("%s.%d", config.Token, config.InstID)
-		}
-
-		h := sha256.New()
-		h.Write([]byte(tokenToHash))
-		hash16 := h.Sum(nil)[:16]
-		tokenHash := base64.RawURLEncoding.EncodeToString(hash16)
+		tokenHash := m.sessionTokenHash(ctx, config, config.InstID)
 
 		// 2. Construct Hostname
 		hostname, _ := os.Hostname()
@@ -1630,15 +1619,7 @@ func unwrapMessage(data []byte, key string, encrypt bool) ([]byte, error) {
 // correlated to their target/instID.
 func (m *Manager) connectToEdgeView(config *zededa.SessionConfig, label string) (*websocket.Conn, string, error) {
 	// 1. Compute Token Hash
-	tokenToHash := config.Token
-	if config.InstID > 0 {
-		tokenToHash = fmt.Sprintf("%s.%d", config.Token, config.InstID)
-	}
-
-	h := sha256.New()
-	h.Write([]byte(tokenToHash))
-	hash16 := h.Sum(nil)[:16]
-	tokenHash := base64.RawURLEncoding.EncodeToString(hash16)
+	tokenHash := m.sessionTokenHash(context.Background(), config, config.InstID)
 
 	// Construct hostname
 	hostname, _ := os.Hostname()
