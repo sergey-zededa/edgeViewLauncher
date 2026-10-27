@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -65,6 +66,16 @@ type fakeZededaClient struct {
 	// discovery in ConnectToNode.
 	deviceStatus    *zededa.DeviceStatus
 	deviceStatusErr error
+
+	// Raw device status / app statuses behind GetDeviceInfo. Calls are
+	// recorded under infoMu because the two reads run concurrently.
+	infoMu         sync.Mutex
+	statusRaw      json.RawMessage
+	statusRawErr   error
+	statusRawCalls []string
+	appStatusItems []json.RawMessage
+	appStatusErr   error
+	appStatusCalls [][2]string
 }
 
 func (f *fakeZededaClient) GetEnterprise() (*zededa.Enterprise, error) {
@@ -170,6 +181,20 @@ func (f *fakeZededaClient) GetDeviceStatus(nodeID string) (*zededa.DeviceStatus,
 		return f.deviceStatus, nil
 	}
 	return nil, errors.New("not implemented")
+}
+
+func (f *fakeZededaClient) GetDeviceStatusRaw(nodeID string) (json.RawMessage, error) {
+	f.infoMu.Lock()
+	defer f.infoMu.Unlock()
+	f.statusRawCalls = append(f.statusRawCalls, nodeID)
+	return f.statusRaw, f.statusRawErr
+}
+
+func (f *fakeZededaClient) GetDeviceAppStatuses(deviceID, deviceName string) ([]json.RawMessage, error) {
+	f.infoMu.Lock()
+	defer f.infoMu.Unlock()
+	f.appStatusCalls = append(f.appStatusCalls, [2]string{deviceID, deviceName})
+	return f.appStatusItems, f.appStatusErr
 }
 
 func (f *fakeZededaClient) GetDevice(nodeID string) (map[string]interface{}, error) {

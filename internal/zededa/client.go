@@ -250,19 +250,8 @@ func (c *Client) SearchNodesWithTokenCtx(ctx context.Context, query string, limi
 	if limit > 0 {
 		q.Add("top", fmt.Sprintf("%d", limit))
 	}
-	if pageToken != "" {
-		// The next cursor from the API is a JSON object like
-		// {"pageToken":"200","orderBy":["name:ASC"],"pageNum":1,"pageSize":200,"totalPages":24}
-		// Extract the pageToken value and pass as next.pageToken query parameter.
-		var nextObj struct {
-			PageToken string `json:"pageToken"`
-		}
-		if json.Unmarshal([]byte(pageToken), &nextObj) == nil && nextObj.PageToken != "" {
-			q.Add("next.pageToken", nextObj.PageToken)
-		} else {
-			// Plain string token — pass as-is
-			q.Add("next.pageToken", pageToken)
-		}
+	if tok := pageTokenParam(pageToken); tok != "" {
+		q.Add("next.pageToken", tok)
 	}
 
 	// Add filtering parameters
@@ -316,87 +305,155 @@ func (c *Client) SearchNodesWithTokenCtx(ctx context.Context, query string, limi
 			EdgeView: true,
 		})
 	}
-	// Extract next-page cursor.  The API always returns a Cursor object
-	// (even on the last page), so we must inspect its fields to decide
-	// whether more pages remain.
-	nextToken := ""
-	if len(deviceResp.Next) > 0 && string(deviceResp.Next) != "null" {
-		// Try to parse as a cursor object with pagination metadata
-		var cursor struct {
-			PageToken  string `json:"pageToken"`
-			PageNum    int    `json:"pageNum"`
-			TotalPages int    `json:"totalPages"`
-		}
-		if json.Unmarshal(deviceResp.Next, &cursor) == nil {
-			// There are more pages only if pageNum < totalPages
-			if cursor.TotalPages > 0 && cursor.PageNum < cursor.TotalPages {
-				nextToken = string(deviceResp.Next)
-			}
-		} else {
-			// Fallback: treat as opaque string token
-			var s string
-			if json.Unmarshal(deviceResp.Next, &s) == nil && s != "" {
-				nextToken = s
-			} else {
-				nextToken = string(deviceResp.Next)
-			}
-		}
-	}
+	nextToken := nextCursorToken(deviceResp.Next)
 	return &SearchResult{Nodes: results, NextToken: nextToken}, nil
 }
 
-// GetDeviceAppInstances fetches the list of app instances for a specific device.
-// deviceName is the human-readable device name (e.g. "TO952963") used as the
-// server-side filter; deviceId is the UUID used as a fallback client-side filter.
-func (c *Client) GetDeviceAppInstances(deviceId, deviceName string) ([]AppInstance, error) {
+// pageTokenParam turns a cursor previously returned by nextCursorToken into the
+// value for the next.pageToken query parameter. The cursor from the API is a
+// JSON object like
+// {"pageToken":"200","orderBy":["name:ASC"],"pageNum":1,"pageSize":200,"totalPages":24};
+// only its pageToken is sent. A plain string token is passed as-is.
+func pageTokenParam(cursor string) string {
+	if cursor == "" {
+		return ""
+	}
+	var nextObj struct {
+		PageToken string `json:"pageToken"`
+	}
+	if json.Unmarshal([]byte(cursor), &nextObj) == nil && nextObj.PageToken != "" {
+		return nextObj.PageToken
+	}
+	return cursor
+}
+
+// nextCursorToken extracts the next-page cursor from a list response's "next"
+// field, or "" when there are no more pages. The API always returns a Cursor
+// object (even on the last page), so its fields must be inspected to decide
+// whether more pages remain.
+func nextCursorToken(next json.RawMessage) string {
+	if len(next) == 0 || string(next) == "null" {
+		return ""
+	}
+	// Try to parse as a cursor object with pagination metadata
+	var cursor struct {
+		PageToken  string `json:"pageToken"`
+		PageNum    int    `json:"pageNum"`
+		TotalPages int    `json:"totalPages"`
+	}
+	if json.Unmarshal(next, &cursor) == nil {
+		// There are more pages only if pageNum < totalPages
+		if cursor.TotalPages > 0 && cursor.PageNum < cursor.TotalPages {
+			return string(next)
+		}
+		return ""
+	}
+	// Fallback: treat as opaque string token
+	var s string
+	if json.Unmarshal(next, &s) == nil && s != "" {
+		return s
+	}
+	return string(next)
+}
+
+// maxAppStatusPages bounds the cursor walk in fetchAppStatusItems so a
+// misbehaving cursor can never loop forever.
+const maxAppStatusPages = 50
+
+// fetchAppStatusItems walks the cursor-paged app-instance status list for
+// deviceName and returns the raw items belonging to deviceID. deviceName is the
+// human-readable device name (e.g. "TO952963") used as the server-side filter
+// (the API ignores "deviceId"); deviceID is applied as a client-side guard in
+// case other devices matched the name pattern. Items stay raw so callers pick
+// the fields they need.
+func (c *Client) fetchAppStatusItems(deviceID, deviceName string) ([]json.RawMessage, error) {
 	if c.Token == "" {
 		return nil, fmt.Errorf("API token not configured")
 	}
 
 	baseURL := fmt.Sprintf("%s/api/v1/apps/instances/status", c.BaseURL)
 
-	req, err := http.NewRequest("GET", baseURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
-	req.Header.Set("Content-Type", "application/json")
-
-	q := req.URL.Query()
-	// The API ignores "deviceId" but supports "deviceName" for server-side filtering.
-	if deviceName != "" {
-		q.Set("deviceName", deviceName)
-	}
-	req.URL.RawQuery = q.Encode()
-
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		if err := authStatusError(resp); err != nil {
+	var items []json.RawMessage
+	cursor := ""
+	for page := 0; page < maxAppStatusPages; page++ {
+		req, err := http.NewRequest("GET", baseURL, nil)
+		if err != nil {
 			return nil, err
 		}
-		return nil, fmt.Errorf("API request failed with status: %d", resp.StatusCode)
-	}
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+		req.Header.Set("Content-Type", "application/json")
 
-	var appResp AppInstanceListResponse
-	if err := json.NewDecoder(resp.Body).Decode(&appResp); err != nil {
+		q := req.URL.Query()
+		if deviceName != "" {
+			q.Set("deviceName", deviceName)
+		}
+		if tok := pageTokenParam(cursor); tok != "" {
+			q.Set("next.pageToken", tok)
+		}
+		req.URL.RawQuery = q.Encode()
+
+		resp, err := c.HTTPClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		var pageResp struct {
+			List []json.RawMessage `json:"list"`
+			Next json.RawMessage   `json:"next"`
+		}
+		var pageErr error
+		if resp.StatusCode != 200 {
+			pageErr = authStatusError(resp)
+			if pageErr == nil {
+				pageErr = fmt.Errorf("API request failed with status: %d", resp.StatusCode)
+			}
+		} else {
+			pageErr = json.NewDecoder(resp.Body).Decode(&pageResp)
+		}
+		resp.Body.Close()
+		if pageErr != nil {
+			return nil, pageErr
+		}
+
+		for _, item := range pageResp.List {
+			if obj := parseJSONObj(item); obj != nil && obj.str("deviceId") != deviceID {
+				continue
+			}
+			items = append(items, item)
+		}
+
+		next := nextCursorToken(pageResp.Next)
+		if next == "" || next == cursor {
+			break
+		}
+		cursor = next
+	}
+	return items, nil
+}
+
+// GetDeviceAppInstances fetches the list of app instances for a specific device.
+// deviceName is the human-readable device name (e.g. "TO952963") used as the
+// server-side filter; deviceId is the UUID used as a fallback client-side filter.
+func (c *Client) GetDeviceAppInstances(deviceId, deviceName string) ([]AppInstance, error) {
+	items, err := c.fetchAppStatusItems(deviceId, deviceName)
+	if err != nil {
 		return nil, err
 	}
-
-	// Server-side filter by deviceName should be sufficient, but apply
-	// a client-side deviceId guard in case other devices matched the name pattern.
-	filteredApps := []AppInstance{}
-	for _, app := range appResp.List {
-		if app.DeviceID == deviceId {
-			filteredApps = append(filteredApps, app)
+	apps := make([]AppInstance, 0, len(items))
+	for _, item := range items {
+		var app AppInstance
+		if err := json.Unmarshal(item, &app); err != nil {
+			return nil, err
 		}
+		apps = append(apps, app)
 	}
+	return apps, nil
+}
 
-	return filteredApps, nil
+// GetDeviceAppStatuses returns the raw app-instance status items of a device,
+// including the per-app resource summaries (cpu / memorySummary) that
+// AppInstance does not decode. See BuildWorkloads.
+func (c *Client) GetDeviceAppStatuses(deviceID, deviceName string) ([]json.RawMessage, error) {
+	return c.fetchAppStatusItems(deviceID, deviceName)
 }
 
 // AppInstanceDetails contains detailed app instance information including network adapters
@@ -724,6 +781,44 @@ func (c *Client) GetDeviceStatus(nodeID string) (*DeviceStatus, error) {
 	}
 
 	return &status, nil
+}
+
+// GetDeviceStatusRaw fetches the same device status document as
+// GetDeviceStatus but returns it undecoded, for callers (BuildDeviceInfo) that
+// read many optional fields and must tolerate proto casing / unit quirks
+// without a decode failure taking the whole call down.
+func (c *Client) GetDeviceStatusRaw(nodeID string) (json.RawMessage, error) {
+	if c.Token == "" {
+		return nil, fmt.Errorf("API token not configured")
+	}
+
+	url := fmt.Sprintf("%s/api/v1/devices/id/%s/status", c.BaseURL, nodeID)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		if err := authStatusError(resp); err != nil {
+			return nil, err
+		}
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %v", err)
+	}
+	return json.RawMessage(body), nil
 }
 
 // EdgeView Request/Response structures

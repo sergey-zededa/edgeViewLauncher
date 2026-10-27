@@ -47,6 +47,8 @@ type zededaAPI interface {
 	GetNetworkInstanceDetails(niID string) (*zededa.NetworkInstanceStatus, error)
 	GetDevice(nodeID string) (map[string]interface{}, error)
 	GetDeviceStatus(nodeID string) (*zededa.DeviceStatus, error)
+	GetDeviceStatusRaw(nodeID string) (json.RawMessage, error)
+	GetDeviceAppStatuses(deviceID, deviceName string) ([]json.RawMessage, error)
 	VerifyToken(token string) (*zededa.TokenInfo, error)
 	UpdateEdgeViewExternalPolicy(nodeID string, enable bool) error
 }

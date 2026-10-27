@@ -4,6 +4,7 @@ import { ConnectToNode, CancelConnection, GetSettings, SaveSettings, GetDeviceSe
 import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, ChevronRight, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers, Shield, Moon, Sun, HelpCircle, Key, Plug, Unplug } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
 import Tooltip from './components/Tooltip';
+import DeviceInfoPanel from './components/DeviceInfoPanel';
 import About from './components/About';
 import UpdateBanner from './components/UpdateBanner';
 import GlobalStatusBanner from './components/GlobalStatusBanner';
@@ -4844,6 +4845,16 @@ Do you want to try connecting anyway?`)) {
                 Device is {formatStatus(selectedNode.status)} — live operations (SSH Terminal, VNC, TCP tunnels, Collect Info) are unavailable.
                 Configuration changes (SSH key, VGA, USB, Console, External Policy) can still be made and will be applied when the device reconnects.
               </div>
+            )}
+
+            {selectedNode && !authError && (
+              <DeviceInfoPanel
+                nodeId={selectedNode.id}
+                nodeName={selectedNode.name}
+                isOnline={isDeviceOnline}
+                timeFormatOptions={getTimeFormatOptions()}
+                onAuthError={() => setAuthError(true)}
+              />
             )}
 
             {
