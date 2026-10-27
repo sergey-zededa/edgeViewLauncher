@@ -154,6 +154,31 @@ func (m *Manager) probeSlot(ctx context.Context, wsURL, hash string) SlotState {
 	return SlotUnknown
 }
 
+// probeSlotAuto probes one instance slot and reports its state together with
+// the hash form that proved the device registered there. It tries the form
+// cached for this token; with no cached form it tries the full hash and then
+// the truncated one, and caches the form once a slot proves Free or Busy.
+//
+// full is true only when the full form was confirmed (Free or Busy). On
+// SlotUnknown the dispatcher can't tell us anything (no probe support, or the
+// probe failed), so no second form is tried; on SlotOffline both forms were
+// tried without a match — the device isn't connected on this slot.
+func (m *Manager) probeSlotAuto(ctx context.Context, config *zededa.SessionConfig, instID int) (state SlotState, full bool) {
+	if cachedFull, ok := m.hashForms.get(config.Token); ok {
+		return m.probeSlot(ctx, config.URL, tokenHash(config.Token, instID, cachedFull)), cachedFull
+	}
+	for _, full := range []bool{true, false} {
+		switch st := m.probeSlot(ctx, config.URL, tokenHash(config.Token, instID, full)); st {
+		case SlotFree, SlotBusy:
+			m.hashForms.put(config.Token, full)
+			return st, full
+		case SlotUnknown:
+			return SlotUnknown, false
+		}
+	}
+	return SlotOffline, false
+}
+
 // sessionTokenHash returns the X-Session-Token to dial instID with: the full
 // hash when the device registered that form, otherwise the truncated one,
 // which is also the fallback whenever the dispatcher can't tell us (device
@@ -163,15 +188,6 @@ func (m *Manager) sessionTokenHash(ctx context.Context, config *zededa.SessionCo
 	if full, ok := m.hashForms.get(config.Token); ok {
 		return tokenHash(config.Token, instID, full)
 	}
-	for _, full := range []bool{true, false} {
-		switch m.probeSlot(ctx, config.URL, tokenHash(config.Token, instID, full)) {
-		case SlotFree, SlotBusy:
-			m.hashForms.put(config.Token, full)
-			return tokenHash(config.Token, instID, full)
-		case SlotUnknown:
-			// No probe support: the short form can't be confirmed either.
-			return tokenHash(config.Token, instID, false)
-		}
-	}
-	return tokenHash(config.Token, instID, false)
+	_, full := m.probeSlotAuto(ctx, config, instID)
+	return tokenHash(config.Token, instID, full)
 }

@@ -142,7 +142,7 @@ func (m *Manager) runCollectInfo(ctx context.Context, job *CollectInfoJob, confi
 
 		// Connect
 		fmt.Printf("DEBUG: Connecting to EdgeView for collectinfo (InstID: %d)...\n", currentInstID)
-		wsConn, clientIP, err = m.connectToEdgeView(config, fmt.Sprintf("collectinfo/i%d", currentInstID))
+		wsConn, clientIP, err = m.connectToEdgeView(ctx, config, fmt.Sprintf("collectinfo/i%d", currentInstID))
 		if err != nil {
 			lastErr = fmt.Errorf("failed to connect: %w", err)
 
@@ -277,6 +277,10 @@ func (m *Manager) runCollectInfo(ctx context.Context, job *CollectInfoJob, confi
 				}
 				if err == ErrBusyInstance {
 					m.updateJobError(job, "Device busy (instance limit reached)")
+					return
+				}
+				if err == ErrE2EUnsupported {
+					m.updateJobError(job, err.Error())
 					return
 				}
 				// Log but continue?

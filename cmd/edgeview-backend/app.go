@@ -70,6 +70,9 @@ type sessionAPI interface {
 	ListTunnels(nodeID string) []*session.Tunnel
 	GetAllTunnels() []*session.Tunnel
 	InvalidateSession(nodeID string)
+	// ProbeSlots reports how many of a session's EdgeView instance slots are
+	// in use, via the dispatcher's probe (read-only; no websocket).
+	ProbeSlots(ctx context.Context, config *zededa.SessionConfig) *session.SlotSummary
 	StartCollectInfo(nodeID string) (string, error)
 	GetCollectInfoJob(jobID string) *session.CollectInfoJob
 	StartComposeDiagnostics(nodeID, appName, appIP, username, password string) (string, error)
@@ -785,8 +788,9 @@ func (a *App) StartTunnel(nodeID, targetIP string, targetPort int, protocol stri
 			return 0, "", err
 		}
 
-		// External policy denial — don't retry, return immediately with user-friendly message
-		if errors.Is(err, session.ErrExternalPolicyDenied) {
+		// External policy denial or an undecryptable E2E scheme — don't
+		// retry, return immediately with the user-friendly message
+		if errors.Is(err, session.ErrExternalPolicyDenied) || errors.Is(err, session.ErrE2EUnsupported) {
 			return 0, "", err
 		}
 
@@ -1295,6 +1299,64 @@ func (a *App) GetSSHStatus(nodeID string) *SSHStatus {
 	}
 
 	return sshStatus
+}
+
+// EdgeViewSessions is how many of a device's EdgeView instance slots are in
+// use. Available is false (and the counts zero) when the controller has no
+// live EdgeView session for the device or its token can't be read.
+type EdgeViewSessions struct {
+	Available   bool               `json:"available"`
+	MaxSessions int                `json:"maxSessions"`
+	InUse       int                `json:"inUse"`
+	Free        int                `json:"free"`
+	Offline     int                `json:"offline"`
+	Unknown     int                `json:"unknown"`
+	Slots       []session.SlotInfo `json:"slots"`
+}
+
+// GetEdgeViewSessions reports EdgeView session usage for a device without
+// connecting. It is read-only: unlike GetSSHStatus it never drops tunnels or
+// touches the session cache, so it is safe to call on every device selection.
+// The controller decides whether a session exists; only then are the
+// dispatcher's per-slot probes sent.
+func (a *App) GetEdgeViewSessions(ctx context.Context, nodeID string) (*EdgeViewSessions, error) {
+	if nodeID == "" {
+		return nil, fmt.Errorf("nodeId is required")
+	}
+	unavailable := &EdgeViewSessions{Slots: []session.SlotInfo{}}
+
+	evStatus, err := a.zededaClient.GetEdgeViewStatus(nodeID)
+	if err != nil {
+		return nil, err
+	}
+	if evStatus == nil {
+		return unavailable, nil
+	}
+	// An unreadable expiry (cloudSessionUnknown) still has a token: let the
+	// dispatcher say whether the device is there.
+	if _, state := cloudSessionState(evStatus); state == cloudSessionEnded {
+		return unavailable, nil
+	}
+
+	cfg, err := a.zededaClient.ParseEdgeViewToken(evStatus.Token)
+	if err != nil || cfg == nil {
+		return unavailable, nil
+	}
+
+	sum := a.sessionManager.ProbeSlots(ctx, cfg)
+	out := &EdgeViewSessions{
+		Available:   true,
+		MaxSessions: sum.MaxSessions,
+		InUse:       sum.InUse,
+		Free:        sum.Free,
+		Offline:     sum.Offline,
+		Unknown:     sum.Unknown,
+		Slots:       sum.Slots,
+	}
+	if out.Slots == nil {
+		out.Slots = []session.SlotInfo{}
+	}
+	return out, nil
 }
 
 type cloudSessionStateKind int

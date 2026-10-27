@@ -316,6 +316,10 @@ func (m *fakeSessionManager) InvalidateSession(nodeID string) {
 	}
 }
 
+func (m *fakeSessionManager) ProbeSlots(ctx context.Context, cfg *zededa.SessionConfig) *session.SlotSummary {
+	return session.NewManager().ProbeSlots(ctx, cfg)
+}
+
 func (m *fakeSessionManager) StartCollectInfo(nodeID string) (string, error) {
 	return "job-123", nil
 }

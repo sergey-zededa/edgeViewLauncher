@@ -390,3 +390,26 @@ func TestHandleRemoveSSHKey(t *testing.T) {
 		t.Fatalf("unexpected client calls: %v", fake.removeKeyCalls)
 	}
 }
+
+// TestSendError_E2EUnsupportedCode verifies that session.ErrE2EUnsupported is
+// reported with a stable "E2E_UNSUPPORTED" code.
+func TestSendError_E2EUnsupportedCode(t *testing.T) {
+	srv := newTestServer(t)
+
+	rr := httptest.NewRecorder()
+	srv.sendError(rr, fmt.Errorf("start tunnel: %w", session.ErrE2EUnsupported))
+
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("expected status 409, got %d", rr.Code)
+	}
+	var resp APIResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.Code != "E2E_UNSUPPORTED" {
+		t.Fatalf("expected code E2E_UNSUPPORTED, got %q", resp.Code)
+	}
+	if resp.Error != session.ErrE2EUnsupported.Error() {
+		t.Fatalf("expected the sentinel's message without the wrap chain, got %q", resp.Error)
+	}
+}

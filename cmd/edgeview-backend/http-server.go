@@ -234,6 +234,23 @@ func (s *HTTPServer) handleGetSSHStatus(w http.ResponseWriter, r *http.Request) 
 	s.sendSuccess(w, status)
 }
 
+// handleGetEdgeViewSessions reports how many EdgeView sessions a device has
+// in use out of the total it allows. Read-only; works without connecting.
+func (s *HTTPServer) handleGetEdgeViewSessions(w http.ResponseWriter, r *http.Request) {
+	var req NodeIDRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, err)
+		return
+	}
+
+	info, err := s.app.GetEdgeViewSessions(r.Context(), req.NodeID)
+	if err != nil {
+		s.sendError(w, err)
+		return
+	}
+	s.sendSuccess(w, info)
+}
+
 func (s *HTTPServer) handleDisableSSH(w http.ResponseWriter, r *http.Request) {
 	var req NodeIDRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -615,6 +632,18 @@ func (s *HTTPServer) sendError(w http.ResponseWriter, err error) {
 		return
 	}
 
+	// The device speaks EVE 16.6+'s end-to-end scheme, which no client can
+	// decrypt; only turning encryption off in the project policy helps.
+	if errors.Is(err, session.ErrE2EUnsupported) {
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(APIResponse{
+			Success: false,
+			Code:    "E2E_UNSUPPORTED",
+			Error:   session.ErrE2EUnsupported.Error(),
+		})
+		return
+	}
+
 	w.WriteHeader(http.StatusInternalServerError)
 	json.NewEncoder(w).Encode(APIResponse{
 		Success: false,
@@ -690,6 +719,7 @@ func (s *HTTPServer) Start() {
 	router.HandleFunc("/api/device-services", s.handleGetDeviceServices)
 	router.HandleFunc("/api/setup-ssh", s.handleSetupSSH)
 	router.HandleFunc("/api/ssh-status", s.handleGetSSHStatus)
+	router.HandleFunc("/api/edgeview-sessions", s.handleGetEdgeViewSessions)
 	router.HandleFunc("/api/disable-ssh", s.handleDisableSSH)
 	router.HandleFunc("/api/remove-ssh-key", s.handleRemoveSSHKey)
 	router.HandleFunc("/api/reset-edgeview", s.handleResetEdgeView)

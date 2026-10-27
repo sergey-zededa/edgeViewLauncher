@@ -201,7 +201,7 @@ func TestConnectToEdgeViewDialsWithDiscoveredFullHash(t *testing.T) {
 	defer srv.Close()
 
 	cfg := &zededa.SessionConfig{URL: "ws://" + strings.TrimPrefix(srv.URL, "http://"), Token: token}
-	conn, clientIP, err := NewManager().connectToEdgeView(cfg, "test")
+	conn, clientIP, err := NewManager().connectToEdgeView(context.Background(), cfg, "test")
 	if err != nil {
 		t.Fatalf("connectToEdgeView: %v", err)
 	}
@@ -211,5 +211,32 @@ func TestConnectToEdgeViewDialsWithDiscoveredFullHash(t *testing.T) {
 	}
 	if clientIP != "203.0.113.7" {
 		t.Fatalf("client IP = %q", clientIP)
+	}
+}
+
+// A stalled dispatcher must not hold a dial past its caller's deadline (the
+// StartProxyMulti round deadline, or the user's Cancel).
+func TestSessionTokenHashHonoursContext(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+	defer close(release)
+
+	cfg := &zededa.SessionConfig{URL: "ws://" + strings.TrimPrefix(srv.URL, "http://"), Token: "header.payload.signature"}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	got := NewManager().sessionTokenHash(ctx, cfg, 0)
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("probe ignored the context: took %v", elapsed)
+	}
+	if got != tokenHash(cfg.Token, 0, false) {
+		t.Fatalf("expected the short-hash fallback, got %q", got)
 	}
 }
