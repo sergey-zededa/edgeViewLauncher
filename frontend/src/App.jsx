@@ -4,7 +4,8 @@ import { ConnectToNode, CancelConnection, GetSettings, SaveSettings, GetDeviceSe
 import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, ChevronRight, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers, Shield, Moon, Sun, HelpCircle, Key, Plug, Unplug } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
 import Tooltip from './components/Tooltip';
-import DeviceInfoPanel from './components/DeviceInfoPanel';
+import DeviceInfoPanel, { formatWorkloadUsage } from './components/DeviceInfoPanel';
+import useDeviceInfo from './useDeviceInfo';
 import About from './components/About';
 import UpdateBanner from './components/UpdateBanner';
 import GlobalStatusBanner from './components/GlobalStatusBanner';
@@ -1484,6 +1485,32 @@ function App() {
     ? sshStatus.cloudSession !== 'ended'
     : parseInt(sshStatus?.expiry, 10) * 1000 > Date.now());
   const isDeviceOnline = isInteractive(selectedNode?.status);
+
+  // Device info (EVE version, uptime, resources, per-app CPU/memory): one
+  // fetch + 60s poll per open device, shared by the Device section and the
+  // Running Applications rows. Paused while the token is known dead (the
+  // app-wide banner owns that); clearing authError resumes it.
+  const deviceInfo = useDeviceInfo(
+    selectedNode && !authError ? selectedNode.id : null,
+    selectedNode?.name,
+    isDeviceOnline,
+    () => setAuthError(true),
+  );
+  // Per-app usage for the Running Applications rows, matched on app id.
+  // Name is only a fallback when either side has no id.
+  const workloadUsage = useMemo(() => {
+    const byId = new Map();
+    const byName = new Map();
+    const list = Array.isArray(deviceInfo.info?.workloads) ? deviceInfo.info.workloads : [];
+    list.forEach((w) => {
+      if (w.id) byId.set(w.id, w);
+      else if (w.name) byName.set(w.name, w);
+    });
+    return (app) => {
+      const w = app.id ? (byId.get(app.id) || byName.get(app.name)) : list.find((x) => x.name === app.name);
+      return w ? { text: formatWorkloadUsage(w, isDeviceOnline), workload: w } : null;
+    };
+  }, [deviceInfo.info, isDeviceOnline]);
 
   // Per-slot EdgeView session usage from the controller (informational).
   // Fetched while the device details are open and the cloud session is live,
@@ -3749,7 +3776,9 @@ Do you want to try connecting anyway?`)) {
           })()}
         </div>
       )}
-      <div className="search-bar" data-tauri-drag-region style={selectedNode ? { paddingLeft: '80px' } : {}}>
+      {/* Device details: the same bar, compacted to a title-bar-height strip
+          level with the traffic lights (.details-bar in App.css). */}
+      <div className={`search-bar${selectedNode ? ' details-bar' : ''}`} data-tauri-drag-region>
         {selectedNode ? (
           <button
             type="button"
@@ -3758,7 +3787,7 @@ Do you want to try connecting anyway?`)) {
             title="Back (Esc)"
             aria-label="Back"
           >
-            <ArrowLeft size={24} />
+            <ArrowLeft size={18} />
           </button>
         ) : (
           <Search className="search-icon" size={20} />
@@ -4849,11 +4878,11 @@ Do you want to try connecting anyway?`)) {
 
             {selectedNode && !authError && (
               <DeviceInfoPanel
-                nodeId={selectedNode.id}
-                nodeName={selectedNode.name}
+                info={deviceInfo.info}
+                failed={deviceInfo.failed}
+                authFailed={deviceInfo.authFailed}
                 isOnline={isDeviceOnline}
                 timeFormatOptions={getTimeFormatOptions()}
-                onAuthError={() => setAuthError(true)}
               />
             )}
 
@@ -5538,6 +5567,24 @@ Do you want to try connecting anyway?`)) {
                                         <Layers size={12} /> Compose App
                                       </span>
                                     )}
+                                    {(() => {
+                                      // CPU / memory from the device-info workloads (the
+                                      // Device section has no app list of its own).
+                                      const usage = workloadUsage(app);
+                                      if (!usage?.text) return null;
+                                      return (
+                                        <Tooltip text={
+                                          <div>
+                                            <div>CPU: average over the last hour{isDeviceOnline ? '' : ' (not reported while the device is offline)'}</div>
+                                            <div>Memory: used / allocated to this app</div>
+                                          </div>
+                                        }>
+                                          <span data-testid="app-usage" style={{ fontSize: '0.85em', color: 'var(--text-secondary)', whiteSpace: 'nowrap', cursor: 'help' }}>
+                                            {usage.text}
+                                          </span>
+                                        </Tooltip>
+                                      );
+                                    })()}
                                     <div className="service-meta" style={{ display: 'flex', alignItems: 'center', height: '100%', flexWrap: 'wrap', gap: '4px' }}>
                                       {app.ips && app.ips.length > 0 && app.ips.map((ip, ipIdx) => {
                                         const savedUser = getSavedSshUsername(app.name);

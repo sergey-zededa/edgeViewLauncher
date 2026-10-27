@@ -1,16 +1,36 @@
-import React, { useState, useEffect } from 'react';
-import { ChevronDown, ChevronRight, Box } from 'lucide-react';
-import { GetDeviceInfo } from '../tauriAPI';
+import React, { useState } from 'react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
+import Tooltip from './Tooltip';
 
-// Compact "Device" section of the device details: EVE version, uptime, last
-// reboot and resource use for the device and its app instances.
+// Collapsible "Device" section of the device details: EVE version, uptime,
+// last reboot and device resource use. Presentational: App loads the data
+// once per device (useDeviceInfo) and also feeds its per-app numbers into the
+// Running Applications rows, so this panel has no workload list of its own.
 //
-// This is a cloud read (controller device/app status), so it is cloud-config
-// class: it works while the device is offline and is never gated on the
-// EdgeView session. Fetched when the details open, refreshed every 60s.
-const REFRESH_MS = 60000;
+// Laid out exactly like the EdgeView Session section below it
+// (.ssh-status-section → .section-title → .ssh-details → .status-grid) and
+// collapsed by default so the session controls stay near the top; the
+// collapsed title row carries a one-line summary instead.
 
 const MB_PER_GB = 1024;
+
+// Per-viewer expanded/collapsed choice. Storage can be missing or throw
+// (private mode, blocked site data): the panel then just starts collapsed.
+export const EXPANDED_STORAGE_KEY = 'deviceInfoExpanded';
+const readExpanded = () => {
+  try {
+    return window.localStorage.getItem(EXPANDED_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+const writeExpanded = (v) => {
+  try {
+    window.localStorage.setItem(EXPANDED_STORAGE_KEY, v ? '1' : '0');
+  } catch {
+    // not persisted; the in-memory state still toggles
+  }
+};
 
 // MB (as the controller reports memory/storage) -> "640 MB" / "7.6 GB" / "1.2 TB".
 export const formatMB = (mb) => {
@@ -19,6 +39,16 @@ export const formatMB = (mb) => {
   const gb = mb / MB_PER_GB;
   if (gb < MB_PER_GB) return `${gb < 10 ? gb.toFixed(1) : Math.round(gb)} GB`;
   return `${(gb / MB_PER_GB).toFixed(1)} TB`;
+};
+
+// "used / total" with the unit written once when both share it:
+// (1229, 2048) -> "1.2 / 2.0 GB", (300, 1024) -> "300 MB / 1.0 GB".
+export const formatMBPair = (used, total, sep = ' / ') => {
+  const a = formatMB(used);
+  const b = formatMB(total);
+  const ua = a.split(' ')[1];
+  if (ua && ua === b.split(' ')[1]) return `${a.split(' ')[0]}${sep}${b}`;
+  return `${a}${sep}${b}`;
 };
 
 // The controller's CPU Utilization is percent of total device capacity
@@ -40,6 +70,26 @@ export const formatDuration = (sec) => {
   return '<1m';
 };
 
+// EVE reports its version with a "-<hypervisor>-<arch>" build suffix
+// ("14.5.2-lts-kvm-amd64"). Split it so the value shows "14.5.2-lts" and the
+// platform goes to the tooltip. Anything unrecognised is kept whole.
+const EVE_PLATFORM_RE = /^(.+?)-((?:kvm|xen|kubevirt|k|acrn|mini)-(?:amd64|arm64|riscv64))$/i;
+export const splitEveVersion = (v) => {
+  const s = String(v || '');
+  const m = s.match(EVE_PLATFORM_RE);
+  return m ? { version: m[1], platform: m[2] } : { version: s, platform: '' };
+};
+
+// The inactive partition's state, when it says something about an update.
+// "unused" / "active" are the normal resting states and say nothing.
+const OTHER_STATE_NOTES = {
+  updating: 'update downloading',
+  inprogress: 'update pending',
+  failed: 'update failed',
+};
+
+const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
 const agoFrom = (iso) => {
   const t = Date.parse(iso);
   if (!iso || Number.isNaN(t)) return null;
@@ -47,135 +97,133 @@ const agoFrom = (iso) => {
   return sec < 60 ? 'just now' : `${formatDuration(sec)} ago`;
 };
 
-// RUN_STATE_ONLINE -> "Online"
-const formatRunState = (s) => {
-  const t = String(s || '').replace(/^RUN_STATE_/, '').replace(/_/g, ' ').toLowerCase();
-  return t ? t.charAt(0).toUpperCase() + t.slice(1) : '—';
+/**
+ * One-line CPU / memory text for an app row in Running Applications,
+ * e.g. "CPU 3.0% · 1.2 / 2.0 GB". CPU is left out while the device is
+ * offline (the controller reports 0 without samples). Returns '' when there
+ * is nothing to show.
+ */
+export const formatWorkloadUsage = (w, online) => {
+  if (!w) return '';
+  const parts = [];
+  const cpu = num(w.cpuPercent);
+  if (online && cpu !== null) parts.push(`CPU ${formatPercent(cpu)}`);
+  const used = num(w.memUsedMB);
+  const alloc = num(w.memAllocatedMB);
+  if (used !== null && alloc !== null) parts.push(formatMBPair(used, alloc));
+  else if (alloc !== null) parts.push(`${formatMB(alloc)} alloc.`);
+  else if (used !== null) parts.push(formatMB(used));
+  return parts.join(' · ');
 };
 
-const runStateClass = (s) => {
-  const t = String(s || '').replace(/^RUN_STATE_/, '');
-  if (t === 'ONLINE') return 'success';
-  if (/ERROR|FAIL|BROKEN/.test(t)) return 'error';
-  if (/HALT|OFFLINE|UNKNOWN|INIT/.test(t) || !t) return 'neutral';
-  return 'mismatch';
-};
+const ellipsis = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 };
+const subStyle = { ...ellipsis, maxWidth: '100%', fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 400 };
 
-const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
-
-// Thin usage bar. `pct` is clamped to 0-100 for display only.
+// Thin usage bar, the same width under every resource value. `pct` is
+// clamped to 0-100 for display only.
 const Bar = ({ pct }) => {
   const clamped = Math.max(0, Math.min(100, pct));
   const color = clamped >= 90 ? 'var(--color-danger)' : clamped >= 75 ? 'var(--color-warning)' : 'var(--color-success)';
   return (
-    <div style={{ height: '4px', borderRadius: '2px', background: 'var(--border-color)', overflow: 'hidden', marginTop: '2px' }}>
-      <div style={{ width: `${clamped}%`, height: '100%', background: color }} />
+    <div data-testid="usage-bar" style={{ width: '64px', height: '3px', borderRadius: '2px', background: 'var(--border-color)', overflow: 'hidden', marginTop: '2px' }}>
+      <div style={{ width: `${clamped}%`, height: '100%', background: color, opacity: 0.85 }} />
     </div>
   );
 };
 
-const subStyle = { fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 400 };
-
-const Item = ({ label, title, children }) => (
-  <div className="status-item" style={{ minWidth: 0 }}>
-    <div className="status-label" style={title ? { cursor: 'help' } : undefined} title={title}>{label}</div>
-    {children}
-  </div>
+// Multi-line tooltip body. Passed as a node (not a string) so the Tooltip
+// keeps line breaks and does not add its "Copy" header.
+const TipLines = ({ lines }) => (
+  <div>{lines.filter(Boolean).map((l, i) => <div key={i}>{l}</div>)}</div>
 );
 
+// A .status-item with the EdgeView items' rhythm: label, one value line,
+// at most one muted sub-line. Nothing wraps; the whole item is the tooltip
+// trigger, so the full text of anything ellipsized is one hover away.
+const Item = ({ label, tip, value, valueClass, sub }) => {
+  const body = (
+    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+      <div className="status-label" style={tip ? { cursor: 'help' } : undefined}>{label}</div>
+      <div className={`status-value${valueClass ? ` ${valueClass}` : ''}`} style={{ maxWidth: '100%' }}>
+        <span style={ellipsis}>{value}</span>
+      </div>
+      {sub}
+    </div>
+  );
+  return (
+    <div className="status-item" style={{ minWidth: 0, alignItems: 'stretch' }}>
+      {tip ? <Tooltip text={<TipLines lines={tip} />}>{body}</Tooltip> : body}
+    </div>
+  );
+};
+
 /**
- * @param {string} nodeId
- * @param {string} nodeName          device name (lets the backend fetch app statuses concurrently)
+ * @param {object|null} info         GetDeviceInfo payload for the open device
+ * @param {boolean} failed           the last load failed
+ * @param {boolean} authFailed       ...because the token was rejected (the app banner explains it)
  * @param {boolean} isOnline         the page's online state (same as the rest of the details,
  *                                   includes maintenance mode); offline shows "last boot", hides CPU
  *                                   and marks the numbers as last reported
  * @param {object} timeFormatOptions Intl options for full timestamps in tooltips
- * @param {() => void} onAuthError   called when the controller rejects the API token
  */
-const DeviceInfoPanel = ({ nodeId, nodeName, isOnline, timeFormatOptions, onAuthError }) => {
-  // Keyed by node so a slow response for a previously selected device is
-  // never shown for the current one.
-  const [state, setState] = useState({ nodeId: null, info: null, failed: false });
-  const [showWorkloads, setShowWorkloads] = useState(false);
-
-  useEffect(() => {
-    if (!nodeId) return undefined;
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const info = await GetDeviceInfo(nodeId, nodeName);
-        if (cancelled) return;
-        setState({ nodeId, info: info || null, failed: false });
-      } catch (err) {
-        if (cancelled) return;
-        console.error('Failed to load device info:', err);
-        // Background read: an expired token only raises the persistent banner.
-        if (err?.code === 'UNAUTHORIZED' && onAuthError) onAuthError();
-        // Keep what we already showed for this device; a blip should not blank it.
-        setState(prev => ({ nodeId, info: prev.nodeId === nodeId ? prev.info : null, failed: true, authFailed: err?.code === 'UNAUTHORIZED' }));
-      }
-    };
-    load();
-    const intervalId = setInterval(load, REFRESH_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(intervalId);
-    };
-    // onAuthError is a fresh closure each render; the fetch must not restart for it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodeId, nodeName, isOnline]);
-
-  const current = state.nodeId === nodeId ? state : null;
-  const info = current?.info;
+const DeviceInfoPanel = ({ info, failed, authFailed, isOnline, timeFormatOptions }) => {
+  const [expanded, setExpanded] = useState(readExpanded);
 
   if (!info) {
     // Nothing yet. A plain failure gets a muted note; an auth failure is
     // already explained by the app-wide token banner.
-    if (current?.failed && !current.authFailed) {
+    if (failed && !authFailed) {
       return (
         <div className="ssh-status-section" style={{ paddingBottom: 0 }}>
-          <div className="section-title" style={{ marginBottom: '6px' }}><span>Device</span></div>
-          <div style={{ ...subStyle, fontSize: '12px' }}>Device details unavailable</div>
+          <div className="section-title" style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginBottom: 0 }}>
+            <span>Device</span>
+            <span style={{ ...subStyle, fontSize: '12px' }}>Device details unavailable</span>
+          </div>
         </div>
       );
     }
     return null;
   }
 
+  const toggle = () => setExpanded((v) => {
+    writeExpanded(!v);
+    return !v;
+  });
+
   const fullTime = (iso) => {
     const t = Date.parse(iso);
     return Number.isNaN(t) ? '' : new Date(t).toLocaleString(undefined, timeFormatOptions);
   };
 
-  // --- EVE version ---
-  const eveValue = info.eveVersion ? (
-    <>
-      <div className="status-value" style={{ overflowWrap: 'anywhere' }}>{info.eveVersion}</div>
-      {info.partition && <div style={subStyle}>partition {info.partition}</div>}
-    </>
-  ) : <div className="status-value neutral">—</div>;
-  const otherTitle = info.otherVersion
-    ? `The other EVE partition${info.otherPartition ? ` (${info.otherPartition})` : ''} holds ${info.otherVersion}${info.otherState ? ` (${info.otherState})` : ''} — a pending update or a fallback image.`
-    : undefined;
-
-  // --- Uptime / last boot ---
   // The page's own online state, not info.online, so this panel agrees with
   // the rest of the details (e.g. maintenance mode counts as online).
   const online = !!isOnline;
+
+  // --- EVE version ---
+  const eve = splitEveVersion(info.eveVersion);
+  const other = splitEveVersion(info.otherVersion);
+  const otherNote = info.otherVersion ? OTHER_STATE_NOTES[String(info.otherState || '').toLowerCase()] : undefined;
+  const eveSub = [info.partition, otherNote].filter(Boolean).join(' · ');
+  const eveTip = info.eveVersion ? [
+    `Active: ${[info.partition, eve.version].filter(Boolean).join(' ')}${eve.platform ? ` (${eve.platform})` : ''}`,
+    info.otherVersion && `Other: ${[info.otherPartition, other.version].filter(Boolean).join(' ')}${info.otherState ? ` (${info.otherState})` : ''}`,
+  ] : null;
+
+  // --- Uptime / last boot ---
   const bootAgo = agoFrom(info.bootTime);
   let uptimeLabel = 'UPTIME';
   let uptimeValue = '—';
-  let uptimeTitle;
+  let uptimeTip = null;
   if (online) {
     const bootMs = Date.parse(info.bootTime);
     if (info.bootTime && !Number.isNaN(bootMs)) uptimeValue = formatDuration((Date.now() - bootMs) / 1000);
     else if (num(info.uptimeSec) !== null) uptimeValue = formatDuration(info.uptimeSec);
-    if (info.bootTime) uptimeTitle = `Booted ${fullTime(info.bootTime)}`;
+    if (info.bootTime) uptimeTip = [`Booted ${fullTime(info.bootTime)}`];
   } else {
     // An offline device's uptime is stale: say when it last booted instead.
     uptimeLabel = 'LAST BOOT';
     if (bootAgo) uptimeValue = bootAgo;
-    if (info.bootTime) uptimeTitle = fullTime(info.bootTime);
+    if (info.bootTime) uptimeTip = [`Booted ${fullTime(info.bootTime)}`];
   }
 
   // --- Last reboot ---
@@ -183,15 +231,21 @@ const DeviceInfoPanel = ({ nodeId, nodeName, isOnline, timeFormatOptions, onAuth
   const lrAgo = lr ? agoFrom(lr.time) : null;
   const lrFirstLine = lr?.reason ? lr.reason.split('\n')[0] : '';
   const lrText = lr ? (lr.label || lrFirstLine || '—') : '—';
-  const lrTitle = lr
-    ? [lr.reason, lr.time ? fullTime(lr.time) : ''].filter(Boolean).join('\n') || undefined
-    : undefined;
+  const lrTip = lr && (lr.reason || lr.time)
+    ? [lr.label, lr.reason, lr.time ? fullTime(lr.time) : '']
+    : null;
 
   // --- Resources ---
   const cpu = info.cpu;
   // CPU is a 1-hour average the controller reports as 0 when it has no
   // samples (offline), so it is only meaningful while online.
   const cpuPct = online ? num(cpu?.percent) : null;
+  const cores = num(cpu?.cores);
+  const cpuTip = [
+    online ? 'Average over the last hour, % of total device capacity' : 'Not reported while the device is offline',
+    cores !== null && `${cores} ${cores === 1 ? 'core' : 'cores'}`,
+  ];
+
   const mem = info.memory;
   const memTotal = num(mem?.totalMB);
   // All-zero used/allocated means the device never reported memory.
@@ -201,114 +255,102 @@ const DeviceInfoPanel = ({ nodeId, nodeName, isOnline, timeFormatOptions, onAuth
   // usedEveMB is EVE's own usage, not host-wide: show what is committed
   // (apps' allocation + EVE's use) against the device total.
   const memCommitted = (memApps !== null || memEve !== null) ? (memApps ?? 0) + (memEve ?? 0) : null;
+  const memValue = memCommitted !== null
+    ? `${formatMB(memCommitted)}${memTotal !== null ? ` / ${formatMB(memTotal)}` : ''}`
+    : (memTotal !== null ? formatMB(memTotal) : '—');
+  const memTip = [
+    'Committed: allocated to app instances plus used by EVE itself, of the device total',
+    memApps !== null && `Apps allocated ${formatMB(memApps)}`,
+    memEve !== null && `EVE using ${formatMB(memEve)} (its own use, not host-wide)`,
+  ];
+
   const stor = info.storage;
   const storTotal = num(stor?.totalMB);
   const storUsed = num(stor?.usedMB);
+  const storValue = storUsed !== null && storTotal !== null ? `${formatMB(storUsed)} / ${formatMB(storTotal)}`
+    : storTotal !== null ? formatMB(storTotal)
+      : storUsed !== null ? formatMB(storUsed) : '—';
 
-  const workloads = Array.isArray(info.workloads) ? info.workloads : [];
+  // --- Collapsed one-line summary: only the parts we actually have. ---
+  const summary = [
+    info.eveVersion && `EVE ${eve.version}`,
+    online ? (uptimeValue !== '—' && `up ${uptimeValue}`) : (bootAgo && `last boot ${bootAgo}`),
+    cpuPct !== null && `CPU ${formatPercent(cpuPct)}`,
+    memCommitted !== null && memTotal !== null && `Mem ${formatMBPair(memCommitted, memTotal, '/')}`,
+  ].filter(Boolean).join(' · ');
 
   return (
     <div className="ssh-status-section" style={{ paddingBottom: 0 }}>
-      <div className="section-title" style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginBottom: '10px' }}>
-        <span>Device</span>
-        {!online && <span style={subStyle}>offline — values are last reported</span>}
+      <div
+        className="section-title"
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        onClick={toggle}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            e.stopPropagation();
+            toggle();
+          }
+        }}
+        title={expanded ? 'Hide device details' : 'Show device details'}
+        style={{
+          display: 'flex', alignItems: 'center', gap: '6px',
+          cursor: 'pointer', userSelect: 'none',
+          marginBottom: expanded ? '12px' : 0,
+        }}
+      >
+        {expanded
+          ? <ChevronDown size={14} style={{ flexShrink: 0, color: 'var(--text-secondary)' }} />
+          : <ChevronRight size={14} style={{ flexShrink: 0, color: 'var(--text-secondary)' }} />}
+        <span style={{ flexShrink: 0 }}>Device</span>
+        {!expanded && summary && (
+          <span data-testid="device-summary" style={{ ...subStyle, fontSize: '12px', flex: 1, marginLeft: '4px' }}>{summary}</span>
+        )}
+        {expanded && !online && (
+          <span style={{ ...subStyle, fontSize: '12px', marginLeft: '4px' }}>offline · values are last reported</span>
+        )}
       </div>
 
-      <div className="status-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', marginBottom: '8px' }}>
-        <Item label="EVE" title={otherTitle}>
-          {eveValue}
-          {info.otherVersion && (
-            <div style={subStyle} title={otherTitle}>
-              other{info.otherPartition ? ` (${info.otherPartition})` : ''}: {info.otherVersion}
-            </div>
-          )}
-        </Item>
-
-        <Item label={uptimeLabel} title={uptimeTitle}>
-          <div className="status-value">{uptimeValue}</div>
-        </Item>
-
-        <Item label="LAST REBOOT" title={lrTitle}>
-          <div className="status-value" style={{ minWidth: 0 }}>
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lrText}</span>
+      {expanded && (
+        <div className="ssh-details">
+          <div className="status-grid" style={{ marginBottom: 0 }}>
+            <Item
+              label="EVE"
+              tip={eveTip}
+              value={info.eveVersion ? eve.version : '—'}
+              valueClass={info.eveVersion ? '' : 'neutral'}
+              sub={eveSub && (
+                <div style={{ ...subStyle, ...(otherNote === 'update failed' ? { color: 'var(--color-warning)' } : {}) }}>{eveSub}</div>
+              )}
+            />
+            <Item label={uptimeLabel} tip={uptimeTip} value={uptimeValue} />
+            <Item
+              label="LAST REBOOT"
+              tip={lrTip}
+              value={lrText}
+              sub={lrAgo && <div style={subStyle}>{lrAgo}</div>}
+            />
+            <Item
+              label="CPU"
+              tip={cpuTip}
+              value={cpuPct !== null ? formatPercent(cpuPct) : '—'}
+              sub={cpuPct !== null && <Bar pct={cpuPct} />}
+            />
+            <Item
+              label="MEMORY"
+              tip={memTip}
+              value={memValue}
+              sub={memCommitted !== null && memTotal !== null && <Bar pct={(memCommitted / memTotal) * 100} />}
+            />
+            <Item
+              label="STORAGE"
+              tip={storUsed !== null && storTotal !== null ? [`${formatMB(storUsed)} used of ${formatMB(storTotal)}`] : null}
+              value={storValue}
+              sub={storUsed !== null && storTotal !== null && <Bar pct={(storUsed / storTotal) * 100} />}
+            />
           </div>
-          {lrAgo && <div style={subStyle}>{lrAgo}</div>}
-        </Item>
-
-        <Item label="CPU" title="Average over the last hour">
-          <div className="status-value">{cpuPct !== null ? formatPercent(cpuPct) : '—'}</div>
-          {cpuPct !== null && <Bar pct={cpuPct} />}
-          {num(cpu?.cores) !== null && <div style={subStyle}>{cpu.cores} {cpu.cores === 1 ? 'core' : 'cores'}</div>}
-        </Item>
-
-        <Item label="MEMORY" title="Memory committed on the device: allocated to app instances plus used by EVE itself, of the device total. EVE usage is EVE's own, not host-wide.">
-          <div className="status-value">
-            {memCommitted !== null ? `${formatMB(memCommitted)}${memTotal !== null ? ` / ${formatMB(memTotal)}` : ''}` : (memTotal !== null ? formatMB(memTotal) : '—')}
-          </div>
-          {memCommitted !== null && memTotal !== null && <Bar pct={(memCommitted / memTotal) * 100} />}
-          {(memApps !== null || memEve !== null) && (
-            <div style={subStyle}>
-              {memApps !== null ? `apps ${formatMB(memApps)}` : ''}{memApps !== null && memEve !== null ? ' · ' : ''}{memEve !== null ? `EVE ${formatMB(memEve)}` : ''}
-            </div>
-          )}
-        </Item>
-
-        <Item label="STORAGE">
-          <div className="status-value">
-            {storUsed !== null && storTotal !== null ? `${formatMB(storUsed)} / ${formatMB(storTotal)}`
-              : storTotal !== null ? formatMB(storTotal)
-                : storUsed !== null ? formatMB(storUsed) : '—'}
-          </div>
-          {storUsed !== null && storTotal !== null && <Bar pct={(storUsed / storTotal) * 100} />}
-        </Item>
-      </div>
-
-      {info.workloadsAvailable === false ? (
-        <div style={{ ...subStyle, fontSize: '12px' }} title={info.workloadsError || undefined}>Workloads unavailable</div>
-      ) : workloads.length === 0 ? (
-        <div style={{ ...subStyle, fontSize: '12px' }}>No app instances</div>
-      ) : (
-        <div>
-          <div
-            onClick={() => setShowWorkloads((v) => !v)}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '6px',
-              cursor: 'pointer', userSelect: 'none',
-              fontSize: '12px', color: 'var(--text-secondary)',
-            }}
-            title="Show / hide the app instances on this device with their CPU and memory use"
-          >
-            {showWorkloads ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-            <Box size={13} />
-            <span>Workloads ({workloads.length})</span>
-          </div>
-          {showWorkloads && (
-            <div style={{
-              marginTop: '8px', padding: '8px 10px',
-              background: 'var(--bg-secondary)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: '6px',
-              display: 'flex', flexDirection: 'column', gap: '4px',
-              fontSize: '12px',
-            }}>
-              {workloads.map((w) => {
-                const used = num(w.memUsedMB);
-                const alloc = num(w.memAllocatedMB);
-                return (
-                  <div key={w.id || w.name} data-testid="workload-row" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 90px 56px 130px', gap: '8px', alignItems: 'center' }}>
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={w.name}>{w.name}</span>
-                    <span className={`status-value ${runStateClass(w.runState)}`} style={{ fontSize: '12px' }}>{formatRunState(w.runState)}</span>
-                    <span title="CPU (average over the last hour)">{online && num(w.cpuPercent) !== null ? formatPercent(w.cpuPercent) : '—'}</span>
-                    <span title="Memory used / allocated">
-                      {used !== null && alloc !== null ? `${formatMB(used)} / ${formatMB(alloc)}`
-                        : alloc !== null ? `${formatMB(alloc)} alloc.`
-                          : used !== null ? formatMB(used) : '—'}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
         </div>
       )}
     </div>
