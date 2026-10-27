@@ -481,7 +481,7 @@ func (m *Manager) tryProxyAttempt(ctx context.Context, config *zededa.SessionCon
 	t0 := time.Now()
 	debugf(label, "probe start")
 
-	wsConn, clientIP, err := m.connectToEdgeView(&cfg, label)
+	wsConn, clientIP, err := m.connectToEdgeView(ctx, &cfg, label)
 	if err != nil {
 		debugf(label, "connect failed after %v: %v", time.Since(t0), err)
 		return nil, "", err
@@ -1656,10 +1656,11 @@ func unwrapMessage(data []byte, key string, encrypt bool) ([]byte, error) {
 
 // connectToEdgeView establishes a WebSocket connection to EdgeView.
 // `label` tags debug log lines so messages from parallel probes can be
-// correlated to their target/instID.
-func (m *Manager) connectToEdgeView(config *zededa.SessionConfig, label string) (*websocket.Conn, string, error) {
+// correlated to their target/instID. ctx bounds the token-hash probe, so a
+// round deadline or a user Cancel isn't held up by a slow dispatcher.
+func (m *Manager) connectToEdgeView(ctx context.Context, config *zededa.SessionConfig, label string) (*websocket.Conn, string, error) {
 	// 1. Compute Token Hash
-	tokenHash := m.sessionTokenHash(context.Background(), config, config.InstID)
+	tokenHash := m.sessionTokenHash(ctx, config, config.InstID)
 
 	// Construct hostname
 	hostname, _ := os.Hostname()
@@ -1776,7 +1777,7 @@ func (m *Manager) attemptTunnelReconnect(tunnel *Tunnel) bool {
 
 		// Try to establish new connection
 		reconnectLabel := fmt.Sprintf("%s/reconnect-attempt%d", tunnel.ID, attempt)
-		wsConn, clientIP, err := m.connectToEdgeView(tunnel.config, reconnectLabel)
+		wsConn, clientIP, err := m.connectToEdgeView(context.Background(), tunnel.config, reconnectLabel)
 		if err != nil {
 			fmt.Printf("TUNNEL[%s] Reconnect failed: %v\n", tunnel.ID, err)
 			continue

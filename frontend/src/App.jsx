@@ -1496,17 +1496,24 @@ function App() {
     .sort()
     .join(',');
   useEffect(() => {
-    if (!selectedNodeId || !cloudSessionLive) return undefined;
+    if (!selectedNodeId || !cloudSessionLive) {
+      // A later reconnect must not show the previous session's counts.
+      setSessionsState({ nodeId: null, data: null });
+      return undefined;
+    }
     let cancelled = false;
+    let latestRequest = 0;
     const fetchSessions = async () => {
+      const request = ++latestRequest;
       try {
         const data = await GetEdgeViewSessions(selectedNodeId);
-        // Ignore a response that lands after navigating to another device.
-        if (cancelled || selectedNodeIdRef.current !== selectedNodeId) return;
+        // Ignore a response that lands after navigating to another device,
+        // or after a newer poll already answered.
+        if (cancelled || request !== latestRequest || selectedNodeIdRef.current !== selectedNodeId) return;
         setSessionsState({ nodeId: selectedNodeId, data: data || null });
       } catch (err) {
         console.error('Failed to load EdgeView sessions:', err);
-        if (!cancelled && selectedNodeIdRef.current === selectedNodeId) setSessionsState({ nodeId: selectedNodeId, data: null });
+        if (!cancelled && request === latestRequest && selectedNodeIdRef.current === selectedNodeId) setSessionsState({ nodeId: selectedNodeId, data: null });
       }
     };
     fetchSessions();
@@ -3109,8 +3116,7 @@ Do you want to try connecting anyway?`)) {
       console.error("Failed to start collect info:", err);
       // Clean up the error message for display
       const userMessage = extractErrorMessage(err);
-      if (isE2eUnsupported(err)) showE2eUnsupportedToast(err);
-      else setGlobalStatus({ type: 'error', message: `Failed to start: ${userMessage}` });
+      setGlobalStatus({ type: 'error', message: `Failed to start: ${userMessage}` });
       addLog(`Failed to start collect info: ${userMessage}`, 'error');
     }
   };
@@ -3272,8 +3278,7 @@ Do you want to try connecting anyway?`)) {
     } catch (err) {
       console.error('Failed to start compose diagnostics:', err);
       const userMessage = extractErrorMessage(err);
-      if (isE2eUnsupported(err)) showE2eUnsupportedToast(err);
-      else setGlobalStatus({ type: 'error', message: `Failed to start diagnostics: ${userMessage}` });
+      setGlobalStatus({ type: 'error', message: `Failed to start diagnostics: ${userMessage}` });
       addLog(`Failed to start compose diagnostics: ${userMessage}`, 'error');
     }
   };
