@@ -127,6 +127,17 @@ export const StartTunnel = (nodeId, targetIP, targetPort, protocol) =>
 export const GetEdgeViewSessions = (nodeId) =>
     apiCall('/api/edgeview-sessions', 'POST', { nodeId }).then(r => r?.data);
 
+/**
+ * Normalized device info for the details "Device" panel: EVE version, boot
+ * time / uptime, last reboot, CPU / memory / storage, and the device's app
+ * instances. A cloud read, so it also works for offline devices.
+ * `nodeName` is optional but lets the backend fetch app statuses concurrently.
+ * Resolves `{ nodeId, name, online, eveVersion, partition, bootTime, uptimeSec,
+ * lastReboot, cpu, memory, storage, workloads, workloadsAvailable, ... }`.
+ */
+export const GetDeviceInfo = (nodeId, nodeName) =>
+    apiCall('/api/device-info', 'POST', { nodeId, nodeName }).then(r => r?.data);
+
 export const CloseTunnel = (tunnelId) =>
     apiCall(`/api/tunnel/${tunnelId}`, 'DELETE').then(r => r?.data);
 

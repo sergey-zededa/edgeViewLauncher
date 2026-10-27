@@ -106,6 +106,7 @@ Defined in `cmd/edgeview-backend/http-server.go`:
 - `POST /api/connect` — initialize EdgeView session, start SSH proxy
 - `POST /api/start-tunnel` — create TCP tunnel to device IP:port
 - `DELETE /api/tunnel/{id}` — close a tunnel
+- `POST /api/device-info` — `{nodeId, nodeName?}`: normalized EVE version, uptime/boot time, last reboot, CPU/memory/storage and per-app workloads for the details "Device" panel (`internal/zededa/deviceinfo.go`, `cmd/edgeview-backend/device_info.go`); cloud read, works offline, tolerant of proto field casing (CPU `Utilization` is percent of total capacity, 1-hour average; EVE scales by CPU count)
 - `POST /api/remove-ssh-key` — remove one authorized SSH key from the device (`{nodeId, fingerprint}` for a key, `{nodeId, raw}` for an unparseable line); cloud-config, works offline
 - `GET /api/ssh/term?port=<port>` — WebSocket endpoint for SSH terminal
 - `GET/POST /api/settings` — cluster configuration CRUD

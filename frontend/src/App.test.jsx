@@ -41,6 +41,7 @@ vi.mock('./tauriAPI', () => {
     SetupSSH: vi.fn(fn),
     GetSSHStatus: vi.fn().mockResolvedValue({ status: 'disabled' }),
     GetEdgeViewSessions: vi.fn().mockResolvedValue(null),
+    GetDeviceInfo: vi.fn().mockResolvedValue(null),
     DisableSSH: vi.fn(fn),
     RemoveSSHKey: vi.fn().mockResolvedValue({ removed: true, remaining: 1 }),
     SetVGAEnabled: vi.fn(fn),
@@ -2456,6 +2457,110 @@ describe('EdgeView status grid: encryption and sessions', () => {
     await openDevice();
     await waitFor(() => expect(electronAPI.GetSSHStatus).toHaveBeenCalled());
     expect(electronAPI.GetEdgeViewSessions).not.toHaveBeenCalled();
+  });
+});
+
+// The details "Device" section (EVE version, uptime, last reboot, resources,
+// workloads) comes from the controller's cloud status, so it must show for
+// offline devices too and never block or error out the rest of the details.
+describe('Device info section', () => {
+  const validKey = 'A'.repeat(171);
+  const validToken = `ENT1234:${validKey}`;
+  const configWithToken = {
+    baseUrl: 'https://cluster.example',
+    apiToken: validToken,
+    clusters: [{ name: 'Prod', baseUrl: 'https://cluster.example', apiToken: validToken }],
+    activeCluster: 'Prod',
+    recentDevices: [],
+  };
+  const node = { id: 'node-1', name: 'Info-Dev', status: 'online', project: 'proj-1' };
+  const deviceInfo = (extra = {}) => ({
+    nodeId: 'node-1',
+    online: true,
+    eveVersion: '16.6.0-lts',
+    partition: 'IMGA',
+    bootTime: new Date(Date.now() - (3 * 86400 + 5 * 3600) * 1000).toISOString(),
+    uptimeSec: 3 * 86400 + 5 * 3600,
+    lastReboot: { code: 'REBOOT_CMD', label: 'Reboot command', reason: 'user requested', time: new Date(Date.now() - 3 * 86400 * 1000).toISOString() },
+    cpu: { percent: 7.5, cores: 4 },
+    memory: { totalMB: 8192, usedEveMB: 512, allocatedAppsMB: 2048 },
+    storage: { totalMB: 102400, usedMB: 20480 },
+    workloads: [{ id: 'a1', name: 'my-app', runState: 'RUN_STATE_ONLINE', cpuPercent: 2, memUsedMB: 256, memAllocatedMB: 1024 }],
+    workloadsAvailable: true,
+    ...extra,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    electronAPI.GetSettings.mockReset();
+    electronAPI.SecureStorageGetSettings.mockReset();
+    electronAPI.GetSettings.mockResolvedValue(configWithToken);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(configWithToken);
+    electronAPI.GetDeviceCache.mockReset();
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([node]));
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
+    electronAPI.GetSessionStatus.mockReset();
+    electronAPI.GetSessionStatus.mockResolvedValue({ active: false });
+    electronAPI.GetSSHStatus.mockReset();
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'disabled' });
+    electronAPI.GetDeviceInfo.mockReset();
+    electronAPI.GetDeviceInfo.mockResolvedValue(deviceInfo());
+  });
+
+  afterEach(() => {
+    electronAPI.GetSSHStatus.mockReset();
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'disabled' });
+    electronAPI.GetDeviceInfo.mockReset();
+    electronAPI.GetDeviceInfo.mockResolvedValue(null);
+  });
+
+  const openDevice = async (name = 'Info-Dev') => {
+    render(<App />);
+    fireEvent.click(await screen.findByText(name));
+  };
+  const valueOf = (label) => screen.getByText(label, { selector: '.status-label' }).closest('.status-item');
+
+  it('shows version, uptime, last reboot, resources and workloads for the open device', async () => {
+    await openDevice();
+    await screen.findByText('16.6.0-lts');
+    expect(electronAPI.GetDeviceInfo).toHaveBeenCalledWith('node-1', 'Info-Dev');
+    expect(valueOf('UPTIME')).toHaveTextContent('3d 5h');
+    expect(valueOf('LAST REBOOT')).toHaveTextContent('Reboot command');
+    expect(valueOf('CPU')).toHaveTextContent('7.5%');
+    expect(valueOf('MEMORY')).toHaveTextContent('2.5 GB / 8.0 GB');
+    expect(valueOf('STORAGE')).toHaveTextContent('20 GB / 100 GB');
+    expect(screen.getByText('Workloads (1)')).toBeInTheDocument();
+  });
+
+  it('still shows it (as last boot) for an offline device', async () => {
+    const offline = { id: 'node-1', name: 'Info-Dev', status: 'offline', project: 'proj-1' };
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([offline]));
+    electronAPI.GetDeviceInfo.mockResolvedValue(deviceInfo({ online: false, uptimeSec: undefined }));
+    await openDevice();
+    await screen.findByText('16.6.0-lts');
+    expect(valueOf('LAST BOOT')).toHaveTextContent('3d 5h ago');
+    expect(screen.queryByText('UPTIME', { selector: '.status-label' })).not.toBeInTheDocument();
+  });
+
+  it('does not disturb the details when GetDeviceInfo fails', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => { });
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'enabled', cloudSession: 'live', expiry: Math.floor(Date.now() / 1000) + 3600, maxSessions: 3 });
+    electronAPI.GetDeviceInfo.mockRejectedValue(new Error('boom'));
+    await openDevice();
+    await screen.findByText('ENCRYPTION');
+    await screen.findByText('Device details unavailable');
+    expect(screen.queryByTestId('global-status-banner-mock')).not.toBeInTheDocument();
+    spy.mockRestore();
+  });
+
+  it('raises the token banner (not a toast) when the controller rejects the token', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => { });
+    electronAPI.GetDeviceInfo.mockRejectedValue(Object.assign(new Error('expired'), { code: 'UNAUTHORIZED' }));
+    await openDevice();
+    await waitFor(() => expect(electronAPI.GetDeviceInfo).toHaveBeenCalled());
+    expect(await screen.findByText(/Update Token/)).toBeInTheDocument();
+    expect(screen.queryByText('Device details unavailable')).not.toBeInTheDocument();
+    spy.mockRestore();
   });
 });
 

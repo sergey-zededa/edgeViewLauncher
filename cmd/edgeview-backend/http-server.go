@@ -207,6 +207,23 @@ func (s *HTTPServer) handleGetDeviceServices(w http.ResponseWriter, r *http.Requ
 	s.sendSuccess(w, services)
 }
 
+// handleGetDeviceInfo serves the details-page "Device" panel. Errors go
+// through sendError so 401/403 map to UNAUTHORIZED/FORBIDDEN.
+func (s *HTTPServer) handleGetDeviceInfo(w http.ResponseWriter, r *http.Request) {
+	var req NodeIDRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, err)
+		return
+	}
+
+	info, err := s.app.GetDeviceInfo(req.NodeID, req.NodeName)
+	if err != nil {
+		s.sendError(w, err)
+		return
+	}
+	s.sendSuccess(w, info)
+}
+
 func (s *HTTPServer) handleSetupSSH(w http.ResponseWriter, r *http.Request) {
 	var req NodeIDRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -717,6 +734,7 @@ func (s *HTTPServer) Start() {
 		}
 	})
 	router.HandleFunc("/api/device-services", s.handleGetDeviceServices)
+	router.HandleFunc("/api/device-info", s.handleGetDeviceInfo)
 	router.HandleFunc("/api/setup-ssh", s.handleSetupSSH)
 	router.HandleFunc("/api/ssh-status", s.handleGetSSHStatus)
 	router.HandleFunc("/api/edgeview-sessions", s.handleGetEdgeViewSessions)
