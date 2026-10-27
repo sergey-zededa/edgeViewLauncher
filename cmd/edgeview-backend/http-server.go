@@ -615,6 +615,18 @@ func (s *HTTPServer) sendError(w http.ResponseWriter, err error) {
 		return
 	}
 
+	// The device speaks EVE 16.6+'s end-to-end scheme, which no client can
+	// decrypt; only turning encryption off in the project policy helps.
+	if errors.Is(err, session.ErrE2EUnsupported) {
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(APIResponse{
+			Success: false,
+			Code:    "E2E_UNSUPPORTED",
+			Error:   session.ErrE2EUnsupported.Error(),
+		})
+		return
+	}
+
 	w.WriteHeader(http.StatusInternalServerError)
 	json.NewEncoder(w).Encode(APIResponse{
 		Success: false,

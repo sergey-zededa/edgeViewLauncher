@@ -785,8 +785,9 @@ func (a *App) StartTunnel(nodeID, targetIP string, targetPort int, protocol stri
 			return 0, "", err
 		}
 
-		// External policy denial — don't retry, return immediately with user-friendly message
-		if errors.Is(err, session.ErrExternalPolicyDenied) {
+		// External policy denial or an undecryptable E2E scheme — don't
+		// retry, return immediately with the user-friendly message
+		if errors.Is(err, session.ErrExternalPolicyDenied) || errors.Is(err, session.ErrE2EUnsupported) {
 			return 0, "", err
 		}
 

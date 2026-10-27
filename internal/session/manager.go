@@ -377,13 +377,37 @@ var (
 	// ErrExternalPolicyDenied is returned when the device rejects the
 	// connection because the External Connection Policy is disabled.
 	ErrExternalPolicyDenied = errors.New("The target IP is not recognized as an internal EVE-OS address and the device's External Connection Policy is disabled. Enable it using the \"Enable Ext. Policy\" button in Device Configuration below, or in the device's EdgeView settings on ZEDEDA Cloud.")
+
+	// ErrE2EUnsupported is returned when the device speaks the AES-GCM
+	// end-to-end scheme EVE introduced in 16.6 (lf-edge/eve 8e4a9c2ca). Its
+	// key is derived from a secret each side generates on its own and never
+	// exchanges, so no client can decrypt it (acknowledged upstream in
+	// lf-edge/eve#5573). Pre-16.6 EVE, incl. the 14.5/16.0 LTS lines, uses
+	// the AES-CFB scheme implemented by sendWrappedMessage/unwrapMessage.
+	ErrE2EUnsupported = errors.New("This device runs EVE 16.6 or newer with EdgeView end-to-end encryption on. That EVE encryption scheme never shares its session key with clients (an open upstream issue, lf-edge/eve#5573), so no EdgeView client can connect while it is on. Turn off \"Encrypt Session\" in the project's EdgeView policy on ZEDEDA Cloud to connect over TLS.")
 )
+
+// isFatalTunnelErr reports errors that no retry, instance rotation or other
+// candidate IP can fix: the remaining attempts are abandoned.
+func isFatalTunnelErr(err error) bool {
+	return errors.Is(err, ErrExternalPolicyDenied) || errors.Is(err, ErrE2EUnsupported)
+}
 
 // envelopeMsg matches original EdgeView crypto.go:30-33
 type envelopeMsg struct {
 	Message    []byte   `json:"message"`
 	Sha256Hash [32]byte `json:"sha256Hash"` // MUST be array, not slice!
+	// IV and Cipher are only set by EVE 16.6+ in its AES-GCM scheme; they
+	// are parsed to recognise it (see ErrE2EUnsupported) and never sent.
+	IV     []byte `json:"iv,omitempty"`
+	Cipher string `json:"cipher,omitempty"`
 }
+
+// e2eUpgradeNotice is the start of the plain-text reply EVE 16.6+ sends when
+// it receives a message encrypted with the pre-16.6 scheme ("Edgeview
+// encrypted message missing or invalid IV. Need Edgeview Client version
+// 0.8.8 or higher").
+const e2eUpgradeNotice = "Edgeview encrypted message"
 
 // tcpData matches original EdgeView tcp.go:29-34
 type tcpData struct {
@@ -638,10 +662,10 @@ func (m *Manager) StartProxy(ctx context.Context, config *zededa.SessionConfig, 
 			return 0, "", attemptErr
 		}
 
-		if attemptErr == ErrExternalPolicyDenied {
-			fmt.Printf("DEBUG: External connection policy denied — not retrying\n")
+		if isFatalTunnelErr(attemptErr) {
+			fmt.Printf("DEBUG: %v — not retrying\n", attemptErr)
 			listener.Close()
-			return 0, "", ErrExternalPolicyDenied
+			return 0, "", attemptErr
 		}
 		if attemptErr == ErrNoDeviceOnline {
 			seenNoDeviceOnline = true
@@ -769,10 +793,10 @@ func (m *Manager) StartProxyMulti(ctx context.Context, config *zededa.SessionCon
 			}
 			batch := candidateIPs[batchStart:batchEnd]
 
-			wsConn, clientIP, winningTarget, batchErr, policyDenied := m.raceBatch(ctx, config, batch, targetPort, initialInstID, round, reportProgress)
-			if policyDenied {
+			wsConn, clientIP, winningTarget, batchErr, fatalErr := m.raceBatch(ctx, config, batch, targetPort, initialInstID, round, reportProgress)
+			if fatalErr != nil {
 				listener.Close()
-				return 0, "", ErrExternalPolicyDenied
+				return 0, "", fatalErr
 			}
 			if wsConn != nil {
 				infof(fmt.Sprintf("round=%d", round), "WINNER %s after %v (total %v)", winningTarget, time.Since(roundStart), time.Since(startedAt))
@@ -814,10 +838,10 @@ func (m *Manager) StartProxyMulti(ctx context.Context, config *zededa.SessionCon
 // raceBatch runs tryProxyAttempt concurrently for each IP in `batch`, each
 // using a distinct InstID. The first non-error result wins; losing
 // goroutines are drained and their wsConns closed in the background.
-// Returns (wsConn, clientIP, winningTarget, lastErr, policyDenied).
-// policyDenied==true means at least one probe returned ErrExternalPolicyDenied
-// — caller should abort all further retries.
-func (m *Manager) raceBatch(ctx context.Context, config *zededa.SessionConfig, batch []string, targetPort, initialInstID, round int, reportProgress func(string)) (*websocket.Conn, string, string, error, bool) {
+// Returns (wsConn, clientIP, winningTarget, lastErr, fatalErr).
+// fatalErr is set when a probe failed with an isFatalTunnelErr error —
+// caller should abort all further retries.
+func (m *Manager) raceBatch(ctx context.Context, config *zededa.SessionConfig, batch []string, targetPort, initialInstID, round int, reportProgress func(string)) (*websocket.Conn, string, string, error, error) {
 	type result struct {
 		wsConn   *websocket.Conn
 		clientIP string
@@ -849,8 +873,7 @@ func (m *Manager) raceBatch(ctx context.Context, config *zededa.SessionConfig, b
 		}(target, instID)
 	}
 
-	policyDenied := false
-	var lastErr error
+	var lastErr, fatalErr error
 
 	for i := 0; i < len(batch); i++ {
 		r := <-results
@@ -874,16 +897,16 @@ func (m *Manager) raceBatch(ctx context.Context, config *zededa.SessionConfig, b
 				}()
 			}
 			infof(fmt.Sprintf("round=%d", round), "batch winner: %s", r.target)
-			return r.wsConn, r.clientIP, r.target, nil, false
+			return r.wsConn, r.clientIP, r.target, nil, nil
 		}
-		if r.err == ErrExternalPolicyDenied {
-			policyDenied = true
+		if isFatalTunnelErr(r.err) {
+			fatalErr = r.err
 			cancel()
 		}
 		lastErr = r.err
 	}
 	cancel()
-	return nil, "", "", lastErr, policyDenied
+	return nil, "", "", lastErr, fatalErr
 }
 
 // postDoneTimeout bounds how long we wait for +++tcpSetupOK+++ after seeing
@@ -923,8 +946,8 @@ func (m *Manager) waitForTcpSetupOK(ctx context.Context, wsConn *websocket.Conn,
 
 			payload, err := unwrapMessage(msg, key, encrypt)
 			if err != nil {
-				if err == ErrBusyInstance {
-					setupDone <- ErrBusyInstance
+				if err == ErrBusyInstance || err == ErrE2EUnsupported {
+					setupDone <- err
 					return
 				}
 				if err == ErrNoDeviceOnline {
@@ -1270,8 +1293,8 @@ func (m *Manager) ExecuteCommand(nodeID string, command string) (string, error) 
 					commandErr = ErrBusyInstance
 					break
 				}
-				if err == ErrNoDeviceOnline {
-					commandErr = ErrNoDeviceOnline
+				if err == ErrNoDeviceOnline || err == ErrE2EUnsupported {
+					commandErr = err
 					break
 				}
 				// Other error, just log and append raw (e.g. banners)
@@ -1288,8 +1311,8 @@ func (m *Manager) ExecuteCommand(nodeID string, command string) (string, error) 
 			lastErr = ErrBusyInstance
 			continue
 		}
-		if commandErr == ErrNoDeviceOnline {
-			return "", ErrNoDeviceOnline
+		if commandErr == ErrNoDeviceOnline || commandErr == ErrE2EUnsupported {
+			return "", commandErr
 		}
 
 		// Successfully read some output
@@ -1392,6 +1415,11 @@ func (m *Manager) QueryDevice(ctx context.Context, config *zededa.SessionConfig,
 			if unwrapErr != nil {
 				rawMsg := string(nextMsg)
 
+				if unwrapErr == ErrE2EUnsupported {
+					wsConn.Close()
+					return "", unwrapErr
+				}
+
 				// Check for "no device online" error FIRST
 				if strings.Contains(rawMsg, "no device online") {
 					wsConn.Close()
@@ -1466,6 +1494,10 @@ func (m *Manager) QueryDevice(ctx context.Context, config *zededa.SessionConfig,
 			// Verify and Unwrap
 			payload, err := unwrapMessage(message, config.Key, config.Enc)
 			if err != nil {
+				if err == ErrE2EUnsupported {
+					wsConn.Close()
+					return "", err
+				}
 				// Check for specific server errors (Raw messages)
 				msgStr := string(message)
 				if strings.Contains(msgStr, "no device online") {
@@ -1564,6 +1596,10 @@ func unwrapMessage(data []byte, key string, encrypt bool) ([]byte, error) {
 		return nil, ErrBusyInstance
 	}
 
+	if strings.HasPrefix(strings.TrimSpace(raw), e2eUpgradeNotice) {
+		return nil, ErrE2EUnsupported
+	}
+
 	var envelope envelopeMsg
 	if err := json.Unmarshal(data, &envelope); err != nil {
 		// Log the full raw message (or a large prefix if extremely long)
@@ -1572,6 +1608,10 @@ func unwrapMessage(data []byte, key string, encrypt bool) ([]byte, error) {
 		}
 		// fmt.Printf("DEBUG: unwrapMessage failed to unmarshal envelope. Raw data (len=%d): %s\n", len(data), raw)
 		return nil, fmt.Errorf("failed to unmarshal envelope: %w", err)
+	}
+
+	if envelope.Cipher != "" || len(envelope.IV) > 0 {
+		return nil, ErrE2EUnsupported
 	}
 
 	if encrypt {

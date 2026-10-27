@@ -279,6 +279,10 @@ func (m *Manager) runCollectInfo(ctx context.Context, job *CollectInfoJob, confi
 					m.updateJobError(job, "Device busy (instance limit reached)")
 					return
 				}
+				if err == ErrE2EUnsupported {
+					m.updateJobError(job, err.Error())
+					return
+				}
 				// Log but continue?
 				fmt.Printf("CollectInfo unwrap error: %v\n", err)
 				continue
