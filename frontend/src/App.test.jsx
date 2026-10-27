@@ -1738,6 +1738,55 @@ describe('Navigation and interaction flows', () => {
       expect(screen.queryByRole('heading', { name: 'Configuration' })).not.toBeInTheDocument();
     });
   });
+
+  it('Escape in Settings closes the Base URL dropdown, then leaves the field, then closes Settings', async () => {
+    render(<App />);
+    const appContainer = document.querySelector('.app-container');
+    const openSettings = async () => {
+      fireEvent.keyDown(appContainer, { key: ',', metaKey: true });
+      await screen.findByRole('heading', { name: 'Configuration' });
+    };
+    const isSettingsOpen = () => screen.queryByRole('heading', { name: 'Configuration' }) !== null;
+
+    await openSettings();
+    const baseUrl = await screen.findByPlaceholderText('https://zedcontrol.zededa.net');
+    baseUrl.focus();
+    fireEvent.focus(baseUrl);
+    expect(await screen.findByRole('listbox')).toBeInTheDocument();
+
+    // 1st Escape: only the dropdown closes.
+    fireEvent.keyDown(baseUrl, { key: 'Escape' });
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    expect(isSettingsOpen()).toBe(true);
+
+    // 2nd Escape: focus leaves the field; Settings stays open.
+    fireEvent.keyDown(baseUrl, { key: 'Escape' });
+    expect(document.activeElement).toBe(appContainer);
+    expect(isSettingsOpen()).toBe(true);
+
+    // 3rd Escape: Settings closes.
+    fireEvent.keyDown(appContainer, { key: 'Escape' });
+    await waitFor(() => expect(isSettingsOpen()).toBe(false));
+  });
+
+  it('a Base URL dropdown left open does not reappear when Settings is reopened', async () => {
+    render(<App />);
+    const appContainer = document.querySelector('.app-container');
+    fireEvent.keyDown(appContainer, { key: ',', metaKey: true });
+    await screen.findByRole('heading', { name: 'Configuration' });
+
+    // Open via the chevron so the input never has focus to lose.
+    fireEvent.mouseDown(screen.getByTitle('Show preset URLs'));
+    expect(await screen.findByRole('listbox')).toBeInTheDocument();
+
+    // Close Settings from the toolbar icon, then reopen.
+    fireEvent.click(document.querySelector('.header-actions svg.lucide-settings'));
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Configuration' })).not.toBeInTheDocument());
+    fireEvent.keyDown(appContainer, { key: ',', metaKey: true });
+    await screen.findByRole('heading', { name: 'Configuration' });
+
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+  });
 });
 
 describe('EdgeView session controls', () => {

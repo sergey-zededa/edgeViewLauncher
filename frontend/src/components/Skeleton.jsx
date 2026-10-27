@@ -14,9 +14,9 @@ export function DeviceItemSkeleton() {
   return (
     <div className="skeleton-device-item">
       <div className="skeleton skeleton-circle skeleton-avatar" />
+      {/* Single line: real rows show name and project inline */}
       <div className="skeleton-lines">
-        <div className="skeleton skeleton-text" style={{ width: '60%' }} />
-        <div className="skeleton skeleton-text skeleton-text-short" />
+        <div className="skeleton skeleton-text" style={{ width: '45%' }} />
       </div>
       <div className="skeleton skeleton-status" />
     </div>

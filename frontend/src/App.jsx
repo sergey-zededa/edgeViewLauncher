@@ -1369,6 +1369,8 @@ function App() {
 
   // Sync editingCluster with activeCluster when settings open and load user info
   useEffect(() => {
+    // Don't carry an open preset dropdown across a close/reopen of Settings.
+    setShowBaseUrlPresets(false);
     if (showSettings) {
       // If we are opening settings, default to viewing the active cluster
       // Note: We avoid including config in dependencies to prevent overriding user selection
@@ -3253,8 +3255,23 @@ Do you want to try connecting anyway?`)) {
       setShowClusterDropdown(null);
       return;
     }
+    // Escape dismisses one layer at a time in Settings: an open preset
+    // dropdown, then the field being edited, and only then Settings itself.
+    if (e.key === 'Escape' && showBaseUrlPresets) {
+      e.preventDefault();
+      setShowBaseUrlPresets(false);
+      return;
+    }
     if (e.key === 'Escape' && showSettings) {
       e.preventDefault();
+      const target = e.target;
+      const isEditable = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable);
+      if (isEditable) {
+        // Move focus to the container rather than blur() to <body>, so the
+        // next Escape still reaches this handler and closes Settings.
+        e.currentTarget.focus();
+        return;
+      }
       setShowSettings(false);
       return;
     }
@@ -4217,7 +4234,9 @@ Do you want to try connecting anyway?`)) {
                       }}
                       onFocus={() => setShowBaseUrlPresets(true)}
                       onBlur={async (e) => {
-                        // Don't close the dropdown when the blur target is the chevron or a preset item — let those handlers run first.
+                        // The chevron and preset items preventDefault on mousedown, so
+                        // they never blur the input; any real blur (Tab, Escape) closes it.
+                        setShowBaseUrlPresets(false);
                         const url = e.target.value.trim().replace(/\/+$/, '');
                         if (!url) { setBaseUrlProbe({ state: 'idle' }); return; }
                         if (!/^https?:\/\//i.test(url)) {
@@ -6388,7 +6407,7 @@ Do you want to try connecting anyway?`)) {
                       onClick={() => handleConnect(node)}
                     >
                       <div className="node-icon">
-                        <Server size={18} />
+                        <Server size={16} />
                       </div>
                       <div className="node-info">
                         <div className="node-name">
@@ -6403,9 +6422,8 @@ Do you want to try connecting anyway?`)) {
                         {formatStatus(node.status)}
                       </div>
                       <div className="node-trailing">
-                        {index === selectedIndex && (
-                          <span className="shortcut" title="Press Enter to open">↵</span>
-                        )}
+                        {/* Always rendered (just hidden) so the status column doesn't shift on the selected row. */}
+                        <span className="shortcut" title="Press Enter to open" style={{ visibility: index === selectedIndex ? 'visible' : 'hidden' }}>↵</span>
                         <ChevronRight size={16} className="node-chevron" />
                       </div>
                     </div>
@@ -6422,7 +6440,7 @@ Do you want to try connecting anyway?`)) {
                         onClick={() => handleConnect(node)}
                       >
                         <div className="node-icon">
-                          <Server size={18} />
+                          <Server size={16} />
                         </div>
                         <div className="node-info">
                           <div className="node-name">
@@ -6437,9 +6455,8 @@ Do you want to try connecting anyway?`)) {
                           {formatStatus(node.status)}
                         </div>
                         <div className="node-trailing">
-                          {globalIndex === selectedIndex && (
-                            <span className="shortcut" title="Press Enter to open">↵</span>
-                          )}
+                          {/* Always rendered (just hidden) so the status column doesn't shift on the selected row. */}
+                          <span className="shortcut" title="Press Enter to open" style={{ visibility: globalIndex === selectedIndex ? 'visible' : 'hidden' }}>↵</span>
                           <ChevronRight size={16} className="node-chevron" />
                         </div>
                       </div>
