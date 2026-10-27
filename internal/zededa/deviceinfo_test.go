@@ -190,6 +190,7 @@ func TestRebootEnumMapping(t *testing.T) {
 		"DEVICE_BOOT_REASON_KERNEL":        "Kernel panic",
 		"DEVICE_BOOT_REASON_POWEROFF_CMD":  "Power off command",
 		"DEVICE_BOOT_REASON_FIRST":         "First boot",
+		"DEVICE_BOOT_REASON_VAULT_FAILED":  "Vault failed",
 		"DEVICE_BOOT_REASON_BROWNOUT_DIP":  "Brownout dip", // unknown -> humanized tail
 	}
 	for enum, want := range cases {

@@ -234,6 +234,7 @@ var rebootLabels = map[string]string{
 	"POWER_FAIL":    "Power failure",
 	"POWEROFF_CMD":  "Power off command",
 	"VAULT":         "Vault error",
+	"VAULT_FAILED":  "Vault failed",
 	"UNKNOWN":       "Unknown",
 	"PARSE_FAIL":    "Unparseable reason",
 }
@@ -243,7 +244,7 @@ var rebootLabels = map[string]string{
 var rebootEnumByNumber = map[int]string{
 	1: "FIRST", 2: "REBOOT_CMD", 3: "UPDATE", 4: "FALLBACK", 5: "DISCONNECT",
 	6: "FATAL", 7: "OOM", 8: "WATCHDOG_HUNG", 9: "WATCHDOG_PID", 10: "KERNEL",
-	11: "POWER_FAIL", 12: "UNKNOWN", 255: "PARSE_FAIL",
+	11: "POWER_FAIL", 12: "UNKNOWN", 13: "VAULT_FAILED", 14: "POWEROFF_CMD", 255: "PARSE_FAIL",
 }
 
 // RebootCode strips the enum prefix from a DeviceBootReason value
@@ -404,10 +405,12 @@ func BuildDeviceInfo(nodeID string, status json.RawMessage, now time.Time) *Devi
 
 	dinfo := st.obj("dinfo")
 
-	// CPU. Cpu.Utilization is assumed to already be a percentage (0-100): the
-	// proto only says "CPU Utilization" and EVE reports raw CPU seconds, so
-	// the controller does the math and nothing in the schema says it
-	// normalizes to a fraction. Values are therefore shown as-is, not scaled.
+	// CPU. Cpu.Utilization is percent of total device capacity (0-100): the
+	// controller computes a 1-hour average from cumulative CPU time
+	// (last-first over the past hour, clamped at 0) and EVE already scales by
+	// CPU count (host busy time / Ncpus, app time / VCpus). Values are shown
+	// as-is, not rescaled. With no samples (e.g. offline) the controller
+	// returns {Utilization:0}, so the UI hides it for non-online devices.
 	// A present-but-empty object is a genuine 0 (proto3 omits zero doubles).
 	cpu := &CPUInfo{}
 	haveCPU := false
@@ -432,9 +435,16 @@ func BuildDeviceInfo(nodeID string, status json.RawMessage, now time.Time) *Devi
 	mem := &MemoryInfo{}
 	if ms := st.obj("memorySummary"); ms != nil {
 		mem.TotalMB = positive(ms.num("deviceMemoryMB"))
-		mem.UsedEveMB = nonNegative(ms.num("usedEveMB"))
-		mem.AllocatedAppsMB = nonNegative(ms.num("allocatedAppsMB"))
-		mem.AllocatedEveMB = nonNegative(ms.num("allocatedEveMB"))
+		// The controller always emits memorySummary, all zeros when the
+		// device never reported; treat that as absent, not as "0 MB used".
+		used, usedOK := ms.num("usedEveMB")
+		apps, appsOK := ms.num("allocatedAppsMB")
+		eve, eveOK := ms.num("allocatedEveMB")
+		if used != 0 || apps != 0 || eve != 0 {
+			mem.UsedEveMB = nonNegative(used, usedOK)
+			mem.AllocatedAppsMB = nonNegative(apps, appsOK)
+			mem.AllocatedEveMB = nonNegative(eve, eveOK)
+		}
 	}
 	if mem.TotalMB == nil {
 		if legacy := st.obj("memory"); legacy != nil {
@@ -466,8 +476,8 @@ func BuildDeviceInfo(nodeID string, status json.RawMessage, now time.Time) *Devi
 
 // BuildWorkloads normalizes app-instance status items. Per-app CPU comes from
 // cpu.Utilization (AppInstStatusMsg) or the flat cpuUtilization (the summary
-// shape); memory from memorySummary {AllocatedMB, UsedMB}. Same percent
-// assumption as the device CPU.
+// shape); memory from memorySummary {AllocatedMB, UsedMB}. Same meaning as the
+// device CPU: percent of total capacity, 1-hour average.
 func BuildWorkloads(items []json.RawMessage) []WorkloadInfo {
 	out := make([]WorkloadInfo, 0, len(items))
 	for _, item := range items {

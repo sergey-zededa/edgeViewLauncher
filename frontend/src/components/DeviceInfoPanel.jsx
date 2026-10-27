@@ -21,8 +21,8 @@ export const formatMB = (mb) => {
   return `${(gb / MB_PER_GB).toFixed(1)} TB`;
 };
 
-// The controller's CPU Utilization is treated as a percentage (0-100) and
-// shown as-is; the backend does not rescale it.
+// The controller's CPU Utilization is percent of total device capacity
+// (0-100), a 1-hour average (EVE scales by CPU count); shown as-is.
 export const formatPercent = (p) => {
   if (typeof p !== 'number' || !Number.isFinite(p)) return '—';
   return `${p < 10 ? p.toFixed(1) : Math.round(p)}%`;
@@ -86,8 +86,9 @@ const Item = ({ label, title, children }) => (
 /**
  * @param {string} nodeId
  * @param {string} nodeName          device name (lets the backend fetch app statuses concurrently)
- * @param {boolean} isOnline         controller's view of the device; offline shows "last boot" and
- *                                   marks the numbers as last reported
+ * @param {boolean} isOnline         the page's online state (same as the rest of the details,
+ *                                   includes maintenance mode); offline shows "last boot", hides CPU
+ *                                   and marks the numbers as last reported
  * @param {object} timeFormatOptions Intl options for full timestamps in tooltips
  * @param {() => void} onAuthError   called when the controller rejects the API token
  */
@@ -158,13 +159,17 @@ const DeviceInfoPanel = ({ nodeId, nodeName, isOnline, timeFormatOptions, onAuth
     : undefined;
 
   // --- Uptime / last boot ---
-  const online = !!info.online;
+  // The page's own online state, not info.online, so this panel agrees with
+  // the rest of the details (e.g. maintenance mode counts as online).
+  const online = !!isOnline;
   const bootAgo = agoFrom(info.bootTime);
   let uptimeLabel = 'UPTIME';
   let uptimeValue = '—';
   let uptimeTitle;
   if (online) {
-    if (num(info.uptimeSec) !== null) uptimeValue = formatDuration(info.uptimeSec);
+    const bootMs = Date.parse(info.bootTime);
+    if (info.bootTime && !Number.isNaN(bootMs)) uptimeValue = formatDuration((Date.now() - bootMs) / 1000);
+    else if (num(info.uptimeSec) !== null) uptimeValue = formatDuration(info.uptimeSec);
     if (info.bootTime) uptimeTitle = `Booted ${fullTime(info.bootTime)}`;
   } else {
     // An offline device's uptime is stale: say when it last booted instead.
@@ -184,11 +189,15 @@ const DeviceInfoPanel = ({ nodeId, nodeName, isOnline, timeFormatOptions, onAuth
 
   // --- Resources ---
   const cpu = info.cpu;
-  const cpuPct = num(cpu?.percent);
+  // CPU is a 1-hour average the controller reports as 0 when it has no
+  // samples (offline), so it is only meaningful while online.
+  const cpuPct = online ? num(cpu?.percent) : null;
   const mem = info.memory;
   const memTotal = num(mem?.totalMB);
-  const memApps = num(mem?.allocatedAppsMB);
-  const memEve = num(mem?.usedEveMB);
+  // All-zero used/allocated means the device never reported memory.
+  const memReported = [mem?.usedEveMB, mem?.allocatedAppsMB, mem?.allocatedEveMB].some((v) => num(v) !== null && v !== 0);
+  const memApps = memReported ? num(mem?.allocatedAppsMB) : null;
+  const memEve = memReported ? num(mem?.usedEveMB) : null;
   // usedEveMB is EVE's own usage, not host-wide: show what is committed
   // (apps' allocation + EVE's use) against the device total.
   const memCommitted = (memApps !== null || memEve !== null) ? (memApps ?? 0) + (memEve ?? 0) : null;
@@ -226,7 +235,7 @@ const DeviceInfoPanel = ({ nodeId, nodeName, isOnline, timeFormatOptions, onAuth
           {lrAgo && <div style={subStyle}>{lrAgo}</div>}
         </Item>
 
-        <Item label="CPU">
+        <Item label="CPU" title="Average over the last hour">
           <div className="status-value">{cpuPct !== null ? formatPercent(cpuPct) : '—'}</div>
           {cpuPct !== null && <Bar pct={cpuPct} />}
           {num(cpu?.cores) !== null && <div style={subStyle}>{cpu.cores} {cpu.cores === 1 ? 'core' : 'cores'}</div>}
@@ -289,7 +298,7 @@ const DeviceInfoPanel = ({ nodeId, nodeName, isOnline, timeFormatOptions, onAuth
                   <div key={w.id || w.name} data-testid="workload-row" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 90px 56px 130px', gap: '8px', alignItems: 'center' }}>
                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={w.name}>{w.name}</span>
                     <span className={`status-value ${runStateClass(w.runState)}`} style={{ fontSize: '12px' }}>{formatRunState(w.runState)}</span>
-                    <span title="CPU">{num(w.cpuPercent) !== null ? formatPercent(w.cpuPercent) : '—'}</span>
+                    <span title="CPU (average over the last hour)">{online && num(w.cpuPercent) !== null ? formatPercent(w.cpuPercent) : '—'}</span>
                     <span title="Memory used / allocated">
                       {used !== null && alloc !== null ? `${formatMB(used)} / ${formatMB(alloc)}`
                         : alloc !== null ? `${formatMB(alloc)} alloc.`

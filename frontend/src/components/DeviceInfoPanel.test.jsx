@@ -103,6 +103,48 @@ describe('DeviceInfoPanel', () => {
     expect(screen.getByText(/values are last reported/)).toBeInTheDocument();
   });
 
+  it('shows a dash for CPU (and workload CPU) when offline, but keeps memory and storage', async () => {
+    GetDeviceInfo.mockResolvedValue(info({ online: false, cpu: { percent: 0, cores: 4 } }));
+    renderPanel({ isOnline: false });
+    await screen.findByText('16.6.0-lts');
+    expect(valueOf('CPU')).toHaveTextContent('—');
+    expect(valueOf('CPU')).not.toHaveTextContent('%');
+    expect(valueOf('MEMORY')).toHaveTextContent('2.6 GB / 7.6 GB');
+    expect(valueOf('STORAGE')).toHaveTextContent('33 GB / 120 GB');
+    fireEvent.click(screen.getByText('Workloads (2)'));
+    expect(screen.getAllByTestId('workload-row')[0]).not.toHaveTextContent('4.3%');
+  });
+
+  it('labels CPU as a 1-hour average', async () => {
+    renderPanel();
+    await screen.findByText('16.6.0-lts');
+    expect(valueOf('CPU').querySelector('.status-label')).toHaveAttribute('title', 'Average over the last hour');
+  });
+
+  it('follows the isOnline prop, not info.online (maintenance mode shows uptime)', async () => {
+    GetDeviceInfo.mockResolvedValue(info({ online: false, runState: 'RUN_STATE_MAINTENANCE_MODE', uptimeSec: undefined }));
+    renderPanel({ isOnline: true });
+    await screen.findByText('16.6.0-lts');
+    expect(valueOf('UPTIME')).toHaveTextContent('2d 2h');
+    expect(screen.queryByText(/values are last reported/)).not.toBeInTheDocument();
+    expect(valueOf('CPU')).toHaveTextContent('13%');
+  });
+
+  it('falls back to uptimeSec when bootTime is absent', async () => {
+    GetDeviceInfo.mockResolvedValue(info({ bootTime: undefined, uptimeSec: 5 * 3600 + 12 * 60 }));
+    renderPanel();
+    await screen.findByText('16.6.0-lts');
+    expect(valueOf('UPTIME')).toHaveTextContent('5h 12m');
+  });
+
+  it('shows a dash for memory when the controller sent all zeros', async () => {
+    GetDeviceInfo.mockResolvedValue(info({ memory: { usedEveMB: 0, allocatedAppsMB: 0, allocatedEveMB: 0 } }));
+    renderPanel();
+    await screen.findByText('16.6.0-lts');
+    expect(valueOf('MEMORY')).toHaveTextContent('—');
+    expect(valueOf('MEMORY')).not.toHaveTextContent('0 MB');
+  });
+
   it('degrades to dashes when fields are missing', async () => {
     GetDeviceInfo.mockResolvedValue({ nodeId: 'node-1', online: true, workloads: [], workloadsAvailable: true });
     renderPanel();

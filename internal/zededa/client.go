@@ -415,7 +415,8 @@ func (c *Client) fetchAppStatusItems(deviceID, deviceName string) ([]json.RawMes
 		}
 
 		for _, item := range pageResp.List {
-			if obj := parseJSONObj(item); obj != nil && obj.str("deviceId") != deviceID {
+			// Skip non-objects (e.g. null) and other devices' items.
+			if obj := parseJSONObj(item); obj == nil || obj.str("deviceId") != deviceID {
 				continue
 			}
 			items = append(items, item)

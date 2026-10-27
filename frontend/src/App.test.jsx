@@ -2479,7 +2479,7 @@ describe('Device info section', () => {
     online: true,
     eveVersion: '16.6.0-lts',
     partition: 'IMGA',
-    bootTime: new Date(Date.now() - 3 * 86400 * 1000).toISOString(),
+    bootTime: new Date(Date.now() - (3 * 86400 + 5 * 3600) * 1000).toISOString(),
     uptimeSec: 3 * 86400 + 5 * 3600,
     lastReboot: { code: 'REBOOT_CMD', label: 'Reboot command', reason: 'user requested', time: new Date(Date.now() - 3 * 86400 * 1000).toISOString() },
     cpu: { percent: 7.5, cores: 4 },
@@ -2538,7 +2538,7 @@ describe('Device info section', () => {
     electronAPI.GetDeviceInfo.mockResolvedValue(deviceInfo({ online: false, uptimeSec: undefined }));
     await openDevice();
     await screen.findByText('16.6.0-lts');
-    expect(valueOf('LAST BOOT')).toHaveTextContent('3d 0h ago');
+    expect(valueOf('LAST BOOT')).toHaveTextContent('3d 5h ago');
     expect(screen.queryByText('UPTIME', { selector: '.status-label' })).not.toBeInTheDocument();
   });
 
