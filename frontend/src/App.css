@@ -18,20 +18,23 @@ body {
 }
 
 /* Header & Search */
+/* Title bar: one line sitting level with the macOS traffic lights (overlay
+   title bar), side-padded so long cluster names never run under them. */
 .cluster-info {
-    padding: 28px 16px 8px 16px;
-    /* Balanced padding now that all platforms use frameless windows */
+    box-sizing: border-box;
+    height: 34px;
+    padding: 0 80px 4px;
     background: var(--bg-primary);
     color: var(--text-secondary);
     font-size: 12px;
-    text-align: center;
     -webkit-app-region: drag;
     font-weight: 500;
     display: flex;
-    flex-direction: column;
     align-items: center;
-    gap: 2px;
-    min-height: 71px;
+    justify-content: center;
+    gap: 8px;
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 
 .cluster-info .user-email {
@@ -39,6 +42,11 @@ body {
     color: var(--text-placeholder);
     font-weight: 400;
     cursor: default;
+}
+
+.cluster-info .user-email::before {
+    content: '·';
+    margin-right: 8px;
 }
 
 .cluster-info .user-email.expiring-soon {
@@ -166,8 +174,8 @@ body {
 .results-list {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    padding: 10px;
+    gap: 1px;
+    padding: 4px 10px 10px;
     overflow-y: auto;
     flex: 1;
     animation: fadeIn 0.2s ease-out;
@@ -186,7 +194,7 @@ body {
 .result-item {
     display: flex;
     align-items: center;
-    padding: 10px 12px;
+    padding: 5px 12px;
     background: transparent;
     border-radius: 6px;
     cursor: pointer;
@@ -212,8 +220,8 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
     background: rgba(255, 255, 255, 0.05);
     border-radius: 6px;
 }
@@ -340,13 +348,23 @@ body {
     color: var(--text-primary);
 }
 
+/* Device-list group label ("Recent" / "All Devices"): a quiet caption
+   rather than a heading, so it doesn't cost a full row of height. */
 .section-header {
-    padding: 16px;
-    border-bottom: 1px solid var(--border-color);
+    padding: 12px 12px 4px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    text-align: left;
+}
+
+.section-header:first-child {
+    padding-top: 6px;
 }
 
 /* Unified header text styling */
-.section-header,
 .section-title,
 .details-header h3,
 .log-header {

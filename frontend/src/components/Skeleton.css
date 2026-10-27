@@ -25,13 +25,13 @@
 .skeleton-device-item {
   display: flex;
   align-items: center;
-  padding: 10px 12px;
+  padding: 5px 12px;
   gap: 12px;
 }
 
 .skeleton-device-item .skeleton-avatar {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   flex-shrink: 0;
 }
 
@@ -51,12 +51,15 @@
 
 /* Section header skeleton */
 .skeleton-section-header {
-  padding: 16px;
-  border-bottom: 1px solid var(--border-color);
+  padding: 12px 12px 4px;
+}
+
+.skeleton-section-header:first-child {
+  padding-top: 6px;
 }
 
 .skeleton-section-header .skeleton {
-  height: 14px;
+  height: 10px;
   width: 120px;
 }
 
