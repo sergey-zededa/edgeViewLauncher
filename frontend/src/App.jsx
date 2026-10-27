@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { ConnectToNode, CancelConnection, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, DisableSSH, RemoveSSHKey, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, EnableExternalPolicy, ResetEdgeView, DisconnectEdgeView, StartEdgeViewSession, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, ProbeBaseUrl, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo, StartComposeDiagnostics, GetComposeDiagnosticsStatus, SaveComposeDiagnostics, CheckForUpdates, openTerminalWindow, openVncWindow, openExternalTerminal, getElectronAppInfo, startContainerShell, getSystemTimeFormat, openExternal, InjectSecureConfig, GetDeviceCache, RefreshDeviceCache, OnTunnelClosing, EmitTunnelsChanged } from './tauriAPI';
+import { ConnectToNode, CancelConnection, GetSettings, SaveSettings, GetDeviceServices, SetupSSH, GetSSHStatus, GetEdgeViewSessions, DisableSSH, RemoveSSHKey, SetVGAEnabled, SetUSBEnabled, SetConsoleEnabled, EnableExternalPolicy, ResetEdgeView, DisconnectEdgeView, StartEdgeViewSession, VerifyTunnel, GetUserInfo, GetEnterprise, GetProjects, GetSessionStatus, GetConnectionProgress, GetAppInfo, StartTunnel, CloseTunnel, ListTunnels, AddRecentDevice, VerifyToken, ProbeBaseUrl, OnUpdateAvailable, OnUpdateNotAvailable, OnUpdateDownloadProgress, OnUpdateDownloaded, OnUpdateError, DownloadUpdate, InstallUpdate, SecureStorageStatus, SecureStorageMigrate, SecureStorageGetSettings, SecureStorageSaveSettings, StartCollectInfo, GetCollectInfoStatus, SaveCollectInfo, StartComposeDiagnostics, GetComposeDiagnosticsStatus, SaveComposeDiagnostics, CheckForUpdates, openTerminalWindow, openVncWindow, openExternalTerminal, getElectronAppInfo, startContainerShell, getSystemTimeFormat, openExternal, InjectSecureConfig, GetDeviceCache, RefreshDeviceCache, OnTunnelClosing, EmitTunnelsChanged } from './tauriAPI';
 import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, ChevronRight, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers, Shield, Moon, Sun, HelpCircle, Key, Plug, Unplug } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
 import Tooltip from './components/Tooltip';
@@ -1484,6 +1484,62 @@ function App() {
     : parseInt(sshStatus?.expiry, 10) * 1000 > Date.now());
   const isDeviceOnline = isInteractive(selectedNode?.status);
 
+  // Per-slot EdgeView session usage from the controller (informational).
+  // Fetched while the device details are open and the cloud session is live,
+  // refreshed every 15s and whenever this device's tunnel set changes. Any
+  // failure leaves it null so the SESSIONS item falls back to the max alone.
+  const [sessionsState, setSessionsState] = useState({ nodeId: null, data: null });
+  const selectedNodeId = selectedNode?.id ?? null;
+  const tunnelSig = activeTunnels
+    .filter(t => t.nodeId === selectedNodeId)
+    .map(t => t.id)
+    .sort()
+    .join(',');
+  useEffect(() => {
+    if (!selectedNodeId || !cloudSessionLive) return undefined;
+    let cancelled = false;
+    const fetchSessions = async () => {
+      try {
+        const data = await GetEdgeViewSessions(selectedNodeId);
+        // Ignore a response that lands after navigating to another device.
+        if (cancelled || selectedNodeIdRef.current !== selectedNodeId) return;
+        setSessionsState({ nodeId: selectedNodeId, data: data || null });
+      } catch (err) {
+        console.error('Failed to load EdgeView sessions:', err);
+        if (!cancelled && selectedNodeIdRef.current === selectedNodeId) setSessionsState({ nodeId: selectedNodeId, data: null });
+      }
+    };
+    fetchSessions();
+    const intervalId = setInterval(fetchSessions, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [selectedNodeId, cloudSessionLive, tunnelSig]);
+
+  // Only trust data fetched for the device on screen while its session is live.
+  const edgeViewSessions = (cloudSessionLive && sessionsState.nodeId === selectedNodeId) ? sessionsState.data : null;
+  const isE2eActive = !!(sessionStatus?.isEncrypted || sshStatus?.isEncrypted);
+  // Slot counts are only meaningful when the controller has a live session and
+  // at least one slot's state is known.
+  const sessionsKnown = !!(edgeViewSessions?.available && edgeViewSessions.maxSessions > 0 &&
+    (Array.isArray(edgeViewSessions.slots) && edgeViewSessions.slots.length > 0
+      ? edgeViewSessions.slots.some(sl => sl.state !== 'unknown')
+      : edgeViewSessions.unknown < edgeViewSessions.maxSessions));
+  const sessionsLabel = sessionsKnown
+    ? `${edgeViewSessions.inUse} / ${edgeViewSessions.maxSessions} in use`
+    : (sshStatus?.maxSessions > 0 ? String(sshStatus.maxSessions) : null);
+  const sessionsTooltip = sessionsKnown
+    ? ['EdgeView session slots in use (any client: this launcher, the ZEDEDA UI, the edgeview CLI) out of the maximum allowed by the Project or edge-node level EdgeView policy.',
+      ...(edgeViewSessions.slots || []).map(sl => {
+        const what = sl.state === 'busy' ? (sl.ours ? 'in use (this launcher)' : 'in use')
+          : sl.state === 'free' ? 'free'
+            : sl.state === 'offline' ? 'device not connected'
+              : 'unknown';
+        return `Slot ${sl.inst}: ${what}`;
+      })].join('\n')
+    : 'Maximum number of concurrent tunnels to the edge node allowed, controlled by Project or edge-node level EdgeView policy.';
+
   // State for time format preference
   const [use24HourTime, setUse24HourTime] = useState(false);
 
@@ -2063,11 +2119,28 @@ function App() {
     err?.code === 'EXT_POLICY_DENIED' ||
     (err?.message || String(err ?? '')).includes('External Connection Policy is disabled');
 
+  // The device runs EVE 16.6+ with "Encrypt Session" on, so no EdgeView client
+  // can connect (lf-edge/eve#5573). The backend tags this "E2E_UNSUPPORTED".
+  const isE2eUnsupported = (err) => err?.code === 'E2E_UNSUPPORTED';
+  const showE2eUnsupportedToast = (err) => {
+    setGlobalStatus({
+      type: 'error',
+      title: 'End-to-end encryption not supported by this EVE',
+      message: extractErrorMessage(err),
+    });
+  };
+
   // Helper to detect if error is session-related and update status.
   // nodeId is the device the failed tunnel was started for; callers run in
   // async flows, so compare it with selectedNodeIdRef rather than trusting
   // their (possibly stale) closure.
   const handleTunnelError = (err, nodeId = selectedNodeIdRef.current) => {
+    if (isE2eUnsupported(err)) {
+      // Fixed in the project's EdgeView policy on the controller, so no action
+      // button, no retry, and nothing for the ext-policy chip to flag.
+      showE2eUnsupportedToast(err);
+      return;
+    }
     if (isExtPolicyDenied(err)) {
       // Only offer the fix (and flag the chip) while that device is still the
       // one on screen — otherwise the chip and action would target another.
@@ -2470,13 +2543,16 @@ Do you want to try connecting anyway?`)) {
       setCancellableConnection(null);
       console.error('Failed to connect:', err);
       const userMessage = extractErrorMessage(err);
+      if (isE2eUnsupported(err)) {
+        showE2eUnsupportedToast(err);
+      }
       // The user-triggered cancel path already logged "Connection attempts
       // cancelled" from the onCancel handler — don't double-log here. A genuine
       // failure (e.g. all SSH probe rounds exhausted) must still be reported.
       if (!isCancelError(err)) {
         addLog(`Connection failed: ${userMessage}`, 'error');
       }
-      // Don't show error banner - activity log entry is sufficient
+      // Don't show error banner (except the E2E toast above) - activity log entry is sufficient
       // Error banner blocks "Running Applications" section and there's no recovery action
     }
   };
@@ -3033,7 +3109,8 @@ Do you want to try connecting anyway?`)) {
       console.error("Failed to start collect info:", err);
       // Clean up the error message for display
       const userMessage = extractErrorMessage(err);
-      setGlobalStatus({ type: 'error', message: `Failed to start: ${userMessage}` });
+      if (isE2eUnsupported(err)) showE2eUnsupportedToast(err);
+      else setGlobalStatus({ type: 'error', message: `Failed to start: ${userMessage}` });
       addLog(`Failed to start collect info: ${userMessage}`, 'error');
     }
   };
@@ -3195,7 +3272,8 @@ Do you want to try connecting anyway?`)) {
     } catch (err) {
       console.error('Failed to start compose diagnostics:', err);
       const userMessage = extractErrorMessage(err);
-      setGlobalStatus({ type: 'error', message: `Failed to start diagnostics: ${userMessage}` });
+      if (isE2eUnsupported(err)) showE2eUnsupportedToast(err);
+      else setGlobalStatus({ type: 'error', message: `Failed to start diagnostics: ${userMessage}` });
       addLog(`Failed to start compose diagnostics: ${userMessage}`, 'error');
     }
   };
@@ -4485,12 +4563,14 @@ Do you want to try connecting anyway?`)) {
                           {tunnel.type === 'TCP' && <Activity size={14} className="tunnel-icon" />}
                           <span>{tunnel.type}</span>
                           {tunnel.isEncrypted ? (
-                            <span className="tunnel-badge encrypted" title="End-to-End Encrypted">
+                            <span className="tunnel-badge encrypted" title="End-to-end encrypted: the EdgeView dispatcher cannot read this traffic">
                               <Lock size={10} />
+                              <span style={{ marginLeft: '3px' }}>E2E</span>
                             </span>
                           ) : (
-                            <span className="tunnel-badge unencrypted" title="Not Encrypted">
-                              <Unlock size={10} />
+                            <span className="tunnel-badge unencrypted" title="TLS only: encrypted and signed to the EdgeView dispatcher, which relays it in clear (no end-to-end encryption)">
+                              <Shield size={10} />
+                              <span style={{ marginLeft: '3px' }}>TLS</span>
                             </span>
                           )}
                           {isTerminating && (
@@ -4616,12 +4696,14 @@ Do you want to try connecting anyway?`)) {
                           {tunnel.type === 'TCP' && <Activity size={14} className="tunnel-icon" />}
                           <span>{tunnel.type}</span>
                           {tunnel.isEncrypted ? (
-                            <span className="tunnel-badge encrypted" title="End-to-End Encrypted">
+                            <span className="tunnel-badge encrypted" title="End-to-end encrypted: the EdgeView dispatcher cannot read this traffic">
                               <Lock size={10} />
+                              <span style={{ marginLeft: '3px' }}>E2E</span>
                             </span>
                           ) : (
-                            <span className="tunnel-badge unencrypted" title="Not Encrypted">
-                              <Unlock size={10} />
+                            <span className="tunnel-badge unencrypted" title="TLS only: encrypted and signed to the EdgeView dispatcher, which relays it in clear (no end-to-end encryption)">
+                              <Shield size={10} />
+                              <span style={{ marginLeft: '3px' }}>TLS</span>
                             </span>
                           )}
                           {isTerminating && (
@@ -4878,35 +4960,26 @@ Do you want to try connecting anyway?`)) {
                     {sshStatus ? (
                       <div className="ssh-details" style={{ opacity: loadingSSH ? 0.6 : 1, transition: 'opacity 0.2s' }}>
                         <div className="status-grid">
-                          {(sshStatus.instID !== undefined || sshStatus.maxInst !== undefined) && (
-                            <div className="status-item">
-                              <Tooltip text="Current EdgeView instance / max allowed concurrent instances." helpUrl="https://lf-edge.atlassian.net/wiki/spaces/EVE/pages/14584954/EdgeView+Commands#Multi-Instances" simple>
-                                <div className="status-label" style={{ cursor: 'help' }}>INSTANCE</div>
-                              </Tooltip>
-                              <div className="status-value">
-                                {sshStatus.instID !== undefined && sshStatus.maxInst !== undefined
-                                  ? `${sshStatus.instID}/${sshStatus.maxInst}`
-                                  : '-'}
-                              </div>
-                            </div>
-                          )}
-                          {sshStatus.maxSessions > 0 && (
-                            <div className="status-item">
-                              <Tooltip text="Maximum number of concurrent tunnels to the edge node allowed, controlled by Project or edge-node level EdgeView policy." helpUrl="https://help.zededa.com/hc/en-us/articles/43171861150491-Configure-the-Project-Policies#h_01K5K3W1FJVZN3Z55JFKFDKHJE" simple>
-                                <div className="status-label" style={{ cursor: 'help' }}>MAX SESSIONS</div>
-                              </Tooltip>
-                              <div className="status-value">{sshStatus.maxSessions}</div>
-                            </div>
+                          {sessionsLabel && (
+                          <div className="status-item">
+                            <Tooltip text={sessionsTooltip} helpUrl="https://help.zededa.com/hc/en-us/articles/43171861150491-Configure-the-Project-Policies#h_01K5K3W1FJVZN3Z55JFKFDKHJE" simple>
+                              <div className="status-label" style={{ cursor: 'help' }}>SESSIONS</div>
+                            </Tooltip>
+                            <div className="status-value">{sessionsLabel}</div>
+                          </div>
                           )}
                           <div className="status-item">
-                            <Tooltip text="Whether the EdgeView tunnel uses end-to-end encryption (JWT-based)." helpUrl="https://lf-edge.atlassian.net/wiki/spaces/EVE/pages/14584760/Edge-View+Architecture#Data-Path" simple>
+                            <Tooltip text={isE2eActive
+                              ? "End-to-end encrypted: messages are encrypted between this launcher and the device, so the EdgeView dispatcher cannot read them. Supported on EVE before 16.6, including the 14.5 and 16.0 LTS lines."
+                              : "TLS only: traffic is TLS-encrypted to the EdgeView dispatcher and every message is signed, but the dispatcher relays it in clear. End-to-end encryption is the \"Encrypt Session\" option in the project's EdgeView policy on ZEDEDA Cloud. On EVE 16.6 and newer that option currently prevents EdgeView clients from connecting (upstream issue lf-edge/eve#5573), so TLS only is the working setting there."}
+                                    helpUrl="https://lf-edge.atlassian.net/wiki/spaces/EVE/pages/14584760/Edge-View+Architecture#Data-Path" simple>
                               <div className="status-label" style={{ cursor: 'help' }}>ENCRYPTION</div>
                             </Tooltip>
-                            <div className={`status-value ${(sessionStatus?.isEncrypted || sshStatus?.isEncrypted) ? 'success' : 'mismatch'}`}>
-                              {(sessionStatus?.isEncrypted || sshStatus?.isEncrypted) ? (
-                                <><Lock size={14} /> Encrypted</>
+                            <div className={`status-value ${isE2eActive ? 'success' : 'neutral'}`}>
+                              {isE2eActive ? (
+                                <><Lock size={14} /> End-to-end (E2E)</>
                               ) : (
-                                <><Unlock size={14} /> Unencrypted</>
+                                <><Shield size={14} /> TLS only</>
                               )}
                             </div>
                           </div>

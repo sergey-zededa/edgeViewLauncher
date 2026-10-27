@@ -119,6 +119,14 @@ export const EnableExternalPolicy = (nodeId, enable) =>
 export const StartTunnel = (nodeId, targetIP, targetPort, protocol) =>
     apiCall('/api/start-tunnel', 'POST', { nodeId, targetIP, targetPort, protocol }).then(r => r?.data);
 
+/**
+ * Per-slot EdgeView session usage for a device (which of the project's
+ * max-session slots are free/busy/offline, and which this launcher holds).
+ * Resolves `{ available, maxSessions, inUse, free, offline, unknown, slots }`.
+ */
+export const GetEdgeViewSessions = (nodeId) =>
+    apiCall('/api/edgeview-sessions', 'POST', { nodeId }).then(r => r?.data);
+
 export const CloseTunnel = (tunnelId) =>
     apiCall(`/api/tunnel/${tunnelId}`, 'DELETE').then(r => r?.data);
 

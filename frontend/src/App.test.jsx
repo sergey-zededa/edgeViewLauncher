@@ -40,6 +40,7 @@ vi.mock('./tauriAPI', () => {
     GetDeviceServices: vi.fn(),
     SetupSSH: vi.fn(fn),
     GetSSHStatus: vi.fn().mockResolvedValue({ status: 'disabled' }),
+    GetEdgeViewSessions: vi.fn().mockResolvedValue(null),
     DisableSSH: vi.fn(fn),
     RemoveSSHKey: vi.fn().mockResolvedValue({ removed: true, remaining: 1 }),
     SetVGAEnabled: vi.fn(fn),
@@ -2331,6 +2332,191 @@ describe('External Connection Policy denial', () => {
     expect(await screen.findByRole('button', { name: 'Enable Ext. Policy' })).toBeInTheDocument();
     expect(toast()).toHaveTextContent('External Connection Policy is off');
     await waitFor(() => expect(extPolicyChip()).toHaveClass('needs-attention'));
+  });
+});
+
+// Status-grid items driven by EdgeView session info: the ENCRYPTION label
+// (TLS only vs end-to-end) and the SESSIONS slot usage from the controller.
+describe('EdgeView status grid: encryption and sessions', () => {
+  const validKey = 'A'.repeat(171);
+  const validToken = `ENT1234:${validKey}`;
+  const configWithToken = {
+    baseUrl: 'https://cluster.example',
+    apiToken: validToken,
+    clusters: [{ name: 'Prod', baseUrl: 'https://cluster.example', apiToken: validToken }],
+    activeCluster: 'Prod',
+    recentDevices: [],
+  };
+  const node = { id: 'node-1', name: 'Grid-Dev', status: 'online', project: 'proj-1' };
+  const status = (extra = {}) => ({
+    status: 'enabled',
+    cloudSession: 'live',
+    expiry: Math.floor(Date.now() / 1000) + 3600,
+    maxSessions: 3,
+    ...extra,
+  });
+  const sessions = (extra = {}) => ({
+    available: true, maxSessions: 3, inUse: 1, free: 1, offline: 1, unknown: 0,
+    slots: [
+      { inst: 1, state: 'busy', ours: false },
+      { inst: 2, state: 'free', ours: false },
+      { inst: 3, state: 'offline', ours: false },
+    ],
+    ...extra,
+  });
+  const valueOf = (label) => screen.getByText(label, { selector: '.status-label' }).closest('.status-item').querySelector('.status-value');
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    electronAPI.GetSettings.mockReset();
+    electronAPI.SecureStorageGetSettings.mockReset();
+    electronAPI.GetSettings.mockResolvedValue(configWithToken);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(configWithToken);
+    electronAPI.GetDeviceCache.mockReset();
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([node]));
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
+    electronAPI.GetSessionStatus.mockReset();
+    electronAPI.GetSessionStatus.mockResolvedValue({ active: false });
+    electronAPI.GetSSHStatus.mockReset();
+    electronAPI.GetSSHStatus.mockResolvedValue(status());
+    electronAPI.GetEdgeViewSessions.mockReset();
+    electronAPI.GetEdgeViewSessions.mockResolvedValue(sessions());
+  });
+
+  afterEach(() => {
+    electronAPI.GetSSHStatus.mockReset();
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'disabled' });
+    electronAPI.GetSessionStatus.mockResolvedValue({ active: false });
+    electronAPI.GetEdgeViewSessions.mockReset();
+    electronAPI.GetEdgeViewSessions.mockResolvedValue(null);
+  });
+
+  const openDevice = async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByText('Grid-Dev'));
+    await screen.findByText('ENCRYPTION');
+  };
+
+  it('shows "TLS only" (neutral, not a warning) when the session is not end-to-end encrypted', async () => {
+    electronAPI.GetSSHStatus.mockResolvedValue(status({ isEncrypted: false }));
+    await openDevice();
+    await waitFor(() => expect(valueOf('ENCRYPTION')).toHaveTextContent('TLS only'));
+    expect(valueOf('ENCRYPTION')).toHaveClass('neutral');
+    expect(valueOf('ENCRYPTION')).not.toHaveClass('mismatch');
+    expect(screen.queryByText(/Unencrypted/)).not.toBeInTheDocument();
+  });
+
+  it('shows "End-to-end (E2E)" with success styling when sshStatus reports isEncrypted', async () => {
+    electronAPI.GetSSHStatus.mockResolvedValue(status({ isEncrypted: true }));
+    await openDevice();
+    await waitFor(() => expect(valueOf('ENCRYPTION')).toHaveTextContent('End-to-end (E2E)'));
+    expect(valueOf('ENCRYPTION')).toHaveClass('success');
+  });
+
+  it('shows "End-to-end (E2E)" when only the session status reports isEncrypted', async () => {
+    electronAPI.GetSessionStatus.mockResolvedValue({ active: true, isEncrypted: true, expiresAt: new Date(Date.now() + 3600000).toISOString() });
+    await openDevice();
+    await waitFor(() => expect(valueOf('ENCRYPTION')).toHaveTextContent('End-to-end (E2E)'));
+  });
+
+  it('shows "1 / 3 in use" from the controller session slots', async () => {
+    await openDevice();
+    await waitFor(() => expect(valueOf('SESSIONS')).toHaveTextContent('1 / 3 in use'));
+    expect(electronAPI.GetEdgeViewSessions).toHaveBeenCalledWith('node-1');
+    expect(screen.queryByText('MAX SESSIONS')).not.toBeInTheDocument();
+    expect(screen.queryByText('INSTANCE')).not.toBeInTheDocument();
+  });
+
+  it('falls back to the max when the sessions call fails', async () => {
+    electronAPI.GetEdgeViewSessions.mockRejectedValue(new Error('boom'));
+    await openDevice();
+    await waitFor(() => expect(electronAPI.GetEdgeViewSessions).toHaveBeenCalled());
+    expect(valueOf('SESSIONS')).toHaveTextContent(/^3$/);
+  });
+
+  it('falls back to the max when the controller has no live session (available: false)', async () => {
+    electronAPI.GetEdgeViewSessions.mockResolvedValue(sessions({ available: false, maxSessions: 0, inUse: 0, free: 0, offline: 0, slots: [] }));
+    await openDevice();
+    await waitFor(() => expect(electronAPI.GetEdgeViewSessions).toHaveBeenCalled());
+    expect(valueOf('SESSIONS')).toHaveTextContent(/^3$/);
+  });
+
+  it('falls back to the max when every slot state is unknown', async () => {
+    electronAPI.GetEdgeViewSessions.mockResolvedValue(sessions({
+      inUse: 0, free: 0, offline: 0, unknown: 3,
+      slots: [1, 2, 3].map(inst => ({ inst, state: 'unknown', ours: false })),
+    }));
+    await openDevice();
+    await waitFor(() => expect(electronAPI.GetEdgeViewSessions).toHaveBeenCalled());
+    expect(valueOf('SESSIONS')).toHaveTextContent(/^3$/);
+  });
+
+  it('does not query sessions when the cloud session has ended', async () => {
+    electronAPI.GetSSHStatus.mockResolvedValue(status({ cloudSession: 'ended', expiry: '0' }));
+    await openDevice();
+    await waitFor(() => expect(electronAPI.GetSSHStatus).toHaveBeenCalled());
+    expect(electronAPI.GetEdgeViewSessions).not.toHaveBeenCalled();
+  });
+});
+
+// The backend returns 409 E2E_UNSUPPORTED when a device runs EVE 16.6+ with
+// "Encrypt Session" on (lf-edge/eve#5573): no client can connect, and the fix
+// is a policy change on the controller, so the toast has no action.
+describe('End-to-end encryption unsupported (EVE 16.6+)', () => {
+  const validKey = 'A'.repeat(171);
+  const validToken = `ENT1234:${validKey}`;
+  const configWithToken = {
+    baseUrl: 'https://cluster.example',
+    apiToken: validToken,
+    clusters: [{ name: 'Prod', baseUrl: 'https://cluster.example', apiToken: validToken }],
+    activeCluster: 'Prod',
+    recentDevices: [],
+  };
+  const node = { id: 'node-1', name: 'E2E-Dev', status: 'online', project: 'proj-1' };
+  const E2E_MSG = 'This device runs EVE 16.6 or newer with "Encrypt Session" enabled. Disable it in the project EdgeView policy.';
+  const e2eError = () => Object.assign(new Error(E2E_MSG), { code: 'E2E_UNSUPPORTED' });
+  const toast = () => screen.getByTestId('global-status-banner-mock');
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    electronAPI.GetSettings.mockReset();
+    electronAPI.SecureStorageGetSettings.mockReset();
+    electronAPI.GetSettings.mockResolvedValue(configWithToken);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(configWithToken);
+    electronAPI.GetDeviceCache.mockReset();
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([node]));
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([
+      { name: 'App 1', vncPort: 5900, ips: ['10.0.0.1'], pid: 1234, status: 'RUN_STATE_ONLINE' },
+    ]));
+    electronAPI.GetSessionStatus.mockResolvedValue({ active: true, expiresAt: new Date(Date.now() + 3600000).toISOString() });
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'enabled', expiry: Math.floor(Date.now() / 1000) + 3600, externalPolicy: false });
+  });
+
+  afterEach(() => {
+    electronAPI.StartTunnel.mockReset();
+    electronAPI.StartTunnel.mockResolvedValue({ port: 6000, tunnelId: 'tunnel-1' });
+    electronAPI.GetSSHStatus.mockReset();
+    electronAPI.GetSSHStatus.mockResolvedValue({ status: 'disabled' });
+    electronAPI.GetSessionStatus.mockResolvedValue({ active: false });
+  });
+
+  it('shows a specific error toast with the backend message, no action and no ext-policy flag', async () => {
+    electronAPI.StartTunnel.mockRejectedValue(e2eError());
+    render(<App />);
+    fireEvent.click(await screen.findByText('E2E-Dev'));
+    await screen.findByText('Running Applications');
+    const chip = await screen.findByText(/^(Enable Ext\. Policy|Ext\. Policy Enabled)$/, { selector: '.config-chip' });
+
+    const appRow = screen.getByText('App 1').closest('.service-item');
+    fireEvent.click(within(appRow).getByRole('button', { name: /\bconnect\b/i }));
+    fireEvent.click((await screen.findByText('Launch VNC')).closest('.option-btn'));
+    fireEvent.click(await screen.findByText('Open in Built-in Viewer'));
+
+    await waitFor(() => expect(toast()).toHaveTextContent('End-to-end encryption not supported by this EVE'));
+    expect(toast()).toHaveAttribute('data-type', 'error');
+    expect(toast()).toHaveTextContent(/Disable it in the project EdgeView policy/);
+    expect(within(toast()).queryByRole('button')).not.toBeInTheDocument();
+    expect(chip).not.toHaveClass('needs-attention');
   });
 });
 
