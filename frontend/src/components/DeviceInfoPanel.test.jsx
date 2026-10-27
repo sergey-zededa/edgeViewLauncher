@@ -230,6 +230,40 @@ describe('DeviceInfoPanel', () => {
     expect(container.querySelector('.ssh-status-section')).toBeInTheDocument();
   });
 
+  it('renders its children (the configuration block) inside the card, collapsed or expanded', () => {
+    renderPanel({ children: <div data-testid="cfg">chips</div> });
+    // Collapsed: only the configuration, no facts grid, no rule above it.
+    expect(screen.getByTestId('cfg')).toBeInTheDocument();
+    expect(screen.queryByText('UPTIME', { selector: '.status-label' })).not.toBeInTheDocument();
+    expect(screen.getByTestId('device-config').style.borderTop).toBe('');
+    expect(summary()).toBeInTheDocument();
+    // Expanded: grid first, then a ruled configuration block in the same card.
+    expand();
+    const grid = valueOf('UPTIME').closest('.status-grid');
+    const cfg = screen.getByTestId('device-config');
+    expect(grid.compareDocumentPosition(cfg) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(grid.closest('.ssh-details')).toBe(cfg.closest('.ssh-details'));
+    expect(cfg.style.borderTop).not.toBe('');
+    expect(screen.getByTestId('cfg')).toBeInTheDocument();
+  });
+
+  it('toggling the title never hides the children', () => {
+    renderPanel({ children: <div data-testid="cfg">chips</div> });
+    expand();
+    expand();
+    expect(screen.getByTestId('cfg')).toBeInTheDocument();
+  });
+
+  it('shows the children without facts while loading, and beside the unavailable note on failure', () => {
+    const { rerender } = renderPanel({ info: null, children: <div data-testid="cfg">chips</div> });
+    expect(screen.getByTestId('cfg')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Device/ })).not.toBeInTheDocument();
+    expect(screen.queryByText('Device details unavailable')).not.toBeInTheDocument();
+    rerender(<DeviceInfoPanel info={null} failed authFailed={false} isOnline><div data-testid="cfg">chips</div></DeviceInfoPanel>);
+    expect(screen.getByText('Device details unavailable')).toBeInTheDocument();
+    expect(screen.getByTestId('cfg')).toBeInTheDocument();
+  });
+
   it('renders nothing while loading or after an auth failure', () => {
     const { container, rerender } = renderPanel({ info: null });
     expect(container.textContent).toBe('');

@@ -2184,7 +2184,7 @@ describe('External Connection Policy denial', () => {
     recentDevices: [],
   };
   const node = { id: 'node-1', name: 'Policy-Dev', status: 'online', project: 'proj-1' };
-  const DENIED_MSG = "The target IP is not recognized as an internal EVE-OS address and the device's External Connection Policy is disabled. Enable it using the \"Enable Ext. Policy\" button in Device Configuration below, or in the device's EdgeView settings on ZEDEDA Cloud.";
+  const DENIED_MSG = "The target IP is not recognized as an internal EVE-OS address and the device's External Connection Policy is disabled. Enable it using the \"Enable Ext. Policy\" button in the EdgeView Session section, or in the device's EdgeView settings on ZEDEDA Cloud.";
   const deniedError = (withCode = true) => {
     const e = new Error(DENIED_MSG);
     if (withCode) e.code = 'EXT_POLICY_DENIED';
@@ -2241,6 +2241,9 @@ describe('External Connection Policy denial', () => {
     await startVncTunnel();
 
     const actionBtn = await screen.findByRole('button', { name: 'Enable Ext. Policy' });
+    // The chip lives in the EdgeView Session section and carries the flag.
+    expect(extPolicyChip().closest('.ssh-status-section')).toHaveTextContent('EdgeView Session');
+    expect(extPolicyChip()).toHaveClass('needs-attention');
     expect(toast()).toHaveAttribute('data-type', 'error');
     expect(toast()).toHaveTextContent('External Connection Policy is off');
     expect(toast()).toHaveTextContent(/isn't on the device's local network/);
@@ -2544,6 +2547,83 @@ describe('Device info section', () => {
     // Workloads are not duplicated in the Device section.
     expect(screen.queryByText(/Workloads/)).not.toBeInTheDocument();
     expect(window.localStorage.getItem('deviceInfoExpanded')).toBe('1');
+  });
+
+  // The EdgeView Session and Device sections, found by their title text / content.
+  const edgeViewSection = () => screen.getByText('EdgeView Session').closest('.ssh-status-section');
+  const deviceSection = () => screen.getByTestId('device-config').closest('.ssh-status-section');
+  const CONFIG_CHIPS = ['Enable SSH', 'Enable VGA', 'Enable USB', 'Enable Console'];
+
+  it('puts the Device section below the EdgeView Session section', async () => {
+    await openDevice();
+    await screen.findByTestId('device-summary');
+    const ev = edgeViewSection();
+    const dev = deviceSection();
+    expect(ev).not.toBe(dev);
+    expect(ev.compareDocumentPosition(dev) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // ...and above Running Applications.
+    const apps = screen.getByText('Running Applications');
+    expect(dev.compareDocumentPosition(apps) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // One Device section: its title row is the facts toggle.
+    expect(within(dev).getByText('Device', { selector: '.section-title span' })).toBeInTheDocument();
+    expect(within(dev).getAllByRole('button', { expanded: false })).toHaveLength(1);
+  });
+
+  it('keeps the configuration chips visible while the facts grid is collapsed', async () => {
+    await openDevice();
+    await screen.findByTestId('device-summary');
+    expect(deviceToggle()).toHaveAttribute('aria-expanded', 'false');
+    const dev = deviceSection();
+    expect(within(dev).queryByText('UPTIME', { selector: '.status-label' })).not.toBeInTheDocument();
+    for (const label of CONFIG_CHIPS) {
+      expect(within(dev).getByText(label, { selector: '.config-chip' })).toBeInTheDocument();
+    }
+    expect(within(dev).getByText('Configuration')).toBeInTheDocument();
+    // Collapsed, the card is just the configuration block (no rule above it).
+    expect(screen.getByTestId('device-config').style.borderTop).toBe('');
+  });
+
+  it('shows the facts grid above the configuration when expanded', async () => {
+    await openDevice();
+    await screen.findByTestId('device-summary');
+    fireEvent.click(deviceToggle());
+    const dev = deviceSection();
+    const grid = within(dev).getByText('UPTIME', { selector: '.status-label' }).closest('.status-grid');
+    const config = screen.getByTestId('device-config');
+    expect(grid.compareDocumentPosition(config) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Same card, separated from the grid by a rule.
+    expect(grid.closest('.ssh-details')).toBe(config.closest('.ssh-details'));
+    expect(config.style.borderTop).not.toBe('');
+    for (const label of CONFIG_CHIPS) {
+      expect(within(config).getByText(label, { selector: '.config-chip' })).toBeInTheDocument();
+    }
+    // Collapsing again leaves the chips in place.
+    fireEvent.click(deviceToggle());
+    expect(within(deviceSection()).getByText('Enable VGA', { selector: '.config-chip' })).toBeInTheDocument();
+  });
+
+  it('keeps Ext. Policy and Collect Info in the EdgeView section, not the Device section', async () => {
+    await openDevice();
+    await screen.findByTestId('device-summary');
+    const ev = edgeViewSection();
+    const dev = deviceSection();
+    expect(within(ev).getByText('Enable Ext. Policy', { selector: '.config-chip' })).toBeInTheDocument();
+    expect(within(ev).getByText('Collect Info', { selector: '.config-chip' })).toBeInTheDocument();
+    expect(within(dev).queryByText('Enable Ext. Policy')).not.toBeInTheDocument();
+    expect(within(dev).queryByText('Collect Info')).not.toBeInTheDocument();
+    for (const label of CONFIG_CHIPS) {
+      expect(within(ev).queryByText(label)).not.toBeInTheDocument();
+    }
+  });
+
+  it('still shows the configuration chips when the device facts fail to load', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => { });
+    electronAPI.GetDeviceInfo.mockRejectedValue(new Error('boom'));
+    await openDevice();
+    await screen.findByText('Device details unavailable');
+    const dev = deviceSection();
+    expect(within(dev).getByText('Enable VGA', { selector: '.config-chip' })).toBeInTheDocument();
+    spy.mockRestore();
   });
 
   it('still shows it (as last boot) for an offline device', async () => {

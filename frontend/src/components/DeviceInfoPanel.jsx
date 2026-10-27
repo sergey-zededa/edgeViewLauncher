@@ -2,15 +2,20 @@ import React, { useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import Tooltip from './Tooltip';
 
-// Collapsible "Device" section of the device details: EVE version, uptime,
-// last reboot and device resource use. Presentational: App loads the data
-// once per device (useDeviceInfo) and also feeds its per-app numbers into the
-// Running Applications rows, so this panel has no workload list of its own.
+// The "Device" section of the device details, rendered below the EdgeView
+// Session section: device facts (EVE version, uptime, last reboot, resource
+// use) plus the device configuration controls, in one card.
 //
-// Laid out exactly like the EdgeView Session section below it
-// (.ssh-status-section → .section-title → .ssh-details → .status-grid) and
-// collapsed by default so the session controls stay near the top; the
-// collapsed title row carries a one-line summary instead.
+// Presentational: App loads the data once per device (useDeviceInfo) and also
+// feeds its per-app numbers into the Running Applications rows, so this panel
+// has no workload list of its own. App also keeps owning the configuration
+// chips' state and handlers and passes them in as `children`.
+//
+// Laid out like the EdgeView Session section above it (.ssh-status-section →
+// .section-title → .ssh-details → .status-grid). The title row toggles only
+// the facts grid (collapsed by default; the collapsed title row carries a
+// one-line summary instead). The `children` block is always visible, below
+// the grid, separated from it by a rule.
 
 const MB_PER_GB = 1024;
 
@@ -157,6 +162,11 @@ const Item = ({ label, tip, value, valueClass, sub }) => {
   );
 };
 
+// Section wrapper. It follows the EdgeView Session section, whose own bottom
+// padding already spaces the two, so it has no top padding.
+const sectionStyle = { paddingTop: 0 };
+const RULE = '1px solid var(--border-subtle, rgba(255, 255, 255, 0.05))';
+
 /**
  * @param {object|null} info         GetDeviceInfo payload for the open device
  * @param {boolean} failed           the last load failed
@@ -165,24 +175,28 @@ const Item = ({ label, tip, value, valueClass, sub }) => {
  *                                   includes maintenance mode); offline shows "last boot", hides CPU
  *                                   and marks the numbers as last reported
  * @param {object} timeFormatOptions Intl options for full timestamps in tooltips
+ * @param {React.ReactNode} children the configuration block; always shown inside the card, below
+ *                                   the facts grid (which only shows while expanded)
  */
-const DeviceInfoPanel = ({ info, failed, authFailed, isOnline, timeFormatOptions }) => {
+const DeviceInfoPanel = ({ info, failed, authFailed, isOnline, timeFormatOptions, children }) => {
   const [expanded, setExpanded] = useState(readExpanded);
+  const hasConfig = !!children;
 
   if (!info) {
-    // Nothing yet. A plain failure gets a muted note; an auth failure is
-    // already explained by the app-wide token banner.
-    if (failed && !authFailed) {
-      return (
-        <div className="ssh-status-section" style={{ paddingBottom: 0 }}>
-          <div className="section-title" style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginBottom: 0 }}>
-            <span>Device</span>
-            <span style={{ ...subStyle, fontSize: '12px' }}>Device details unavailable</span>
-          </div>
+    // No facts yet. A plain failure gets a muted note; an auth failure is
+    // already explained by the app-wide token banner. The configuration block
+    // does not depend on this data, so it still shows when there is one.
+    const unavailable = failed && !authFailed;
+    if (!unavailable && !hasConfig) return null;
+    return (
+      <div className="ssh-status-section" style={sectionStyle}>
+        <div className="section-title" style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginBottom: hasConfig ? '12px' : 0 }}>
+          <span>Device</span>
+          {unavailable && <span style={{ ...subStyle, fontSize: '12px' }}>Device details unavailable</span>}
         </div>
-      );
-    }
-    return null;
+        {hasConfig && <div className="ssh-details"><div data-testid="device-config">{children}</div></div>}
+      </div>
+    );
   }
 
   const toggle = () => setExpanded((v) => {
@@ -280,7 +294,7 @@ const DeviceInfoPanel = ({ info, failed, authFailed, isOnline, timeFormatOptions
   ].filter(Boolean).join(' · ');
 
   return (
-    <div className="ssh-status-section" style={{ paddingBottom: 0 }}>
+    <div className="ssh-status-section" style={sectionStyle}>
       <div
         className="section-title"
         role="button"
@@ -298,7 +312,7 @@ const DeviceInfoPanel = ({ info, failed, authFailed, isOnline, timeFormatOptions
         style={{
           display: 'flex', alignItems: 'center', gap: '6px',
           cursor: 'pointer', userSelect: 'none',
-          marginBottom: expanded ? '12px' : 0,
+          marginBottom: expanded || hasConfig ? '12px' : 0,
         }}
       >
         {expanded
@@ -313,8 +327,9 @@ const DeviceInfoPanel = ({ info, failed, authFailed, isOnline, timeFormatOptions
         )}
       </div>
 
-      {expanded && (
+      {(expanded || hasConfig) && (
         <div className="ssh-details">
+          {expanded && (
           <div className="status-grid" style={{ marginBottom: 0 }}>
             <Item
               label="EVE"
@@ -351,6 +366,12 @@ const DeviceInfoPanel = ({ info, failed, authFailed, isOnline, timeFormatOptions
               sub={storUsed !== null && storTotal !== null && <Bar pct={(storUsed / storTotal) * 100} />}
             />
           </div>
+          )}
+          {hasConfig && (
+            <div data-testid="device-config" style={expanded ? { marginTop: '12px', paddingTop: '12px', borderTop: RULE } : undefined}>
+              {children}
+            </div>
+          )}
         </div>
       )}
     </div>
