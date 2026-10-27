@@ -1565,7 +1565,7 @@ function App() {
     ? `${edgeViewSessions.inUse} / ${edgeViewSessions.maxSessions} in use`
     : (sshStatus?.maxSessions > 0 ? String(sshStatus.maxSessions) : null);
   const sessionsTooltip = sessionsKnown
-    ? ['EdgeView session slots in use (any client: this launcher, the ZEDEDA UI, the edgeview CLI) out of the maximum allowed by the Project or edge-node level EdgeView policy.',
+    ? ['Sessions in use by any client (this launcher, ZEDEDA UI, edgeview CLI), out of the EdgeView policy maximum.', '',
       ...(edgeViewSessions.slots || []).map(sl => {
         const what = sl.state === 'busy' ? (sl.ours ? 'in use (this launcher)' : 'in use')
           : sl.state === 'free' ? 'free'
@@ -1573,7 +1573,7 @@ function App() {
               : 'unknown';
         return `Slot ${sl.inst}: ${what}`;
       })].join('\n')
-    : 'Maximum number of concurrent tunnels to the edge node allowed, controlled by Project or edge-node level EdgeView policy.';
+    : 'Maximum concurrent EdgeView sessions, set by the project or edge-node EdgeView policy.';
 
   // State for time format preference
   const [use24HourTime, setUse24HourTime] = useState(false);
@@ -5015,8 +5015,8 @@ Do you want to try connecting anyway?`)) {
                           )}
                           <div className="status-item">
                             <Tooltip text={isE2eActive
-                              ? "End-to-end encrypted: messages are encrypted between this launcher and the device, so the EdgeView dispatcher cannot read them. Supported on EVE before 16.6, including the 14.5 and 16.0 LTS lines."
-                              : "TLS only: traffic is TLS-encrypted to the EdgeView dispatcher and every message is signed, but the dispatcher relays it in clear. End-to-end encryption is the \"Encrypt Session\" option in the project's EdgeView policy on ZEDEDA Cloud. On EVE 16.6 and newer that option currently prevents EdgeView clients from connecting (upstream issue lf-edge/eve#5573), so TLS only is the working setting there."}
+                              ? "End-to-end encrypted\nOnly this launcher and the device can read the traffic, not the EdgeView dispatcher.\n\nSupported on EVE before 16.6, incl. the 14.5 and 16.0 LTS lines."
+                              : "TLS only\nEncrypted to the EdgeView dispatcher and signed, but the dispatcher can read the traffic.\n\nEnd-to-end is the project policy's \"Encrypt Session\" option. On EVE 16.6+ it currently blocks EdgeView clients (lf-edge/eve#5573)."}
                                     helpUrl="https://lf-edge.atlassian.net/wiki/spaces/EVE/pages/14584760/Edge-View+Architecture#Data-Path" simple>
                               <div className="status-label" style={{ cursor: 'help' }}>ENCRYPTION</div>
                             </Tooltip>

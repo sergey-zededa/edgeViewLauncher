@@ -156,6 +156,14 @@
     max-height: 250px;
 }
 
+/* Wrapping tooltips size to their text, up to a readable measure. Without an
+   explicit width an absolutely positioned tooltip shrinks to its trigger's
+   width (often a short label), stacking one or two words per line. */
+.tooltip-content:not(.tooltip-simple) {
+    width: max-content;
+    max-width: min(320px, calc(100vw - 24px));
+}
+
 /* Help link variant — slightly wider, wraps text, interactive */
 .tooltip-with-help {
     white-space: normal;
