@@ -155,6 +155,46 @@ body {
     white-space: nowrap;
 }
 
+/* Device-details bar: the search bar compacted to title-bar height, like the
+   34px .cluster-info strip above the list view. 36px including the 1px bottom
+   border; the extra 4px bottom padding puts the content centre ~15.5px from
+   the top, level with the traffic lights, and the 80px left padding keeps the
+   back button clear of them. */
+.search-bar.details-bar {
+    box-sizing: border-box;
+    height: 36px;
+    padding: 0 12px 4px 80px;
+}
+
+.details-bar .back-icon-btn {
+    width: 28px;
+    height: 28px;
+    margin-right: 0;
+    border-radius: 6px;
+}
+
+/* Centred over the same 31px content band as the back button. */
+.details-bar .selected-node-header {
+    top: 0;
+    bottom: 4px;
+    transform: translateX(-50%);
+}
+
+/* Long names ellipsize before they reach the back button or the icons. */
+.details-bar .selected-node-header .node-name {
+    display: block;
+    max-width: calc(100vw - 300px);
+}
+
+.details-bar .header-actions {
+    gap: 12px;
+}
+
+.details-bar .settings-icon {
+    width: 16px;
+    height: 16px;
+}
+
 /* Main Content Area */
 .main-content {
     flex: 1;

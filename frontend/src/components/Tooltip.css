@@ -156,9 +156,30 @@
     max-height: 250px;
 }
 
+/* Wrapping tooltips size to their text, up to a readable measure. Without an
+   explicit width an absolutely positioned tooltip shrinks to its trigger's
+   width (often a short label), stacking one or two words per line. */
+.tooltip-content:not(.tooltip-simple) {
+    width: max-content;
+    max-width: min(320px, calc(100vw - 24px));
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-weight: 400;
+    line-height: 1.5;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+}
+
+/* At 320px wide ordinary text fits without an inner scroll area; only very
+   long content (e.g. a full error message) scrolls. */
+.tooltip-content:not(.tooltip-simple) .tooltip-body {
+    max-height: 60vh;
+}
+
 /* Help link variant — slightly wider, wraps text, interactive */
 .tooltip-with-help {
-    white-space: normal;
+    /* pre-wrap like the base style: keep the text's own line breaks
+       (e.g. one EdgeView session slot per line). */
+    white-space: pre-wrap;
     max-width: 300px;
     pointer-events: auto;
 }

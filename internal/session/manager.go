@@ -376,7 +376,7 @@ var (
 
 	// ErrExternalPolicyDenied is returned when the device rejects the
 	// connection because the External Connection Policy is disabled.
-	ErrExternalPolicyDenied = errors.New("The target IP is not recognized as an internal EVE-OS address and the device's External Connection Policy is disabled. Enable it using the \"Enable Ext. Policy\" button in Device Configuration below, or in the device's EdgeView settings on ZEDEDA Cloud.")
+	ErrExternalPolicyDenied = errors.New("The target IP is not recognized as an internal EVE-OS address and the device's External Connection Policy is disabled. Enable it using the \"Enable Ext. Policy\" button in the EdgeView Session section, or in the device's EdgeView settings on ZEDEDA Cloud.")
 
 	// ErrE2EUnsupported is returned when the device speaks the AES-GCM
 	// end-to-end scheme EVE introduced in 16.6 (lf-edge/eve 8e4a9c2ca). Its

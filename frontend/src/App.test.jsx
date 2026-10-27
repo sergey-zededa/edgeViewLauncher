@@ -2184,7 +2184,7 @@ describe('External Connection Policy denial', () => {
     recentDevices: [],
   };
   const node = { id: 'node-1', name: 'Policy-Dev', status: 'online', project: 'proj-1' };
-  const DENIED_MSG = "The target IP is not recognized as an internal EVE-OS address and the device's External Connection Policy is disabled. Enable it using the \"Enable Ext. Policy\" button in Device Configuration below, or in the device's EdgeView settings on ZEDEDA Cloud.";
+  const DENIED_MSG = "The target IP is not recognized as an internal EVE-OS address and the device's External Connection Policy is disabled. Enable it using the \"Enable Ext. Policy\" button in the EdgeView Session section, or in the device's EdgeView settings on ZEDEDA Cloud.";
   const deniedError = (withCode = true) => {
     const e = new Error(DENIED_MSG);
     if (withCode) e.code = 'EXT_POLICY_DENIED';
@@ -2241,6 +2241,9 @@ describe('External Connection Policy denial', () => {
     await startVncTunnel();
 
     const actionBtn = await screen.findByRole('button', { name: 'Enable Ext. Policy' });
+    // The chip lives in the EdgeView Session section and carries the flag.
+    expect(extPolicyChip().closest('.ssh-status-section')).toHaveTextContent('EdgeView Session');
+    expect(extPolicyChip()).toHaveClass('needs-attention');
     expect(toast()).toHaveAttribute('data-type', 'error');
     expect(toast()).toHaveTextContent('External Connection Policy is off');
     expect(toast()).toHaveTextContent(/isn't on the device's local network/);
@@ -2460,9 +2463,10 @@ describe('EdgeView status grid: encryption and sessions', () => {
   });
 });
 
-// The details "Device" section (EVE version, uptime, last reboot, resources,
-// workloads) comes from the controller's cloud status, so it must show for
-// offline devices too and never block or error out the rest of the details.
+// The details "Device" section (EVE version, uptime, last reboot, resources)
+// and the per-app CPU/memory in Running Applications come from one
+// controller cloud-status read, so they must show for offline devices too
+// and never block or error out the rest of the details.
 describe('Device info section', () => {
   const validKey = 'A'.repeat(171);
   const validToken = `ENT1234:${validKey}`;
@@ -2512,6 +2516,9 @@ describe('Device info section', () => {
     electronAPI.GetSSHStatus.mockResolvedValue({ status: 'disabled' });
     electronAPI.GetDeviceInfo.mockReset();
     electronAPI.GetDeviceInfo.mockResolvedValue(null);
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([]));
+    // The panel remembers expanded/collapsed per viewer; don't leak it.
+    window.localStorage.removeItem('deviceInfoExpanded');
   });
 
   const openDevice = async (name = 'Info-Dev') => {
@@ -2519,17 +2526,104 @@ describe('Device info section', () => {
     fireEvent.click(await screen.findByText(name));
   };
   const valueOf = (label) => screen.getByText(label, { selector: '.status-label' }).closest('.status-item');
+  // The Device section's title row (other buttons are titled "Device is offline").
+  const deviceToggle = () => document.querySelector('.section-title[role="button"][aria-expanded]');
+  const usageOf = (appName) => within(screen.getByText(appName).closest('.service-item')).queryByTestId('app-usage');
 
-  it('shows version, uptime, last reboot, resources and workloads for the open device', async () => {
+  it('is collapsed by default with a summary, and expands into the status grid', async () => {
     await openDevice();
-    await screen.findByText('16.6.0-lts');
+    const summary = await screen.findByTestId('device-summary');
     expect(electronAPI.GetDeviceInfo).toHaveBeenCalledWith('node-1', 'Info-Dev');
+    expect(summary).toHaveTextContent('EVE 16.6.0-lts · up 3d 5h · CPU 7.5% · Mem 2.5/8.0 GB');
+    expect(deviceToggle()).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('UPTIME', { selector: '.status-label' })).not.toBeInTheDocument();
+
+    fireEvent.click(deviceToggle());
     expect(valueOf('UPTIME')).toHaveTextContent('3d 5h');
     expect(valueOf('LAST REBOOT')).toHaveTextContent('Reboot command');
     expect(valueOf('CPU')).toHaveTextContent('7.5%');
     expect(valueOf('MEMORY')).toHaveTextContent('2.5 GB / 8.0 GB');
     expect(valueOf('STORAGE')).toHaveTextContent('20 GB / 100 GB');
-    expect(screen.getByText('Workloads (1)')).toBeInTheDocument();
+    // Workloads are not duplicated in the Device section.
+    expect(screen.queryByText(/Workloads/)).not.toBeInTheDocument();
+    expect(window.localStorage.getItem('deviceInfoExpanded')).toBe('1');
+  });
+
+  // The EdgeView Session and Device sections, found by their title text / content.
+  const edgeViewSection = () => screen.getByText('EdgeView Session').closest('.ssh-status-section');
+  const deviceSection = () => screen.getByTestId('device-config').closest('.ssh-status-section');
+  const CONFIG_CHIPS = ['Enable SSH', 'Enable VGA', 'Enable USB', 'Enable Console'];
+
+  it('puts the Device section below the EdgeView Session section', async () => {
+    await openDevice();
+    await screen.findByTestId('device-summary');
+    const ev = edgeViewSection();
+    const dev = deviceSection();
+    expect(ev).not.toBe(dev);
+    expect(ev.compareDocumentPosition(dev) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // ...and above Running Applications.
+    const apps = screen.getByText('Running Applications');
+    expect(dev.compareDocumentPosition(apps) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // One Device section: its title row is the facts toggle.
+    expect(within(dev).getByText('Device', { selector: '.section-title span' })).toBeInTheDocument();
+    expect(within(dev).getAllByRole('button', { expanded: false })).toHaveLength(1);
+  });
+
+  it('keeps the configuration chips visible while the facts grid is collapsed', async () => {
+    await openDevice();
+    await screen.findByTestId('device-summary');
+    expect(deviceToggle()).toHaveAttribute('aria-expanded', 'false');
+    const dev = deviceSection();
+    expect(within(dev).queryByText('UPTIME', { selector: '.status-label' })).not.toBeInTheDocument();
+    for (const label of CONFIG_CHIPS) {
+      expect(within(dev).getByText(label, { selector: '.config-chip' })).toBeInTheDocument();
+    }
+    expect(within(dev).getByText('Configuration')).toBeInTheDocument();
+    // Collapsed, the card is just the configuration block (no rule above it).
+    expect(screen.getByTestId('device-config').style.borderTop).toBe('');
+  });
+
+  it('shows the facts grid above the configuration when expanded', async () => {
+    await openDevice();
+    await screen.findByTestId('device-summary');
+    fireEvent.click(deviceToggle());
+    const dev = deviceSection();
+    const grid = within(dev).getByText('UPTIME', { selector: '.status-label' }).closest('.status-grid');
+    const config = screen.getByTestId('device-config');
+    expect(grid.compareDocumentPosition(config) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Same card, separated from the grid by a rule.
+    expect(grid.closest('.ssh-details')).toBe(config.closest('.ssh-details'));
+    expect(config.style.borderTop).not.toBe('');
+    for (const label of CONFIG_CHIPS) {
+      expect(within(config).getByText(label, { selector: '.config-chip' })).toBeInTheDocument();
+    }
+    // Collapsing again leaves the chips in place.
+    fireEvent.click(deviceToggle());
+    expect(within(deviceSection()).getByText('Enable VGA', { selector: '.config-chip' })).toBeInTheDocument();
+  });
+
+  it('keeps Ext. Policy and Collect Info in the EdgeView section, not the Device section', async () => {
+    await openDevice();
+    await screen.findByTestId('device-summary');
+    const ev = edgeViewSection();
+    const dev = deviceSection();
+    expect(within(ev).getByText('Enable Ext. Policy', { selector: '.config-chip' })).toBeInTheDocument();
+    expect(within(ev).getByText('Collect Info', { selector: '.config-chip' })).toBeInTheDocument();
+    expect(within(dev).queryByText('Enable Ext. Policy')).not.toBeInTheDocument();
+    expect(within(dev).queryByText('Collect Info')).not.toBeInTheDocument();
+    for (const label of CONFIG_CHIPS) {
+      expect(within(ev).queryByText(label)).not.toBeInTheDocument();
+    }
+  });
+
+  it('still shows the configuration chips when the device facts fail to load', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => { });
+    electronAPI.GetDeviceInfo.mockRejectedValue(new Error('boom'));
+    await openDevice();
+    await screen.findByText('Device details unavailable');
+    const dev = deviceSection();
+    expect(within(dev).getByText('Enable VGA', { selector: '.config-chip' })).toBeInTheDocument();
+    spy.mockRestore();
   });
 
   it('still shows it (as last boot) for an offline device', async () => {
@@ -2537,9 +2631,64 @@ describe('Device info section', () => {
     electronAPI.GetDeviceCache.mockResolvedValue(makeCache([offline]));
     electronAPI.GetDeviceInfo.mockResolvedValue(deviceInfo({ online: false, uptimeSec: undefined }));
     await openDevice();
-    await screen.findByText('16.6.0-lts');
+    const summary = await screen.findByTestId('device-summary');
+    expect(summary).toHaveTextContent('last boot 3d 5h ago');
+    expect(summary).not.toHaveTextContent('CPU');
+    fireEvent.click(deviceToggle());
     expect(valueOf('LAST BOOT')).toHaveTextContent('3d 5h ago');
     expect(screen.queryByText('UPTIME', { selector: '.status-label' })).not.toBeInTheDocument();
+  });
+
+  it('shows each app\'s CPU / memory in Running Applications, matched by id', async () => {
+    const runtime = { id: 'rt-1', name: 'docker-runtime', status: 'RUN_STATE_ONLINE', appType: 'APP_TYPE_VM', deploymentType: 'DEPLOYMENT_TYPE_DOCKER_RUNTIME', ips: ['10.1.0.5'] };
+    const child = { id: 'ca-1', name: 'compose-app', status: 'RUN_STATE_ONLINE', appType: 'APP_TYPE_DOCKER_COMPOSE', parentAppId: 'rt-1' };
+    // Same name as a workload but a different id: must not borrow its numbers.
+    const unmatched = { id: 'zz-9', name: 'name-twin', status: 'RUN_STATE_ONLINE', appType: 'APP_TYPE_VM' };
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([runtime, child, unmatched]));
+    electronAPI.GetDeviceInfo.mockResolvedValue(deviceInfo({
+      workloads: [
+        { id: 'rt-1', name: 'docker-runtime', runState: 'RUN_STATE_ONLINE', cpuPercent: 3, memUsedMB: 1229, memAllocatedMB: 2048 },
+        { id: 'ca-1', name: 'compose-app', runState: 'RUN_STATE_ONLINE', cpuPercent: 12, memUsedMB: 300, memAllocatedMB: 1024 },
+        { id: 'other-id', name: 'name-twin', runState: 'RUN_STATE_ONLINE', cpuPercent: 50, memUsedMB: 100, memAllocatedMB: 200 },
+      ],
+    }));
+    await openDevice();
+    await waitFor(() => expect(usageOf('docker-runtime')).toHaveTextContent('CPU 3.0% · 1.2 / 2.0 GB'));
+    expect(usageOf('compose-app')).toHaveTextContent('CPU 12% · 300 MB / 1.0 GB');
+    expect(usageOf('name-twin')).toBeNull();
+    // One read feeds both the Device section and the app rows.
+    expect(electronAPI.GetDeviceInfo).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves CPU out of the app rows while the device is offline', async () => {
+    const offline = { id: 'node-1', name: 'Info-Dev', status: 'offline', project: 'proj-1' };
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([offline]));
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([{ id: 'a1', name: 'my-app', status: 'RUN_STATE_HALTED', appType: 'APP_TYPE_VM' }]));
+    electronAPI.GetDeviceInfo.mockResolvedValue(deviceInfo({ online: false }));
+    await openDevice();
+    await waitFor(() => expect(usageOf('my-app')).toHaveTextContent('256 MB / 1.0 GB'));
+    expect(usageOf('my-app')).not.toHaveTextContent('CPU');
+  });
+
+  it('shows no usage on app rows when device info has no data', async () => {
+    electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([{ id: 'a1', name: 'my-app', status: 'RUN_STATE_ONLINE', appType: 'APP_TYPE_VM' }]));
+    electronAPI.GetDeviceInfo.mockResolvedValue(null);
+    await openDevice();
+    await screen.findByText('my-app');
+    await waitFor(() => expect(electronAPI.GetDeviceInfo).toHaveBeenCalled());
+    expect(usageOf('my-app')).toBeNull();
+  });
+
+  it('the compact details header back button returns to the device list', async () => {
+    await openDevice();
+    await screen.findByText('Running Applications');
+    const back = screen.getByRole('button', { name: 'Back' });
+    expect(back).toHaveAttribute('title', 'Back (Esc)');
+    expect(back.closest('.search-bar')).toHaveClass('details-bar');
+    fireEvent.click(back);
+    expect(await screen.findByPlaceholderText('Search nodes, projects...')).toBeInTheDocument();
+    expect(screen.queryByText('Running Applications')).not.toBeInTheDocument();
+    expect(document.querySelector('.details-bar')).toBeNull();
   });
 
   it('does not disturb the details when GetDeviceInfo fails', async () => {

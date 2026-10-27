@@ -4,7 +4,8 @@ import { ConnectToNode, CancelConnection, GetSettings, SaveSettings, GetDeviceSe
 import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, ChevronRight, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers, Shield, Moon, Sun, HelpCircle, Key, Plug, Unplug } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
 import Tooltip from './components/Tooltip';
-import DeviceInfoPanel from './components/DeviceInfoPanel';
+import DeviceInfoPanel, { formatWorkloadUsage } from './components/DeviceInfoPanel';
+import useDeviceInfo from './useDeviceInfo';
 import About from './components/About';
 import UpdateBanner from './components/UpdateBanner';
 import GlobalStatusBanner from './components/GlobalStatusBanner';
@@ -444,6 +445,9 @@ const CLUSTER_URL_PRESETS = [
   'https://zedcontrol.pmwtus.zededa.net',
   'https://zedcontrol.pacteu.zededa.net',
 ];
+
+// Small uppercase caption above a group of config chips (EdgeView / Configuration).
+const configLabelStyle = { fontSize: '12px', color: '#888', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' };
 
 function App() {
   const [config, setConfig] = useState({ baseUrl: '', apiToken: '', clusters: [], activeCluster: '' });
@@ -1485,6 +1489,32 @@ function App() {
     : parseInt(sshStatus?.expiry, 10) * 1000 > Date.now());
   const isDeviceOnline = isInteractive(selectedNode?.status);
 
+  // Device info (EVE version, uptime, resources, per-app CPU/memory): one
+  // fetch + 60s poll per open device, shared by the Device section and the
+  // Running Applications rows. Paused while the token is known dead (the
+  // app-wide banner owns that); clearing authError resumes it.
+  const deviceInfo = useDeviceInfo(
+    selectedNode && !authError ? selectedNode.id : null,
+    selectedNode?.name,
+    isDeviceOnline,
+    () => setAuthError(true),
+  );
+  // Per-app usage for the Running Applications rows, matched on app id.
+  // Name is only a fallback when either side has no id.
+  const workloadUsage = useMemo(() => {
+    const byId = new Map();
+    const byName = new Map();
+    const list = Array.isArray(deviceInfo.info?.workloads) ? deviceInfo.info.workloads : [];
+    list.forEach((w) => {
+      if (w.id) byId.set(w.id, w);
+      else if (w.name) byName.set(w.name, w);
+    });
+    return (app) => {
+      const w = app.id ? (byId.get(app.id) || byName.get(app.name)) : list.find((x) => x.name === app.name);
+      return w ? { text: formatWorkloadUsage(w, isDeviceOnline), workload: w } : null;
+    };
+  }, [deviceInfo.info, isDeviceOnline]);
+
   // Per-slot EdgeView session usage from the controller (informational).
   // Fetched while the device details are open and the cloud session is live,
   // refreshed every 15s and whenever this device's tunnel set changes. Any
@@ -1538,7 +1568,7 @@ function App() {
     ? `${edgeViewSessions.inUse} / ${edgeViewSessions.maxSessions} in use`
     : (sshStatus?.maxSessions > 0 ? String(sshStatus.maxSessions) : null);
   const sessionsTooltip = sessionsKnown
-    ? ['EdgeView session slots in use (any client: this launcher, the ZEDEDA UI, the edgeview CLI) out of the maximum allowed by the Project or edge-node level EdgeView policy.',
+    ? ['Sessions in use by any client (this launcher, ZEDEDA UI, edgeview CLI), out of the EdgeView policy maximum.', '',
       ...(edgeViewSessions.slots || []).map(sl => {
         const what = sl.state === 'busy' ? (sl.ours ? 'in use (this launcher)' : 'in use')
           : sl.state === 'free' ? 'free'
@@ -1546,7 +1576,7 @@ function App() {
               : 'unknown';
         return `Slot ${sl.inst}: ${what}`;
       })].join('\n')
-    : 'Maximum number of concurrent tunnels to the edge node allowed, controlled by Project or edge-node level EdgeView policy.';
+    : 'Maximum concurrent EdgeView sessions, set by the project or edge-node EdgeView policy.';
 
   // State for time format preference
   const [use24HourTime, setUse24HourTime] = useState(false);
@@ -3749,7 +3779,9 @@ Do you want to try connecting anyway?`)) {
           })()}
         </div>
       )}
-      <div className="search-bar" data-tauri-drag-region style={selectedNode ? { paddingLeft: '80px' } : {}}>
+      {/* Device details: the same bar, compacted to a title-bar-height strip
+          level with the traffic lights (.details-bar in App.css). */}
+      <div className={`search-bar${selectedNode ? ' details-bar' : ''}`} data-tauri-drag-region>
         {selectedNode ? (
           <button
             type="button"
@@ -3758,7 +3790,7 @@ Do you want to try connecting anyway?`)) {
             title="Back (Esc)"
             aria-label="Back"
           >
-            <ArrowLeft size={24} />
+            <ArrowLeft size={18} />
           </button>
         ) : (
           <Search className="search-icon" size={20} />
@@ -4847,15 +4879,6 @@ Do you want to try connecting anyway?`)) {
               </div>
             )}
 
-            {selectedNode && !authError && (
-              <DeviceInfoPanel
-                nodeId={selectedNode.id}
-                nodeName={selectedNode.name}
-                isOnline={isDeviceOnline}
-                timeFormatOptions={getTimeFormatOptions()}
-                onAuthError={() => setAuthError(true)}
-              />
-            )}
 
             {
               selectedNode && authError ? (
@@ -4971,7 +4994,7 @@ Do you want to try connecting anyway?`)) {
                     </div>
                   </div>
 
-                  <div className="ssh-details-wrapper" style={{ position: 'relative', minHeight: '200px' }}>
+                  <div className="ssh-details-wrapper" style={{ position: 'relative', minHeight: sshStatus ? undefined : '200px' }}>
                     {!sshStatus && loadingSSH && <SshDetailsSkeleton />}
                     {sshStatus ? (
                       <div className="ssh-details" style={{ opacity: loadingSSH ? 0.6 : 1, transition: 'opacity 0.2s' }}>
@@ -4986,8 +5009,8 @@ Do you want to try connecting anyway?`)) {
                           )}
                           <div className="status-item">
                             <Tooltip text={isE2eActive
-                              ? "End-to-end encrypted: messages are encrypted between this launcher and the device, so the EdgeView dispatcher cannot read them. Supported on EVE before 16.6, including the 14.5 and 16.0 LTS lines."
-                              : "TLS only: traffic is TLS-encrypted to the EdgeView dispatcher and every message is signed, but the dispatcher relays it in clear. End-to-end encryption is the \"Encrypt Session\" option in the project's EdgeView policy on ZEDEDA Cloud. On EVE 16.6 and newer that option currently prevents EdgeView clients from connecting (upstream issue lf-edge/eve#5573), so TLS only is the working setting there."}
+                              ? "End-to-end encrypted\nOnly this launcher and the device can read the traffic, not the EdgeView dispatcher.\n\nSupported on EVE before 16.6, incl. the 14.5 and 16.0 LTS lines."
+                              : "TLS only\nEncrypted to the EdgeView dispatcher and signed, but the dispatcher can read the traffic.\n\nEnd-to-end is the project policy's \"Encrypt Session\" option. On EVE 16.6+ it currently blocks EdgeView clients (lf-edge/eve#5573)."}
                                     helpUrl="https://lf-edge.atlassian.net/wiki/spaces/EVE/pages/14584760/Edge-View+Architecture#Data-Path" simple>
                               <div className="status-label" style={{ cursor: 'help' }}>ENCRYPTION</div>
                             </Tooltip>
@@ -5105,99 +5128,15 @@ Do you want to try connecting anyway?`)) {
                           );
                         })()}
 
-                        {/* Configuration Controls */}
-                        <div className="config-container" style={{ marginTop: '15px', borderTop: '1px solid #333', paddingTop: '15px' }}>
-                          <div style={{ fontSize: '12px', color: '#888', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                            Device Configuration
+                        {/* EdgeView controls: the policy setting and the live-session
+                            operation. The device facts and cloud configuration live in the
+                            Device section below. */}
+                        <div className="config-container" style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.05))' }}>
+                          <div style={configLabelStyle}>
+                            EdgeView
                           </div>
 
-                          <div className="config-row" style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', justifyContent: 'space-between' }}>
-
-                            {/* SSH Control */}
-                            <Tooltip text="Enable SSH access to the EVE-OS shell via EdgeView tunnel." helpUrl="https://help.zededa.com/hc/en-us/articles/39473586111003-Edge-View-Overview#h_01K2NBYMH255X6QMJHP079XVXQ" simple>
-                            <div
-                              className={`config-chip ${sshStatus.status === 'enabled' ? 'enabled' : sshStatus.status === 'mismatch' ? 'warning' : 'disabled'}`}
-                              onClick={sshStatus.status === 'enabled' ? handleDisableSSH : handleSetupSSH}
-                              title={!isDeviceOnline
-                                ? (sshStatus.status === 'enabled' ? "SSH Enabled - Click to Disable (applies when device reconnects)" : sshStatus.status === 'mismatch' ? "Key Mismatch - Click to Fix (applies when device reconnects)" : "SSH Disabled - Click to Enable (applies when device reconnects)")
-                                : sshStatus.status === 'enabled' ? "SSH Enabled - Click to Disable" : sshStatus.status === 'mismatch' ? "Key Mismatch - Click to Fix" : "SSH Disabled - Click to Enable"}
-                              style={{
-                                display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
-                                fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
-                                backgroundColor: sshStatus.status === 'enabled' ? 'var(--color-success-bg)' : sshStatus.status === 'mismatch' ? 'var(--color-warning-bg)' : 'var(--bg-secondary)',
-                                color: sshStatus.status === 'enabled' ? 'var(--color-success)' : sshStatus.status === 'mismatch' ? 'var(--color-warning)' : 'var(--text-primary)',
-                                border: 'none'
-                              }}
-                            >
-                              {sshStatus.status === 'enabled' ? <Unlock size={13} style={{ marginRight: '6px' }} /> :
-                                sshStatus.status === 'mismatch' ? <AlertTriangle size={13} style={{ marginRight: '6px' }} /> :
-                                  <Lock size={13} style={{ marginRight: '6px' }} />}
-                              {sshStatus.status === 'enabled' ? 'SSH Enabled' : sshStatus.status === 'mismatch' ? 'SSH Key Mismatch' : 'Enable SSH'}
-                            </div>
-                            </Tooltip>
-
-                            {/* VGA Control */}
-                            <Tooltip text="Enable VGA console output on the device for local display or remote VNC access." helpUrl="https://help.zededa.com/hc/en-us/sections/40376827750043-Local-UI-for-Direct-Edge-Node-Access" simple>
-                            <div
-                              className={`config-chip ${sshStatus.vgaEnabled ? 'enabled' : 'disabled'}`}
-                              onClick={() => handleToggleVGA(!sshStatus.vgaEnabled)}
-                              title={!isDeviceOnline
-                                ? (sshStatus.vgaEnabled ? "VGA Enabled - Click to Disable (applies when device reconnects)" : "VGA Disabled - Click to Enable (applies when device reconnects)")
-                                : sshStatus.vgaEnabled ? "VGA Enabled - Click to Disable" : "VGA Disabled - Click to Enable"}
-                              style={{
-                                display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
-                                fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
-                                backgroundColor: sshStatus.vgaEnabled ? 'var(--color-success-bg)' : 'var(--bg-secondary)',
-                                color: sshStatus.vgaEnabled ? 'var(--color-success)' : 'var(--text-primary)',
-                                border: 'none'
-                              }}
-                            >
-                              <Monitor size={13} style={{ marginRight: '6px' }} />
-                              {sshStatus.vgaEnabled ? 'VGA Enabled' : 'Enable VGA'}
-                            </div>
-                            </Tooltip>
-
-                            {/* USB Control */}
-                            <Tooltip text="Allow USB devices (e.g. keyboards) on the device for local access." helpUrl="https://help.zededa.com/hc/en-us/sections/40376827750043-Local-UI-for-Direct-Edge-Node-Access" simple>
-                            <div
-                              className={`config-chip ${sshStatus.usbEnabled ? 'enabled' : 'disabled'}`}
-                              onClick={() => handleToggleUSB(!sshStatus.usbEnabled)}
-                              title={!isDeviceOnline
-                                ? (sshStatus.usbEnabled ? "USB Enabled - Click to Disable (applies when device reconnects)" : "USB Disabled - Click to Enable (applies when device reconnects)")
-                                : sshStatus.usbEnabled ? "USB Enabled - Click to Disable" : "USB Disabled - Click to Enable"}
-                              style={{
-                                display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
-                                fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
-                                backgroundColor: sshStatus.usbEnabled ? 'var(--color-success-bg)' : 'var(--bg-secondary)',
-                                color: sshStatus.usbEnabled ? 'var(--color-success)' : 'var(--text-primary)',
-                                border: 'none'
-                              }}
-                            >
-                              <Activity size={13} style={{ marginRight: '6px' }} />
-                              {sshStatus.usbEnabled ? 'USB Enabled' : 'Enable USB'}
-                            </div>
-                            </Tooltip>
-
-                            {/* Console Control */}
-                            <Tooltip text="Enable serial console access on the device for low-level debugging." helpUrl="https://help.zededa.com/hc/en-us/sections/40376827750043-Local-UI-for-Direct-Edge-Node-Access" simple>
-                            <div
-                              className={`config-chip ${sshStatus.consoleEnabled ? 'enabled' : 'disabled'}`}
-                              onClick={() => handleToggleConsole(!sshStatus.consoleEnabled)}
-                              title={!isDeviceOnline
-                                ? (sshStatus.consoleEnabled ? "Console Enabled - Click to Disable (applies when device reconnects)" : "Console Disabled - Click to Enable (applies when device reconnects)")
-                                : sshStatus.consoleEnabled ? "Console Enabled - Click to Disable" : "Console Disabled - Click to Enable"}
-                              style={{
-                                display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
-                                fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
-                                backgroundColor: sshStatus.consoleEnabled ? 'var(--color-success-bg)' : 'var(--bg-secondary)',
-                                color: sshStatus.consoleEnabled ? 'var(--color-success)' : 'var(--text-primary)',
-                                border: 'none'
-                              }}
-                            >
-                              <Terminal size={13} style={{ marginRight: '6px' }} />
-                              {sshStatus.consoleEnabled ? 'Console Enabled' : 'Enable Console'}
-                            </div>
-                            </Tooltip>
+                          <div className="config-row" style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
 
                             {/* External Policy Control */}
                             <Tooltip text="Allow EdgeView to route traffic to external IPs beyond the device's local network." helpUrl="https://lf-edge.atlassian.net/wiki/spaces/EVE/pages/14584954/EdgeView+Commands#Access-TCP-Services-of-External-Hosts" simple>
@@ -5246,110 +5185,6 @@ Do you want to try connecting anyway?`)) {
                             </Tooltip>
 
                           </div>
-
-                          {/* Authorized SSH Keys audit panel — collapsed by default.
-                              Shows the keys currently in debug.enable.ssh on the
-                              device so an operator can verify that other users'
-                              keys are preserved when the launcher manages its own. */}
-                          {Array.isArray(sshStatus.authorizedKeys) && sshStatus.authorizedKeys.length > 0 && (
-                            <div style={{ marginTop: '12px' }}>
-                              <div
-                                onClick={() => setShowAuthorizedKeys((v) => !v)}
-                                style={{
-                                  display: 'flex', alignItems: 'center', gap: '6px',
-                                  cursor: 'pointer', userSelect: 'none',
-                                  fontSize: '12px', color: 'var(--text-secondary)',
-                                }}
-                                title="Show / hide the SSH keys currently authorized on this device"
-                              >
-                                {showAuthorizedKeys
-                                  ? <ChevronDown size={14} />
-                                  : <ChevronRight size={14} />}
-                                <Key size={13} />
-                                <span>Authorized SSH Keys ({sshStatus.authorizedKeys.length})</span>
-                              </div>
-                              {showAuthorizedKeys && (
-                                <div style={{
-                                  marginTop: '8px', padding: '8px 10px',
-                                  background: 'var(--bg-secondary)',
-                                  border: '1px solid var(--border-subtle)',
-                                  borderRadius: '6px',
-                                  display: 'flex', flexDirection: 'column', gap: '6px',
-                                }}>
-                                  {sshStatus.authorizedKeys.map((k, i) => (
-                                    <div key={`${k.fingerprint || 'invalid'}-${i}`}
-                                      style={{
-                                        display: 'flex', flexDirection: 'column',
-                                        padding: '6px 8px', borderRadius: '4px',
-                                        background: k.isLauncherKey ? 'var(--color-success-bg)' : 'transparent',
-                                        border: k.isLauncherKey ? '1px solid var(--color-success-border, transparent)' : '1px solid transparent',
-                                      }}
-                                    >
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
-                                        <span style={{
-                                          fontFamily: 'Menlo, monospace', fontWeight: 600,
-                                          color: k.valid ? 'var(--text-primary)' : 'var(--color-warning)',
-                                        }}>
-                                          {k.valid ? k.type : 'unparseable line'}
-                                        </span>
-                                        {k.isLauncherKey && (
-                                          <span style={{
-                                            fontSize: '10px', fontWeight: 700, padding: '1px 6px',
-                                            borderRadius: '3px', background: 'var(--color-success)',
-                                            color: '#fff', textTransform: 'uppercase', letterSpacing: '0.5px',
-                                          }}>
-                                            This launcher
-                                          </span>
-                                        )}
-                                        {k.comment && (
-                                          <span style={{ color: 'var(--text-tertiary)' }}>{k.comment}</span>
-                                        )}
-                                        {/* Cloud-config change: not gated on device
-                                            online/session — it applies on reconnect. */}
-                                        <button
-                                          type="button"
-                                          className="authorized-key-remove-btn"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleRemoveAuthorizedKey(k);
-                                          }}
-                                          disabled={loadingSSH}
-                                          aria-label={k.isLauncherKey
-                                            ? "Remove this launcher's key from the device (disables SSH for this app)"
-                                            : 'Remove this key from the device'}
-                                          title={k.isLauncherKey
-                                            ? "Remove this launcher's key from the device (disables SSH for this app)"
-                                            : 'Remove this key from the device'}
-                                        >
-                                          <Trash2 size={13} />
-                                        </button>
-                                      </div>
-                                      {k.fingerprint && (
-                                        <div style={{
-                                          fontFamily: 'Menlo, monospace', fontSize: '11px',
-                                          color: 'var(--text-tertiary)', marginTop: '2px',
-                                        }}>
-                                          {k.fingerprint}
-                                        </div>
-                                      )}
-                                      {!k.fingerprint && k.raw && (
-                                        <div
-                                          title={k.raw}
-                                          style={{
-                                            fontFamily: 'Menlo, monospace', fontSize: '11px',
-                                            color: 'var(--text-tertiary)', marginTop: '2px',
-                                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                                          }}
-                                        >
-                                          {k.raw}
-                                        </div>
-                                      )}
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          )}
                         </div>
                       </div>
                     ) : !loadingSSH && (
@@ -5359,6 +5194,221 @@ Do you want to try connecting anyway?`)) {
                 </div>
               )
             }
+
+            {selectedNode && !authError && (
+              <DeviceInfoPanel
+                info={deviceInfo.info}
+                failed={deviceInfo.failed}
+                authFailed={deviceInfo.authFailed}
+                isOnline={isDeviceOnline}
+                timeFormatOptions={getTimeFormatOptions()}
+              >
+                {/* Device configuration: cloud-config chips (ZEDEDA PUTs the device
+                    reconciles on reconnect), so they are NOT gated on device-online.
+                    Always visible, even while the facts grid above is collapsed. */}
+                {sshStatus && (
+                  <div className="config-container">
+                    <div style={configLabelStyle}>
+                      Configuration
+                    </div>
+
+                    <div className="config-row" style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', justifyContent: 'space-between' }}>
+
+                      {/* SSH Control */}
+                      <Tooltip text="Enable SSH access to the EVE-OS shell via EdgeView tunnel." helpUrl="https://help.zededa.com/hc/en-us/articles/39473586111003-Edge-View-Overview#h_01K2NBYMH255X6QMJHP079XVXQ" simple>
+                      <div
+                        className={`config-chip ${sshStatus.status === 'enabled' ? 'enabled' : sshStatus.status === 'mismatch' ? 'warning' : 'disabled'}`}
+                        onClick={sshStatus.status === 'enabled' ? handleDisableSSH : handleSetupSSH}
+                        title={!isDeviceOnline
+                          ? (sshStatus.status === 'enabled' ? "SSH Enabled - Click to Disable (applies when device reconnects)" : sshStatus.status === 'mismatch' ? "Key Mismatch - Click to Fix (applies when device reconnects)" : "SSH Disabled - Click to Enable (applies when device reconnects)")
+                          : sshStatus.status === 'enabled' ? "SSH Enabled - Click to Disable" : sshStatus.status === 'mismatch' ? "Key Mismatch - Click to Fix" : "SSH Disabled - Click to Enable"}
+                        style={{
+                          display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
+                          fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
+                          backgroundColor: sshStatus.status === 'enabled' ? 'var(--color-success-bg)' : sshStatus.status === 'mismatch' ? 'var(--color-warning-bg)' : 'var(--bg-secondary)',
+                          color: sshStatus.status === 'enabled' ? 'var(--color-success)' : sshStatus.status === 'mismatch' ? 'var(--color-warning)' : 'var(--text-primary)',
+                          border: 'none'
+                        }}
+                      >
+                        {sshStatus.status === 'enabled' ? <Unlock size={13} style={{ marginRight: '6px' }} /> :
+                          sshStatus.status === 'mismatch' ? <AlertTriangle size={13} style={{ marginRight: '6px' }} /> :
+                            <Lock size={13} style={{ marginRight: '6px' }} />}
+                        {sshStatus.status === 'enabled' ? 'SSH Enabled' : sshStatus.status === 'mismatch' ? 'SSH Key Mismatch' : 'Enable SSH'}
+                      </div>
+                      </Tooltip>
+
+                      {/* VGA Control */}
+                      <Tooltip text="Enable VGA console output on the device for local display or remote VNC access." helpUrl="https://help.zededa.com/hc/en-us/sections/40376827750043-Local-UI-for-Direct-Edge-Node-Access" simple>
+                      <div
+                        className={`config-chip ${sshStatus.vgaEnabled ? 'enabled' : 'disabled'}`}
+                        onClick={() => handleToggleVGA(!sshStatus.vgaEnabled)}
+                        title={!isDeviceOnline
+                          ? (sshStatus.vgaEnabled ? "VGA Enabled - Click to Disable (applies when device reconnects)" : "VGA Disabled - Click to Enable (applies when device reconnects)")
+                          : sshStatus.vgaEnabled ? "VGA Enabled - Click to Disable" : "VGA Disabled - Click to Enable"}
+                        style={{
+                          display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
+                          fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
+                          backgroundColor: sshStatus.vgaEnabled ? 'var(--color-success-bg)' : 'var(--bg-secondary)',
+                          color: sshStatus.vgaEnabled ? 'var(--color-success)' : 'var(--text-primary)',
+                          border: 'none'
+                        }}
+                      >
+                        <Monitor size={13} style={{ marginRight: '6px' }} />
+                        {sshStatus.vgaEnabled ? 'VGA Enabled' : 'Enable VGA'}
+                      </div>
+                      </Tooltip>
+
+                      {/* USB Control */}
+                      <Tooltip text="Allow USB devices (e.g. keyboards) on the device for local access." helpUrl="https://help.zededa.com/hc/en-us/sections/40376827750043-Local-UI-for-Direct-Edge-Node-Access" simple>
+                      <div
+                        className={`config-chip ${sshStatus.usbEnabled ? 'enabled' : 'disabled'}`}
+                        onClick={() => handleToggleUSB(!sshStatus.usbEnabled)}
+                        title={!isDeviceOnline
+                          ? (sshStatus.usbEnabled ? "USB Enabled - Click to Disable (applies when device reconnects)" : "USB Disabled - Click to Enable (applies when device reconnects)")
+                          : sshStatus.usbEnabled ? "USB Enabled - Click to Disable" : "USB Disabled - Click to Enable"}
+                        style={{
+                          display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
+                          fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
+                          backgroundColor: sshStatus.usbEnabled ? 'var(--color-success-bg)' : 'var(--bg-secondary)',
+                          color: sshStatus.usbEnabled ? 'var(--color-success)' : 'var(--text-primary)',
+                          border: 'none'
+                        }}
+                      >
+                        <Activity size={13} style={{ marginRight: '6px' }} />
+                        {sshStatus.usbEnabled ? 'USB Enabled' : 'Enable USB'}
+                      </div>
+                      </Tooltip>
+
+                      {/* Console Control */}
+                      <Tooltip text="Enable serial console access on the device for low-level debugging." helpUrl="https://help.zededa.com/hc/en-us/sections/40376827750043-Local-UI-for-Direct-Edge-Node-Access" simple>
+                      <div
+                        className={`config-chip ${sshStatus.consoleEnabled ? 'enabled' : 'disabled'}`}
+                        onClick={() => handleToggleConsole(!sshStatus.consoleEnabled)}
+                        title={!isDeviceOnline
+                          ? (sshStatus.consoleEnabled ? "Console Enabled - Click to Disable (applies when device reconnects)" : "Console Disabled - Click to Enable (applies when device reconnects)")
+                          : sshStatus.consoleEnabled ? "Console Enabled - Click to Disable" : "Console Disabled - Click to Enable"}
+                        style={{
+                          display: 'flex', alignItems: 'center', padding: '4px 12px', borderRadius: '9999px',
+                          fontSize: '12px', fontWeight: '500', cursor: 'pointer', transition: 'all 0.2s',
+                          backgroundColor: sshStatus.consoleEnabled ? 'var(--color-success-bg)' : 'var(--bg-secondary)',
+                          color: sshStatus.consoleEnabled ? 'var(--color-success)' : 'var(--text-primary)',
+                          border: 'none'
+                        }}
+                      >
+                        <Terminal size={13} style={{ marginRight: '6px' }} />
+                        {sshStatus.consoleEnabled ? 'Console Enabled' : 'Enable Console'}
+                      </div>
+                      </Tooltip>
+
+                    </div>
+
+                    {/* Authorized SSH Keys audit panel — collapsed by default.
+                        Shows the keys currently in debug.enable.ssh on the
+                        device so an operator can verify that other users'
+                        keys are preserved when the launcher manages its own. */}
+                    {Array.isArray(sshStatus.authorizedKeys) && sshStatus.authorizedKeys.length > 0 && (
+                      <div style={{ marginTop: '12px' }}>
+                        <div
+                          onClick={() => setShowAuthorizedKeys((v) => !v)}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: '6px',
+                            cursor: 'pointer', userSelect: 'none',
+                            fontSize: '12px', color: 'var(--text-secondary)',
+                          }}
+                          title="Show / hide the SSH keys currently authorized on this device"
+                        >
+                          {showAuthorizedKeys
+                            ? <ChevronDown size={14} />
+                            : <ChevronRight size={14} />}
+                          <Key size={13} />
+                          <span>Authorized SSH Keys ({sshStatus.authorizedKeys.length})</span>
+                        </div>
+                        {showAuthorizedKeys && (
+                          <div style={{
+                            marginTop: '8px', padding: '8px 10px',
+                            background: 'var(--bg-secondary)',
+                            border: '1px solid var(--border-subtle)',
+                            borderRadius: '6px',
+                            display: 'flex', flexDirection: 'column', gap: '6px',
+                          }}>
+                            {sshStatus.authorizedKeys.map((k, i) => (
+                              <div key={`${k.fingerprint || 'invalid'}-${i}`}
+                                style={{
+                                  display: 'flex', flexDirection: 'column',
+                                  padding: '6px 8px', borderRadius: '4px',
+                                  background: k.isLauncherKey ? 'var(--color-success-bg)' : 'transparent',
+                                  border: k.isLauncherKey ? '1px solid var(--color-success-border, transparent)' : '1px solid transparent',
+                                }}
+                              >
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
+                                  <span style={{
+                                    fontFamily: 'Menlo, monospace', fontWeight: 600,
+                                    color: k.valid ? 'var(--text-primary)' : 'var(--color-warning)',
+                                  }}>
+                                    {k.valid ? k.type : 'unparseable line'}
+                                  </span>
+                                  {k.isLauncherKey && (
+                                    <span style={{
+                                      fontSize: '10px', fontWeight: 700, padding: '1px 6px',
+                                      borderRadius: '3px', background: 'var(--color-success)',
+                                      color: '#fff', textTransform: 'uppercase', letterSpacing: '0.5px',
+                                    }}>
+                                      This launcher
+                                    </span>
+                                  )}
+                                  {k.comment && (
+                                    <span style={{ color: 'var(--text-tertiary)' }}>{k.comment}</span>
+                                  )}
+                                  {/* Cloud-config change: not gated on device
+                                      online/session — it applies on reconnect. */}
+                                  <button
+                                    type="button"
+                                    className="authorized-key-remove-btn"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleRemoveAuthorizedKey(k);
+                                    }}
+                                    disabled={loadingSSH}
+                                    aria-label={k.isLauncherKey
+                                      ? "Remove this launcher's key from the device (disables SSH for this app)"
+                                      : 'Remove this key from the device'}
+                                    title={k.isLauncherKey
+                                      ? "Remove this launcher's key from the device (disables SSH for this app)"
+                                      : 'Remove this key from the device'}
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                </div>
+                                {k.fingerprint && (
+                                  <div style={{
+                                    fontFamily: 'Menlo, monospace', fontSize: '11px',
+                                    color: 'var(--text-tertiary)', marginTop: '2px',
+                                  }}>
+                                    {k.fingerprint}
+                                  </div>
+                                )}
+                                {!k.fingerprint && k.raw && (
+                                  <div
+                                    title={k.raw}
+                                    style={{
+                                      fontFamily: 'Menlo, monospace', fontSize: '11px',
+                                      color: 'var(--text-tertiary)', marginTop: '2px',
+                                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                    }}
+                                  >
+                                    {k.raw}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </DeviceInfoPanel>
+            )}
 
             {/* Contextual Action Button placeholder (button moved to session header) */}
             {selectedNode && (
@@ -5538,6 +5588,24 @@ Do you want to try connecting anyway?`)) {
                                         <Layers size={12} /> Compose App
                                       </span>
                                     )}
+                                    {(() => {
+                                      // CPU / memory from the device-info workloads (the
+                                      // Device section has no app list of its own).
+                                      const usage = workloadUsage(app);
+                                      if (!usage?.text) return null;
+                                      return (
+                                        <Tooltip text={
+                                          <div>
+                                            <div>CPU: average over the last hour{isDeviceOnline ? '' : ' (not reported while the device is offline)'}</div>
+                                            <div>Memory: used / allocated to this app</div>
+                                          </div>
+                                        }>
+                                          <span data-testid="app-usage" style={{ fontSize: '0.85em', color: 'var(--text-secondary)', whiteSpace: 'nowrap', cursor: 'help' }}>
+                                            {usage.text}
+                                          </span>
+                                        </Tooltip>
+                                      );
+                                    })()}
                                     <div className="service-meta" style={{ display: 'flex', alignItems: 'center', height: '100%', flexWrap: 'wrap', gap: '4px' }}>
                                       {app.ips && app.ips.length > 0 && app.ips.map((ip, ipIdx) => {
                                         const savedUser = getSavedSshUsername(app.name);
