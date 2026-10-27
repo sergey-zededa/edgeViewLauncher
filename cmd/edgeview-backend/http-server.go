@@ -234,6 +234,23 @@ func (s *HTTPServer) handleGetSSHStatus(w http.ResponseWriter, r *http.Request) 
 	s.sendSuccess(w, status)
 }
 
+// handleGetEdgeViewSessions reports how many EdgeView sessions a device has
+// in use out of the total it allows. Read-only; works without connecting.
+func (s *HTTPServer) handleGetEdgeViewSessions(w http.ResponseWriter, r *http.Request) {
+	var req NodeIDRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, err)
+		return
+	}
+
+	info, err := s.app.GetEdgeViewSessions(r.Context(), req.NodeID)
+	if err != nil {
+		s.sendError(w, err)
+		return
+	}
+	s.sendSuccess(w, info)
+}
+
 func (s *HTTPServer) handleDisableSSH(w http.ResponseWriter, r *http.Request) {
 	var req NodeIDRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -702,6 +719,7 @@ func (s *HTTPServer) Start() {
 	router.HandleFunc("/api/device-services", s.handleGetDeviceServices)
 	router.HandleFunc("/api/setup-ssh", s.handleSetupSSH)
 	router.HandleFunc("/api/ssh-status", s.handleGetSSHStatus)
+	router.HandleFunc("/api/edgeview-sessions", s.handleGetEdgeViewSessions)
 	router.HandleFunc("/api/disable-ssh", s.handleDisableSSH)
 	router.HandleFunc("/api/remove-ssh-key", s.handleRemoveSSHKey)
 	router.HandleFunc("/api/reset-edgeview", s.handleResetEdgeView)
