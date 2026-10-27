@@ -177,7 +177,9 @@
 
 /* Help link variant — slightly wider, wraps text, interactive */
 .tooltip-with-help {
-    white-space: normal;
+    /* pre-wrap like the base style: keep the text's own line breaks
+       (e.g. one EdgeView session slot per line). */
+    white-space: pre-wrap;
     max-width: 300px;
     pointer-events: auto;
 }

@@ -12,6 +12,25 @@ import { openExternal } from '../tauriAPI';
 // here is action-oriented rather than purely supplemental help text.
 const DEFAULT_OPEN_DELAY = 500;
 
+// The area a tooltip rendered next to `el` can actually be seen in: the
+// window, narrowed by every ancestor that clips its overflow. The device
+// details pane, for one, scrolls below the title bar, so a tooltip that fits
+// in the window can still be cut off at the top of that pane.
+export function visibleBounds(el) {
+    let top = 0, left = 0, right = window.innerWidth, bottom = window.innerHeight;
+    for (let p = el?.parentElement; p && p !== document.body; p = p.parentElement) {
+        const s = window.getComputedStyle(p);
+        if (/auto|scroll|hidden|clip/.test(`${s.overflow} ${s.overflowX} ${s.overflowY}`)) {
+            const r = p.getBoundingClientRect();
+            top = Math.max(top, r.top);
+            left = Math.max(left, r.left);
+            right = Math.min(right, r.right);
+            bottom = Math.min(bottom, r.bottom);
+        }
+    }
+    return { top, left, right, bottom };
+}
+
 const Tooltip = ({ text, children, position = 'top', simple = false, helpUrl = null, helpLabel = null, usePortal = false, openDelay = DEFAULT_OPEN_DELAY }) => {
     const [isVisible, setIsVisible] = useState(false);
     const [adjustedPosition, setAdjustedPosition] = useState(position);
@@ -92,20 +111,26 @@ const Tooltip = ({ text, children, position = 'top', simple = false, helpUrl = n
         if (isVisible && tooltipRef.current && containerRef.current) {
             const tooltip = tooltipRef.current.getBoundingClientRect();
             const container = containerRef.current.getBoundingClientRect();
-            const windowWidth = window.innerWidth;
-            const windowHeight = window.innerHeight;
+            // A portal tooltip escapes clipping ancestors; an inline one
+            // must fit in what they leave visible.
+            const bounds = usePortal
+                ? { top: 0, left: 0, right: window.innerWidth, bottom: window.innerHeight }
+                : visibleBounds(containerRef.current);
 
             let newPosition = position;
             let newOffset = { left: '50%', transform: 'translateX(-50%)' };
 
             // Check vertical overflow
-            const wouldOverflowTop = container.top - tooltip.height - 10 < 0;
-            const wouldOverflowBottom = container.bottom + tooltip.height + 10 > windowHeight;
+            const spaceAbove = container.top - bounds.top;
+            const spaceBelow = bounds.bottom - container.bottom;
+            const needed = tooltip.height + 10;
+            const wouldOverflowTop = spaceAbove < needed;
+            const wouldOverflowBottom = spaceBelow < needed;
 
-            // Adjust vertical position if needed
-            if (position === 'top' && wouldOverflowTop && !wouldOverflowBottom) {
+            // Flip to the side that fits; when neither does, take the roomier one.
+            if (position === 'top' && wouldOverflowTop && (!wouldOverflowBottom || spaceBelow > spaceAbove)) {
                 newPosition = 'bottom';
-            } else if (position === 'bottom' && wouldOverflowBottom && !wouldOverflowTop) {
+            } else if (position === 'bottom' && wouldOverflowBottom && (!wouldOverflowTop || spaceAbove > spaceBelow)) {
                 newPosition = 'top';
             }
 
@@ -113,16 +138,16 @@ const Tooltip = ({ text, children, position = 'top', simple = false, helpUrl = n
             const tooltipLeft = container.left + container.width / 2 - tooltip.width / 2;
             const tooltipRight = container.left + container.width / 2 + tooltip.width / 2;
 
-            if (tooltipRight > windowWidth - 10) {
+            if (tooltipRight > bounds.right - 10) {
                 // Tooltip would overflow on the right
-                const overflow = tooltipRight - (windowWidth - 10);
+                const overflow = tooltipRight - (bounds.right - 10);
                 newOffset = {
                     left: '50%',
                     transform: `translateX(calc(-50% - ${overflow}px))`
                 };
-            } else if (tooltipLeft < 10) {
+            } else if (tooltipLeft < bounds.left + 10) {
                 // Tooltip would overflow on the left
-                const overflow = 10 - tooltipLeft;
+                const overflow = bounds.left + 10 - tooltipLeft;
                 newOffset = {
                     left: '50%',
                     transform: `translateX(calc(-50% + ${overflow}px))`
@@ -132,7 +157,7 @@ const Tooltip = ({ text, children, position = 'top', simple = false, helpUrl = n
             setAdjustedPosition(newPosition);
             setOffset(newOffset);
         }
-    }, [isVisible, position, text]);
+    }, [isVisible, position, text, usePortal]);
 
     // Portal mode: position tooltip absolutely on the page using trigger's bounding rect
     useEffect(() => {
