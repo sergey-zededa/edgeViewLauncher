@@ -311,6 +311,12 @@ func (a *App) IsDeviceCacheRefreshing() bool {
 	return a.deviceCache.IsRefreshing()
 }
 
+// DeviceCacheRefreshError returns why the last device-cache refresh for the
+// active cluster failed (nil if it succeeded or has not finished yet).
+func (a *App) DeviceCacheRefreshError() error {
+	return a.deviceCache.LastRefreshError()
+}
+
 // RefreshDeviceCache triggers an async cache refresh.
 func (a *App) RefreshDeviceCache() {
 	go a.deviceCache.Refresh(a.zededaClient)

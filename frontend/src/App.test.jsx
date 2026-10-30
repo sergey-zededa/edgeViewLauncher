@@ -1025,6 +1025,83 @@ describe('Search with local cache filtering', () => {
     expect(screen.getByPlaceholderText('Search nodes, projects...')).toHaveValue('');
   });
 
+  // Regression: switching to a cluster whose token had expired showed its
+  // cached list as if current; the banner only appeared once a device was
+  // opened (the switch cleared authError after its own checks had started).
+  it('switching to a cluster with a rejected token flags it right away and marks the list as cached', async () => {
+    const twoClusters = {
+      ...config,
+      clusters: [
+        { name: 'Prod', baseUrl: 'https://cluster.example', apiToken: validToken },
+        { name: 'Staging', baseUrl: 'https://staging.example', apiToken: validToken },
+      ],
+    };
+    electronAPI.GetSettings.mockResolvedValue(twoClusters);
+    electronAPI.SecureStorageGetSettings.mockResolvedValue(twoClusters);
+    electronAPI.GetDeviceCache.mockResolvedValue(makeCache([
+      { id: 'n1', name: 'Prod-Device', status: 'online', project: 'p1' },
+    ]));
+
+    render(<App />);
+    await screen.findByText('Prod-Device');
+    expect(screen.queryByTestId('stale-list-note')).not.toBeInTheDocument();
+    await screen.findByText(/Test Enterprise • cluster\.example/);
+
+    // Staging's token is dead: its first authenticated call (GetEnterprise)
+    // 401s, while the backend still serves its disk-cached list.
+    electronAPI.GetEnterprise.mockRejectedValue(Object.assign(new Error('expired'), { code: 'UNAUTHORIZED' }));
+    electronAPI.GetDeviceCache.mockResolvedValue({
+      ...makeCache([{ id: 'n2', name: 'Staging-Device', status: 'online', project: 'p2' }]),
+      updatedAt: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
+    });
+    fireEvent.click(screen.getByTitle('Switch Cluster'));
+    fireEvent.click(await screen.findByText('Staging'));
+
+    expect(await screen.findByText('Staging-Device')).toBeInTheDocument();
+    // No device opened: the banner is up on the main screen...
+    expect(await screen.findByText(/expired or is invalid/i)).toBeInTheDocument();
+    // ...and the list says it is a cached copy, with its age.
+    const note = screen.getByTestId('stale-list-note');
+    expect(note).toHaveTextContent('Cached list, updated 3h 0m ago. The API token was rejected');
+    expect(document.querySelector('.results-list')).toHaveClass('stale');
+    expect(screen.getByText('1 results (cached)')).toBeInTheDocument();
+    // The header names the new cluster, not Prod's enterprise: with the
+    // token dead, the enterprise id from the token stands in for its name.
+    expect(screen.getByText(/ENT1234 • staging\.example/)).toBeInTheDocument();
+    expect(screen.queryByText(/Test Enterprise/)).not.toBeInTheDocument();
+  });
+
+  it('flags a rejected token reported by the backend\'s own refresh (authFailed)', async () => {
+    electronAPI.GetDeviceCache.mockResolvedValue({
+      ...makeCache([{ id: 'n1', name: 'Prod-Device', status: 'online', project: 'p1' }]),
+      refreshFailed: true,
+      authFailed: true,
+    });
+
+    render(<App />);
+    await screen.findByText('Prod-Device');
+    expect(await screen.findByText(/expired or is invalid/i)).toBeInTheDocument();
+    expect(screen.getByTestId('stale-list-note')).toHaveTextContent('The API token was rejected');
+    // The note's own Update Token works even after the banner is dismissed.
+    fireEvent.click(screen.getByLabelText('Dismiss'));
+    fireEvent.click(within(screen.getByTestId('stale-list-note')).getByText('Update Token'));
+    expect(await screen.findByPlaceholderText('Paste token from ZEDEDA Cloud...')).toBeInTheDocument();
+  });
+
+  it('marks the list as cached, without the auth banner, when a refresh failed for another reason', async () => {
+    electronAPI.GetDeviceCache.mockResolvedValue({
+      ...makeCache([{ id: 'n1', name: 'Prod-Device', status: 'online', project: 'p1' }]),
+      refreshFailed: true,
+      authFailed: false,
+    });
+
+    render(<App />);
+    await screen.findByText('Prod-Device');
+    expect(await screen.findByTestId('stale-list-note')).toHaveTextContent("It couldn't be refreshed");
+    expect(screen.queryByText(/expired or is invalid/i)).not.toBeInTheDocument();
+    expect(within(screen.getByTestId('stale-list-note')).queryByText('Update Token')).not.toBeInTheDocument();
+  });
+
   it('shows all devices when search is empty', async () => {
     const devices = [
       { id: 'n1', name: 'Device-A', status: 'online', project: 'p1' },
