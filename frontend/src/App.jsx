@@ -4,7 +4,7 @@ import { ConnectToNode, CancelConnection, GetSettings, SaveSettings, GetDeviceSe
 import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, ChevronRight, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers, Shield, Moon, Sun, HelpCircle, Key, Plug, Unplug } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
 import Tooltip from './components/Tooltip';
-import DeviceInfoPanel, { formatWorkloadUsage } from './components/DeviceInfoPanel';
+import DeviceInfoPanel, { AppUsage, formatWorkloadUsage } from './components/DeviceInfoPanel';
 import useDeviceInfo from './useDeviceInfo';
 import About from './components/About';
 import UpdateBanner from './components/UpdateBanner';
@@ -224,7 +224,7 @@ const PortComboBox = ({ value, onChange, exposedPorts = [], showCommonPorts = tr
           height: '34px',
           boxSizing: 'border-box',
           outline: 'none',
-          fontFamily: 'var(--font-mono)'
+          fontVariantNumeric: 'tabular-nums'
         }}
       />
       {matchedPort && (
@@ -364,7 +364,7 @@ const PortComboBox = ({ value, onChange, exposedPorts = [], showCommonPorts = tr
                         style={{ display: 'flex', alignItems: 'center', width: '100%' }}
                         title={`${p.label} - ${p.description}`}
                       >
-                        <div style={{ width: '45px', textAlign: 'right', marginRight: '12px', flexShrink: 0, fontFamily: 'var(--font-mono)' }}>
+                        <div style={{ width: '45px', textAlign: 'right', marginRight: '12px', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
                           <span style={{ color: 'var(--text-primary)', fontWeight: '500' }}>{p.port}</span>
                         </div>
                         <div style={{ width: '65px', textAlign: 'left', marginRight: '8px', flexShrink: 0 }}>
@@ -3410,11 +3410,23 @@ Do you want to try connecting anyway?`)) {
     } else if (e.key === 'Enter') {
       const node = getNodeAtIndex(selectedIndex);
       if (node) handleConnect(node);
-    } else if (e.metaKey && e.key === ',') {
-      e.preventDefault();
-      setShowSettings(true);
     }
   };
+
+  // Cmd+, (Ctrl+, on Windows/Linux) opens Settings from every view. Listened
+  // for on window rather than in handleKeyDown: that handler stops early on
+  // the device page, and only sees keys while focus is inside the container
+  // (focus drops to <body> when a focused control unmounts).
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key === ',') {
+        e.preventDefault();
+        setShowSettings(true);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   const addNewCluster = () => {
     const newName = `Cluster ${config.clusters.length + 1}`;
@@ -4412,7 +4424,7 @@ Do you want to try connecting anyway?`)) {
                             style={{
                               padding: '8px 10px', cursor: 'pointer',
                               background: editingCluster.baseUrl === u ? 'var(--bg-hover)' : 'transparent',
-                              fontFamily: 'Menlo, monospace', fontSize: '13px',
+                              fontSize: '13px',
                             }}
                             onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
                             onMouseLeave={(e) => { e.currentTarget.style.background = editingCluster.baseUrl === u ? 'var(--bg-hover)' : 'transparent'; }}
@@ -5088,7 +5100,7 @@ Do you want to try connecting anyway?`)) {
                                   padding: '3px 10px',
                                   borderRadius: '6px',
                                   fontSize: '11px',
-                                  fontFamily: 'monospace',
+                                  fontFamily: 'var(--font-mono)',
                                   whiteSpace: 'nowrap',
                                   border: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.06))',
                                   color: 'inherit',
@@ -5342,7 +5354,7 @@ Do you want to try connecting anyway?`)) {
                               >
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
                                   <span style={{
-                                    fontFamily: 'Menlo, monospace', fontWeight: 600,
+                                    fontWeight: 600,
                                     color: k.valid ? 'var(--text-primary)' : 'var(--color-warning)',
                                   }}>
                                     {k.valid ? k.type : 'unparseable line'}
@@ -5381,7 +5393,7 @@ Do you want to try connecting anyway?`)) {
                                 </div>
                                 {k.fingerprint && (
                                   <div style={{
-                                    fontFamily: 'Menlo, monospace', fontSize: '11px',
+                                    fontFamily: 'var(--font-mono)', fontSize: '11px',
                                     color: 'var(--text-tertiary)', marginTop: '2px',
                                   }}>
                                     {k.fingerprint}
@@ -5391,7 +5403,7 @@ Do you want to try connecting anyway?`)) {
                                   <div
                                     title={k.raw}
                                     style={{
-                                      fontFamily: 'Menlo, monospace', fontSize: '11px',
+                                      fontFamily: 'var(--font-mono)', fontSize: '11px',
                                       color: 'var(--text-tertiary)', marginTop: '2px',
                                       overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                                     }}
@@ -5600,9 +5612,7 @@ Do you want to try connecting anyway?`)) {
                                             <div>Memory: used / allocated to this app</div>
                                           </div>
                                         }>
-                                          <span data-testid="app-usage" style={{ fontSize: '0.85em', color: 'var(--text-secondary)', whiteSpace: 'nowrap', cursor: 'help' }}>
-                                            {usage.text}
-                                          </span>
+                                          <AppUsage data-testid="app-usage" workload={usage.workload} online={isDeviceOnline} />
                                         </Tooltip>
                                       );
                                     })()}
@@ -5637,7 +5647,7 @@ Do you want to try connecting anyway?`)) {
                                                   borderRadius: '4px',
                                                   padding: '2px 6px',
                                                   fontSize: '11px',
-                                                  fontFamily: 'monospace',
+                                                  fontFamily: 'var(--font-mono)',
                                                   color: 'var(--text-secondary)',
                                                   cursor: 'pointer',
                                                   display: 'flex',
@@ -5747,7 +5757,7 @@ Do you want to try connecting anyway?`)) {
                                                 borderRadius: '4px',
                                                 padding: '2px 6px',
                                                 fontSize: '11px',
-                                                fontFamily: 'monospace',
+                                                fontVariantNumeric: 'tabular-nums',
                                                 color: 'var(--text-secondary)',
                                                 cursor: 'pointer',
                                                 display: 'flex',
@@ -6356,7 +6366,7 @@ Do you want to try connecting anyway?`)) {
                           borderRadius: '4px',
                           padding: '2px 6px',
                           fontSize: '13px',
-                          fontFamily: 'monospace',
+                          fontFamily: 'var(--font-mono)',
                           cursor: 'pointer',
                           width: '100%'
                         }}
@@ -6434,7 +6444,7 @@ Do you want to try connecting anyway?`)) {
                           borderRadius: '4px',
                           padding: '2px 6px',
                           fontSize: '13px',
-                          fontFamily: 'monospace',
+                          fontFamily: 'var(--font-mono)',
                           cursor: 'pointer'
                         }}
                       >

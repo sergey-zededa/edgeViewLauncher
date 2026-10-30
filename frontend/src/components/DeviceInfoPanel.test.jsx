@@ -1,9 +1,9 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 import DeviceInfoPanel, {
-  formatMB, formatMBPair, formatPercent, formatDuration, splitEveVersion, formatWorkloadUsage, EXPANDED_STORAGE_KEY,
+  formatMB, formatMBPair, formatPercent, formatDuration, splitEveVersion, formatWorkloadUsage, AppUsage, EXPANDED_STORAGE_KEY,
 } from './DeviceInfoPanel';
 
 const NOW = new Date('2026-10-27T12:00:00Z');
@@ -61,7 +61,12 @@ describe('DeviceInfoPanel', () => {
   it('is collapsed by default, with a one-line summary in the title row', () => {
     renderPanel();
     expect(screen.getByRole('button', { name: /Device/ })).toHaveAttribute('aria-expanded', 'false');
-    expect(summary()).toHaveTextContent('EVE 16.6.0-lts · up 2d 2h · CPU 13% · Mem 2.6/7.6 GB');
+    expect(summary()).toHaveTextContent('EVE 16.6.0-lts · up 2d 2h');
+    // CPU / memory as gauges, named with the same numbers as text.
+    const usage = screen.getByTestId('device-summary-usage');
+    expect(usage).toHaveAttribute('aria-label', 'CPU 13% · Mem 2.6/7.6 GB');
+    expect(usage).toHaveTextContent('CPU13%MEM2.6/7.6 GB');
+    expect(within(usage).getAllByTestId('usage-bar')).toHaveLength(2);
     // Platform suffix stays out of the summary too.
     expect(summary()).not.toHaveTextContent('kvm-amd64');
     expect(screen.queryByText('UPTIME', { selector: '.status-label' })).not.toBeInTheDocument();
@@ -84,6 +89,10 @@ describe('DeviceInfoPanel', () => {
     // committed = 2048 apps + 640 EVE = 2688 MB = 2.6 GB of 7.6 GB
     expect(valueOf('MEMORY')).toHaveTextContent('2.6 GB / 7.6 GB');
     expect(valueOf('STORAGE')).toHaveTextContent('33 GB / 120 GB');
+    // Memory / storage bars carry the percent used; CPU's value already is one.
+    expect(valueOf('MEMORY')).toHaveTextContent(/34%$/);
+    expect(valueOf('STORAGE')).toHaveTextContent(/28%$/);
+    expect(valueOf('CPU')).toHaveTextContent(/^CPU13%$/);
 
     expand();
     expect(screen.queryByText('UPTIME', { selector: '.status-label' })).not.toBeInTheDocument();
@@ -174,7 +183,8 @@ describe('DeviceInfoPanel', () => {
 
   it('offline: "last boot" instead of uptime, no CPU, values flagged as last reported', () => {
     renderPanel({ isOnline: false, info: info({ online: false, runState: 'RUN_STATE_OFFLINE', uptimeSec: undefined, cpu: { percent: 0, cores: 4 } }) });
-    expect(summary()).toHaveTextContent('EVE 16.6.0-lts · last boot 2d 2h ago · Mem 2.6/7.6 GB');
+    expect(summary()).toHaveTextContent('EVE 16.6.0-lts · last boot 2d 2h ago');
+    expect(screen.getByTestId('device-summary-usage')).toHaveAttribute('aria-label', 'Mem 2.6/7.6 GB');
     expect(summary()).not.toHaveTextContent('CPU');
     expand();
     expect(screen.queryByText('UPTIME', { selector: '.status-label' })).not.toBeInTheDocument();
@@ -201,7 +211,7 @@ describe('DeviceInfoPanel', () => {
 
   it('shows a dash for memory when the controller sent all zeros', () => {
     renderPanel({ info: info({ memory: { usedEveMB: 0, allocatedAppsMB: 0, allocatedEveMB: 0 } }) });
-    expect(summary()).not.toHaveTextContent('Mem');
+    expect(screen.getByTestId('device-summary-usage')).toHaveAttribute('aria-label', 'CPU 13%');
     expand();
     expect(valueOf('MEMORY')).toHaveTextContent('—');
     expect(valueOf('MEMORY')).not.toHaveTextContent('0 MB');
@@ -310,5 +320,26 @@ describe('formatters', () => {
     expect(formatWorkloadUsage({ memAllocatedMB: 512 }, true)).toBe('512 MB alloc.');
     expect(formatWorkloadUsage({}, true)).toBe('');
     expect(formatWorkloadUsage(null, true)).toBe('');
+  });
+
+  it('renders app usage as CPU / MEM gauges with bars sized to the ratio', () => {
+    const w = { cpuPercent: 80, memUsedMB: 1229, memAllocatedMB: 2048 };
+    const { container, rerender } = render(<AppUsage workload={w} online data-testid="u" />);
+    const u = screen.getByTestId('u');
+    expect(u).toHaveAttribute('role', 'group');
+    expect(u).toHaveAttribute('aria-label', 'CPU 80% · 1.2 / 2.0 GB');
+    expect(u).toHaveTextContent('CPU80%MEM1.2/2.0 GB');
+    const bars = screen.getAllByTestId('usage-bar');
+    expect(bars).toHaveLength(2);
+    expect(bars[0].firstChild.style.width).toBe('80%');
+    expect(parseFloat(bars[1].firstChild.style.width)).toBeCloseTo(60, 0);
+
+    // Offline: no CPU gauge. Allocation only: value without a bar.
+    rerender(<AppUsage workload={{ memAllocatedMB: 512 }} online={false} data-testid="u" />);
+    expect(screen.getByTestId('u')).toHaveTextContent('MEM512 MB alloc.');
+    expect(screen.queryByTestId('usage-bar')).toBeNull();
+
+    rerender(<AppUsage workload={{}} online data-testid="u" />);
+    expect(container).toBeEmptyDOMElement();
   });
 });

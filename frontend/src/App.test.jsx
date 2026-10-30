@@ -2534,7 +2534,8 @@ describe('Device info section', () => {
     await openDevice();
     const summary = await screen.findByTestId('device-summary');
     expect(electronAPI.GetDeviceInfo).toHaveBeenCalledWith('node-1', 'Info-Dev');
-    expect(summary).toHaveTextContent('EVE 16.6.0-lts · up 3d 5h · CPU 7.5% · Mem 2.5/8.0 GB');
+    expect(summary).toHaveTextContent('EVE 16.6.0-lts · up 3d 5h');
+    expect(screen.getByTestId('device-summary-usage')).toHaveAttribute('aria-label', 'CPU 7.5% · Mem 2.5/8.0 GB');
     expect(deviceToggle()).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByText('UPTIME', { selector: '.status-label' })).not.toBeInTheDocument();
 
@@ -2653,8 +2654,11 @@ describe('Device info section', () => {
       ],
     }));
     await openDevice();
-    await waitFor(() => expect(usageOf('docker-runtime')).toHaveTextContent('CPU 3.0% · 1.2 / 2.0 GB'));
-    expect(usageOf('compose-app')).toHaveTextContent('CPU 12% · 300 MB / 1.0 GB');
+    await waitFor(() => expect(usageOf('docker-runtime')).toHaveAttribute('aria-label', 'CPU 3.0% · 1.2 / 2.0 GB'));
+    expect(usageOf('compose-app')).toHaveAttribute('aria-label', 'CPU 12% · 300 MB / 1.0 GB');
+    // Rendered as gauges: a mini bar each for CPU and memory.
+    expect(usageOf('docker-runtime')).toHaveTextContent('CPU3.0%MEM1.2/2.0 GB');
+    expect(within(usageOf('docker-runtime')).getAllByTestId('usage-bar')).toHaveLength(2);
     expect(usageOf('name-twin')).toBeNull();
     // One read feeds both the Device section and the app rows.
     expect(electronAPI.GetDeviceInfo).toHaveBeenCalledTimes(1);
@@ -2666,8 +2670,23 @@ describe('Device info section', () => {
     electronAPI.GetDeviceServices.mockResolvedValue(JSON.stringify([{ id: 'a1', name: 'my-app', status: 'RUN_STATE_HALTED', appType: 'APP_TYPE_VM' }]));
     electronAPI.GetDeviceInfo.mockResolvedValue(deviceInfo({ online: false }));
     await openDevice();
-    await waitFor(() => expect(usageOf('my-app')).toHaveTextContent('256 MB / 1.0 GB'));
+    await waitFor(() => expect(usageOf('my-app')).toHaveAttribute('aria-label', '256 MB / 1.0 GB'));
     expect(usageOf('my-app')).not.toHaveTextContent('CPU');
+    expect(within(usageOf('my-app')).getAllByTestId('usage-bar')).toHaveLength(1);
+  });
+
+  it('opens Settings with Cmd+, (or Ctrl+,) from the device page, wherever focus is', async () => {
+    await openDevice();
+    await screen.findByText('Running Applications');
+    // Focus outside the app container (e.g. after a focused control unmounted).
+    document.activeElement?.blur();
+    fireEvent.keyDown(document.body, { key: ',', metaKey: true });
+    await screen.findByRole('heading', { name: 'Configuration' });
+
+    fireEvent.click(document.querySelector('.settings-panel .close-btn'));
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Configuration' })).not.toBeInTheDocument());
+    fireEvent.keyDown(document.body, { key: ',', ctrlKey: true });
+    await screen.findByRole('heading', { name: 'Configuration' });
   });
 
   it('shows no usage on app rows when device info has no data', async () => {
