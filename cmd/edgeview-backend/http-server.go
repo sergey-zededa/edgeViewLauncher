@@ -556,11 +556,16 @@ func (s *HTTPServer) handleGetDeviceCache(w http.ResponseWriter, r *http.Request
 		Name string `json:"name"`
 	}
 
+	// A failed refresh means the list below is the disk copy, not current.
+	// authFailed: the token was rejected, so it stays stale until updated.
+	refreshErr := s.app.DeviceCacheRefreshError()
 	resp := map[string]interface{}{
-		"devices":      []respDevice{},
-		"projects":     []respProject{},
-		"updatedAt":    nil,
-		"isRefreshing": s.app.IsDeviceCacheRefreshing(),
+		"devices":       []respDevice{},
+		"projects":      []respProject{},
+		"updatedAt":     nil,
+		"isRefreshing":  s.app.IsDeviceCacheRefreshing(),
+		"refreshFailed": refreshErr != nil,
+		"authFailed":    errors.Is(refreshErr, zededa.ErrUnauthorized),
 	}
 
 	if cc != nil {
