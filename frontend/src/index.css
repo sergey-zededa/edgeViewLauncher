@@ -47,7 +47,11 @@
 
   /* Font Families */
   --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  /* Mono is for machine identifiers only (IPs, host:port, fingerprints,
+     tokens, logs, terminal). Names people chose and numbers people read
+     use the UI face; numbers get tabular figures so columns line up. */
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --tracking-name: -0.01em;
 
   /* Scrollbars */
   --scrollbar-thumb: rgba(255, 255, 255, 0.2);

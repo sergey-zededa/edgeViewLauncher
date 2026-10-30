@@ -416,7 +416,7 @@ const TerminalView = ({ port }) => {
                     pointerEvents: 'none'
                 }}>
                     <span style={{ color: 'var(--text-secondary)' }}>
-                        {connectionInfo.nodeName} • {connectionInfo.targetInfo}
+                        <span style={{ color: 'var(--text-primary)', fontWeight: 500, letterSpacing: 'var(--tracking-name)' }}>{connectionInfo.nodeName}</span> • {connectionInfo.targetInfo}
                     </span>
                     <span style={{
                         color: status === 'Connected' ? 'var(--color-success)' :

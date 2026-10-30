@@ -126,15 +126,82 @@ const subStyle = { ...ellipsis, maxWidth: '100%', fontSize: '11px', color: 'var(
 
 // Thin usage bar, the same width under every resource value. `pct` is
 // clamped to 0-100 for display only.
-const Bar = ({ pct }) => {
+const Bar = ({ pct, width = '64px', height = '3px', style }) => {
   const clamped = Math.max(0, Math.min(100, pct));
   const color = clamped >= 90 ? 'var(--color-danger)' : clamped >= 75 ? 'var(--color-warning)' : 'var(--color-success)';
   return (
-    <div data-testid="usage-bar" style={{ width: '64px', height: '3px', borderRadius: '2px', background: 'var(--border-color)', overflow: 'hidden', marginTop: '2px' }}>
+    <div data-testid="usage-bar" style={{ width, height, flexShrink: 0, borderRadius: '2px', background: 'var(--border-color)', overflow: 'hidden', marginTop: '2px', ...style }}>
       <div style={{ width: `${clamped}%`, height: '100%', background: color, opacity: 0.85 }} />
     </div>
   );
 };
+
+const meterLabel = { fontSize: '9px', fontWeight: 600, letterSpacing: '0.06em', color: 'var(--text-secondary)' };
+const meterValue = { fontSize: '11.5px', fontWeight: 500, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' };
+
+// One gauge in AppUsage: tiny caps label, mini bar (when there is a ratio),
+// value.
+const Meter = ({ label, pct, value }) => (
+  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+    <span style={meterLabel}>{label}</span>
+    {pct !== null && <Bar pct={pct} width="28px" height="4px" style={{ marginTop: 0 }} />}
+    <span style={meterValue}>{value}</span>
+  </span>
+);
+
+// Inset pill of Meters, so resource numbers read as metrics rather than as
+// another label. `label` is the accessible name (the same numbers as text).
+const UsagePill = ({ label, meters, ...rest }) => (
+  <span
+    role="group"
+    aria-label={label}
+    {...rest}
+    style={{
+      display: 'inline-flex', alignItems: 'center', gap: '10px', padding: '3px 9px', flexShrink: 0,
+      borderRadius: '10px', background: 'var(--bg-app)', whiteSpace: 'nowrap', cursor: 'help',
+      lineHeight: 1.2,
+    }}
+  >
+    {meters.filter(Boolean).map((m) => <Meter key={m.label} {...m} />)}
+  </span>
+);
+
+/**
+ * CPU / memory gauges for an app row in Running Applications. Same rules as
+ * formatWorkloadUsage (which also gives its accessible name): CPU is left
+ * out while the device is offline. Renders nothing when there is nothing to
+ * show.
+ */
+export const AppUsage = ({ workload: w, online, ...rest }) => {
+  const text = formatWorkloadUsage(w, online);
+  if (!text) return null;
+  const cpu = online ? num(w.cpuPercent) : null;
+  const used = num(w.memUsedMB);
+  const alloc = num(w.memAllocatedMB);
+  let mem = null;
+  if (used !== null && alloc !== null) mem = { pct: alloc > 0 ? (used / alloc) * 100 : null, value: formatMBPair(used, alloc, '/') };
+  else if (alloc !== null) mem = { pct: null, value: `${formatMB(alloc)} alloc.` };
+  else if (used !== null) mem = { pct: null, value: formatMB(used) };
+  return (
+    <UsagePill
+      label={text}
+      meters={[
+        cpu !== null && { label: 'CPU', pct: cpu, value: formatPercent(cpu) },
+        mem && { label: 'MEM', ...mem },
+      ]}
+      {...rest}
+    />
+  );
+};
+
+// Grid sub-line for a resource: a bar, with the percent used beside it when
+// the value is not already a percent.
+const ResourceSub = ({ pct, caption }) => (
+  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
+    <Bar pct={pct} height="4px" style={{ marginTop: 0 }} />
+    {caption && <span style={{ fontSize: '10.5px', color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums' }}>{caption}</span>}
+  </div>
+);
 
 // Multi-line tooltip body. Passed as a node (not a string) so the Tooltip
 // keeps line breaks and does not add its "Copy" header.
@@ -285,13 +352,20 @@ const DeviceInfoPanel = ({ info, failed, authFailed, isOnline, timeFormatOptions
     : storTotal !== null ? formatMB(storTotal)
       : storUsed !== null ? formatMB(storUsed) : '—';
 
+  const memPct = memCommitted !== null && memTotal ? (memCommitted / memTotal) * 100 : null;
+  const storPct = storUsed !== null && storTotal ? (storUsed / storTotal) * 100 : null;
+
   // --- Collapsed one-line summary: only the parts we actually have. ---
-  const summary = [
+  // Facts as text, resources as gauges (same pill as the app rows).
+  const summaryText = [
     info.eveVersion && `EVE ${eve.version}`,
     online ? (uptimeValue !== '—' && `up ${uptimeValue}`) : (bootAgo && `last boot ${bootAgo}`),
-    cpuPct !== null && `CPU ${formatPercent(cpuPct)}`,
-    memCommitted !== null && memTotal !== null && `Mem ${formatMBPair(memCommitted, memTotal, '/')}`,
   ].filter(Boolean).join(' · ');
+  const summaryMeters = [
+    cpuPct !== null && { label: 'CPU', pct: cpuPct, value: formatPercent(cpuPct) },
+    memPct !== null && { label: 'MEM', pct: memPct, value: formatMBPair(memCommitted, memTotal, '/') },
+  ].filter(Boolean);
+  const summaryUsage = summaryMeters.map((m) => `${m.label === 'MEM' ? 'Mem' : m.label} ${m.value}`).join(' · ');
 
   return (
     <div className="ssh-status-section" style={sectionStyle}>
@@ -319,8 +393,11 @@ const DeviceInfoPanel = ({ info, failed, authFailed, isOnline, timeFormatOptions
           ? <ChevronDown size={14} style={{ flexShrink: 0, color: 'var(--text-secondary)' }} />
           : <ChevronRight size={14} style={{ flexShrink: 0, color: 'var(--text-secondary)' }} />}
         <span style={{ flexShrink: 0 }}>Device</span>
-        {!expanded && summary && (
-          <span data-testid="device-summary" style={{ ...subStyle, fontSize: '12px', flex: 1, marginLeft: '4px' }}>{summary}</span>
+        {!expanded && (summaryText || summaryMeters.length > 0) && (
+          <span data-testid="device-summary" style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0, marginLeft: '4px' }}>
+            {summaryText && <span style={{ ...subStyle, fontSize: '12px' }}>{summaryText}</span>}
+            {summaryMeters.length > 0 && <UsagePill data-testid="device-summary-usage" label={summaryUsage} meters={summaryMeters} />}
+          </span>
         )}
         {expanded && !online && (
           <span style={{ ...subStyle, fontSize: '12px', marginLeft: '4px' }}>offline · values are last reported</span>
@@ -351,19 +428,19 @@ const DeviceInfoPanel = ({ info, failed, authFailed, isOnline, timeFormatOptions
               label="CPU"
               tip={cpuTip}
               value={cpuPct !== null ? formatPercent(cpuPct) : '—'}
-              sub={cpuPct !== null && <Bar pct={cpuPct} />}
+              sub={cpuPct !== null && <ResourceSub pct={cpuPct} />}
             />
             <Item
               label="MEMORY"
               tip={memTip}
               value={memValue}
-              sub={memCommitted !== null && memTotal !== null && <Bar pct={(memCommitted / memTotal) * 100} />}
+              sub={memPct !== null && <ResourceSub pct={memPct} caption={formatPercent(memPct)} />}
             />
             <Item
               label="STORAGE"
               tip={storUsed !== null && storTotal !== null ? [`${formatMB(storUsed)} used of ${formatMB(storTotal)}`] : null}
               value={storValue}
-              sub={storUsed !== null && storTotal !== null && <Bar pct={(storUsed / storTotal) * 100} />}
+              sub={storPct !== null && <ResourceSub pct={storPct} caption={formatPercent(storPct)} />}
             />
           </div>
           )}
