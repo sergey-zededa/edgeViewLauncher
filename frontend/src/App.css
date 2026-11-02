@@ -402,6 +402,40 @@ body {
     padding-top: 6px;
 }
 
+/* The device list is the disk copy (token rejected / refresh failed). */
+.stale-note {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 6px 8px 2px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+    color: var(--text-secondary);
+    font-size: 12px;
+    text-align: left;
+}
+
+.stale-note svg {
+    flex-shrink: 0;
+    color: var(--color-warning);
+}
+
+.stale-note span {
+    flex: 1;
+    min-width: 0;
+}
+
+.stale-note .link-button {
+    flex-shrink: 0;
+    color: var(--color-warning);
+}
+
+/* Last known, not live: mute the status column. */
+.results-list.stale .node-status {
+    opacity: 0.55;
+}
+
 /* Unified header text styling */
 .section-title,
 .details-header h3,
@@ -784,7 +818,9 @@ body {
 
 /* Authentication Error Banner */
 .auth-error-banner {
-    background: linear-gradient(135deg, rgba(218, 54, 51, 0.1) 0%, rgba(218, 54, 51, 0.05) 100%);
+    /* Floats over the device list (.toast-container): the tint sits on an
+       opaque panel colour, or the list shows through it. */
+    background: linear-gradient(135deg, rgba(218, 54, 51, 0.1) 0%, rgba(218, 54, 51, 0.05) 100%), var(--bg-panel);
     border-left: 4px solid var(--color-danger);
     padding: 16px 20px;
     border-bottom: 1px solid rgba(218, 54, 51, 0.2);

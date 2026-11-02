@@ -4,7 +4,7 @@ import { ConnectToNode, CancelConnection, GetSettings, SaveSettings, GetDeviceSe
 import { Search, Settings, Server, Activity, Save, Monitor, ArrowLeft, Terminal, Globe, Lock, Unlock, AlertTriangle, ChevronDown, ChevronRight, X, Plus, Check, AlertCircle, Cpu, Wifi, HardDrive, Clock, Hash, ExternalLink, Copy, Play, RefreshCw, Trash2, ArrowRight, Info, Download, Box, Layers, Shield, Moon, Sun, HelpCircle, Key, Plug, Unplug } from 'lucide-react';
 import eveOsIcon from './assets/eve-os.png';
 import Tooltip from './components/Tooltip';
-import DeviceInfoPanel, { AppUsage, formatWorkloadUsage } from './components/DeviceInfoPanel';
+import DeviceInfoPanel, { AppUsage, formatWorkloadUsage, formatDuration } from './components/DeviceInfoPanel';
 import useDeviceInfo from './useDeviceInfo';
 import About from './components/About';
 import UpdateBanner from './components/UpdateBanner';
@@ -1299,6 +1299,9 @@ function App() {
         // activeClusterRef before cancelled becomes true.
         if (cancelled || activeClusterRef.current !== myCluster || !data) return;
         setDeviceCache(data);
+        // The backend's own refresh was rejected (after its cold-start
+        // retries): the list is the disk copy and the token is dead.
+        if (data.authFailed) setAuthError(true);
         if (!cacheLoaded && (data.devices?.length > 0 || !data.isRefreshing)) {
           setCacheLoaded(true);
         }
@@ -1317,9 +1320,10 @@ function App() {
       } catch (err) {
         // Raise the persistent auth banner on a 401 from the background poll.
         // We intentionally do NOT clear it on a *successful* poll: GetDeviceCache
-        // can serve a locally-cached list while the token is already dead, which
-        // would falsely dismiss the banner. Clearing happens only on authoritative
-        // signals (VerifyToken valid / GetDeviceServices success / cluster switch).
+        // serves the locally-cached list while the token is dead (authFailed
+        // above is how a dead token shows up), so a 200 proves nothing. Clearing
+        // happens only on authoritative signals (VerifyToken valid /
+        // GetDeviceServices success / cluster switch).
         if (isAuthError(err) || err.message?.includes('401')) setAuthError(true);
       } finally {
         if (!cancelled && activeClusterRef.current === myCluster) setLoading(false);
@@ -1688,7 +1692,8 @@ function App() {
   };
 
   const handleAuthError = () => {
-    const cluster = config.activeCluster || 'this cluster';
+    // The ref, not config: activateCluster flips it before config updates.
+    const cluster = activeClusterRef.current || config.activeCluster || 'this cluster';
     addLog(`API token for "${cluster}" is invalid or expired — click Update Token to re-paste it.`, 'error');
     // Token expiry is a persistent, app-global condition — not a transient operation.
     // It must NOT live in globalStatus (the ephemeral toast channel), because the next
@@ -2232,6 +2237,10 @@ function App() {
       setUserInfo(info);
     } catch (err) {
       console.log('Error loading user info:', err);
+      // First authenticated call after startup / a cluster switch / a save;
+      // GetEnterprise has already retried the cold-start 401, so this one is
+      // real. Raise the banner now rather than when a device is opened.
+      if (isAuthError(err) && activeClusterRef.current === startCluster) handleAuthError();
       throw err; // Re-throw to propagate error to saveSettings
     }
   };
@@ -2355,6 +2364,16 @@ function App() {
 
   // Use filteredDevices directly — no intermediate nodes state needed
   const nodes = filteredDevices;
+
+  // The list is the disk copy, not current: the token was rejected, or the
+  // backend's last refresh failed. Statuses in it are last known, not live.
+  const listStale = !!deviceCache && (authError || !!deviceCache.refreshFailed);
+  const listAge = (() => {
+    const t = Date.parse(deviceCache?.updatedAt);
+    if (!listStale || Number.isNaN(t)) return '';
+    const sec = (Date.now() - t) / 1000;
+    return sec < 60 ? 'just now' : `${formatDuration(sec)} ago`;
+  })();
 
   const handleConnect = async (node) => {
     try {
@@ -3482,6 +3501,11 @@ Do you want to try connecting anyway?`)) {
       setSessionStatus(null);
       setProjects({}); // Clear old projects map
       projectsLoadedRef.current = false;
+      // The header's enterprise name and token owner/expiry belong to the old
+      // cluster. loadUserInfo refills them, but stops at its first call when
+      // the new token is dead, which left the old cluster's name showing.
+      setEnterprise(null);
+      setUserInfo(null);
       setDeviceCache(null);
       setCacheLoaded(false);
       setLoading(true); // Show skeletons while new cluster cache loads
@@ -3489,6 +3513,9 @@ Do you want to try connecting anyway?`)) {
       // it would filter the new cluster's list down to nothing.
       setQuery('');
       setSelectedIndex(0);
+      // The old cluster's token state. Cleared here, before the new cluster's
+      // checks start: clearing at the end overwrote their result.
+      setAuthError(false);
 
       // 2. Save config to storage (but DON'T update React config yet —
       //    updating config.activeCluster triggers the polling effect, which
@@ -3533,11 +3560,9 @@ Do you want to try connecting anyway?`)) {
         console.error('Failed to fetch cache after cluster switch:', err);
       }
 
-      // 7. Reload user info (non-blocking for device list)
+      // 7. Reload user info (non-blocking for device list). This is also the
+      //    immediate auth check: a 401 raises the banner (see loadUserInfo).
       loadUserInfo().catch(err => console.error('Failed to load user info:', err));
-
-      // Clear any auth errors since we switched
-      setAuthError(false);
     } catch (err) {
       console.error("Failed to switch cluster:", err);
       setSettingsError("Failed to switch cluster: " + (err.message || String(err)));
@@ -4107,7 +4132,7 @@ Do you want to try connecting anyway?`)) {
           </div>
         )}
         {migrationState.requiresReauth && (
-          <div className="migration-banner warning-banner" style={{ backgroundColor: 'rgba(255, 149, 0, 0.1)', border: '1px solid rgba(255, 149, 0, 0.3)', color: '#ff9500' }}>
+          <div className="migration-banner warning-banner" style={{ background: 'linear-gradient(rgba(255, 149, 0, 0.1), rgba(255, 149, 0, 0.1)), var(--bg-panel)', border: '1px solid rgba(255, 149, 0, 0.3)', color: '#ff9500' }}>
             <div className="banner-content">
               <Lock size={18} />
               <span><strong>Major Update:</strong> For security reasons, your API tokens could not be automatically migrated from the old version. Please re-authenticate your clusters in Settings.</span>
@@ -6556,8 +6581,21 @@ Do you want to try connecting anyway?`)) {
 
             {
               !selectedNode && (
-                <div className="results-list" key={config.activeCluster || 'default'}>
+                <div className={`results-list${listStale ? ' stale' : ''}`} key={config.activeCluster || 'default'}>
                   {loading && !cacheLoaded && <DeviceListSkeleton count={6} />}
+                  {!(loading && !cacheLoaded) && listStale && (
+                    <div className="stale-note" role="status" data-testid="stale-list-note">
+                      <AlertTriangle size={13} />
+                      <span>
+                        {authError
+                          ? <>Cached list{listAge && <>, updated {listAge}</>}. The API token was rejected, so device status isn&apos;t current.</>
+                          : <>Cached list{listAge && <>, updated {listAge}</>}. It couldn&apos;t be refreshed, so device status may not be current.</>}
+                      </span>
+                      {authError && (
+                        <button className="link-button" onClick={openTokenSettings}>Update Token</button>
+                      )}
+                    </div>
+                  )}
                   {!(loading && !cacheLoaded) && displayNodes.length === 0 && cacheLoaded && query && (
                     <div className="empty-state">No results found</div>
                   )}
@@ -6584,7 +6622,7 @@ Do you want to try connecting anyway?`)) {
                           </span>
                         </div>
                       </div>
-                      <div className="node-status">
+                      <div className="node-status" title={listStale ? 'Last known status' : undefined}>
                         <span className={`status-dot ${statusClass(node.status)}`}></span>
                         {formatStatus(node.status)}
                       </div>
@@ -6617,7 +6655,7 @@ Do you want to try connecting anyway?`)) {
                             </span>
                           </div>
                         </div>
-                        <div className="node-status">
+                        <div className="node-status" title={listStale ? 'Last known status' : undefined}>
                           <span className={`status-dot ${statusClass(node.status)}`}></span>
                           {formatStatus(node.status)}
                         </div>
@@ -6648,7 +6686,7 @@ Do you want to try connecting anyway?`)) {
             </div>
           )}
           <div className="status-item right">
-            <span>{showSettings ? "Configuration" : selectedNode ? "Device Details" : `${nodes.length} results`}</span>
+            <span>{showSettings ? "Configuration" : selectedNode ? "Device Details" : `${nodes.length} results${listStale ? ' (cached)' : ''}`}</span>
           </div>
         </div>
       </div >

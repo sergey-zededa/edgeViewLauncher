@@ -51,6 +51,7 @@ type Manager struct {
 	mu         sync.RWMutex
 	cache      *ClusterCache
 	cluster    string
+	lastErr    error // last refresh failure for cluster; nil after a success or a switch
 	stopCh     chan struct{}
 	stopped    chan struct{} // closed when background goroutine exits
 	refreshing atomic.Bool
@@ -79,12 +80,37 @@ func (m *Manager) IsRefreshing() bool {
 	return m.refreshing.Load()
 }
 
+// LastRefreshError returns why the last refresh for the current cluster
+// failed, or nil if it succeeded or none has finished since the cluster was
+// loaded. Non-nil means Get is serving the disk copy, not current data;
+// errors.Is(err, zededa.ErrUnauthorized) means the API token was rejected
+// (after the refresh's own retries, so not the transient cold-start 401).
+func (m *Manager) LastRefreshError() error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.lastErr
+}
+
+// recordResult stores a finished refresh's outcome, unless it was cancelled
+// or the cluster has changed since it was launched.
+func (m *Manager) recordResult(launchCluster string, err error) {
+	if errors.Is(err, context.Canceled) {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cluster == launchCluster {
+		m.lastErr = err
+	}
+}
+
 // Load reads the disk cache for the given cluster into memory.
 func (m *Manager) Load(clusterName string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	m.cluster = clusterName
+	m.lastErr = nil
 
 	path, err := cacheFilePath(clusterName)
 	if err != nil {
@@ -142,7 +168,7 @@ func (m *Manager) Refresh(client ZededaFetcher) error {
 // RefreshCtx is the context-aware variant. When ctx is cancelled the pagination
 // loop exits early and m.cache is NOT overwritten, so an aborted refresh from a
 // previous cluster can never poison the new cluster's cache.
-func (m *Manager) RefreshCtx(ctx context.Context, client ZededaFetcher) error {
+func (m *Manager) RefreshCtx(ctx context.Context, client ZededaFetcher) (err error) {
 	if client == nil {
 		return fmt.Errorf("no API client available")
 	}
@@ -171,6 +197,7 @@ func (m *Manager) RefreshCtx(ctx context.Context, client ZededaFetcher) error {
 	m.mu.RLock()
 	launchCluster := m.cluster
 	m.mu.RUnlock()
+	defer func() { m.recordResult(launchCluster, err) }()
 
 	// Fetch devices and projects in parallel
 	var devices []CachedDevice

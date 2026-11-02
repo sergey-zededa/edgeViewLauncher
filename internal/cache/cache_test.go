@@ -3,6 +3,7 @@ package cache
 import (
 	"context"
 	"edgeViewLauncher/internal/zededa"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -21,6 +22,7 @@ type mockFetcher struct {
 	pageCalls atomic.Int32  // number of search calls made
 	projCalls atomic.Int32  // number of project calls made
 	projDelay time.Duration
+	searchErr error // returned by every search call when set
 }
 
 func (m *mockFetcher) SearchNodesWithTokenCtx(ctx context.Context, query string, limit int, pageToken string, projectID string) (*zededa.SearchResult, error) {
@@ -34,6 +36,9 @@ func (m *mockFetcher) SearchNodesWithTokenCtx(ctx context.Context, query string,
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.searchErr != nil {
+		return nil, m.searchErr
+	}
 	if m.callIdx >= len(m.pages) {
 		return &zededa.SearchResult{}, nil
 	}
@@ -328,5 +333,59 @@ func TestRefreshDedupe(t *testing.T) {
 
 	if got := fetcher.pageCalls.Load(); got != 1 {
 		t.Fatalf("expected 1 page call (dedupe), got %d", got)
+	}
+}
+
+// TestLastRefreshError: a failed refresh is remembered (so the UI can mark
+// the disk copy as stale and, for a rejected token, ask for a new one), and
+// cleared by a later success or a cluster switch.
+func TestLastRefreshError(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	os.MkdirAll(tmpDir+"/.edgeview-launcher", 0700)
+
+	mgr := NewManager()
+	mgr.SwitchCluster("cluster-a")
+	if err := mgr.LastRefreshError(); err != nil {
+		t.Fatalf("expected no error before any refresh, got %v", err)
+	}
+
+	f := &mockFetcher{searchErr: fmt.Errorf("%w", zededa.ErrUnauthorized)}
+	if err := mgr.Refresh(f); err == nil {
+		t.Fatal("expected refresh to fail")
+	}
+	if err := mgr.LastRefreshError(); !errors.Is(err, zededa.ErrUnauthorized) {
+		t.Fatalf("expected ErrUnauthorized, got %v", err)
+	}
+
+	// A successful refresh clears it.
+	f2 := &mockFetcher{pages: [][]zededa.Node{{{ID: "1", Name: "a"}}}}
+	if err := mgr.Refresh(f2); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if err := mgr.LastRefreshError(); err != nil {
+		t.Fatalf("expected nil after success, got %v", err)
+	}
+
+	// So does switching cluster: the error belonged to the previous one.
+	mgr.Refresh(f)
+	if mgr.LastRefreshError() == nil {
+		t.Fatal("expected error after second failure")
+	}
+	mgr.SwitchCluster("cluster-b")
+	if err := mgr.LastRefreshError(); err != nil {
+		t.Fatalf("expected nil after switch, got %v", err)
+	}
+}
+
+// TestLastRefreshErrorIgnoresCancelled: a refresh aborted by a switch is not
+// a failure of the new cluster.
+func TestLastRefreshErrorIgnoresCancelled(t *testing.T) {
+	mgr := NewManager()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	mgr.RefreshCtx(ctx, &mockFetcher{})
+	if err := mgr.LastRefreshError(); err != nil {
+		t.Fatalf("expected cancelled refresh not to be recorded, got %v", err)
 	}
 }
