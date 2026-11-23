@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@novnc/novnc": "^1.7.0",
-    "@tauri-apps/api": "^2.12.4",
+    "@tauri-apps/api": "^2.12.5",
     "@tauri-apps/plugin-opener": "^2.7.2",
     "lucide-react": "^1.70.0",
     "react": "^19.3.1",
